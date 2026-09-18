@@ -1,0 +1,136 @@
+{
+  "schema": "org.reborn.radio-inspection/v1",
+  "host_date_utc": "2026-09-18",
+  "boot_id": "e650130d-34f0-46e8-a9eb-b39a9ca467da",
+  "root_build": "Y2LINUX-REBORN-SPLASH-01",
+  "reborn_build_id": "6209f48402a00a077759df042916f0ae2c89783a",
+  "session": "1659312042621-393",
+  "same_session": true,
+  "owner_reports_splash_working": true,
+  "splash_boot_ms": {
+    "console_hidden": 698,
+    "visible": 828,
+    "released": 49448,
+    "presented": 49456
+  },
+  "graphics_renderer": "Mesa Project; EGL 1.4; Mali400; OpenGL ES 2.0 Mesa 24.0.9",
+  "tests": {
+    "test-wifi-scan": {
+      "exit_code": 0,
+      "elapsed_seconds": 5.129,
+      "result": {
+        "available": true,
+        "count": 28,
+        "passed": true
+      },
+      "stderr": ""
+    },
+    "test-bluetooth-service": {
+      "exit_code": 0,
+      "elapsed_seconds": 0.239,
+      "result": {
+        "adapter": true,
+        "bluealsa": true,
+        "connected": 0,
+        "passed": true
+      },
+      "stderr": ""
+    },
+    "test-bluetooth-scan": {
+      "exit_code": 0,
+      "elapsed_seconds": 11.261,
+      "result": {
+        "count": 0,
+        "passed": true
+      },
+      "stderr": ""
+    }
+  },
+  "safe_baseline": {
+    "passed": true,
+    "test_count": 10,
+    "warnings": [
+      "SD absent"
+    ],
+    "tests": [
+      {
+        "name": "health",
+        "passed": true
+      },
+      {
+        "name": "graphics",
+        "passed": true
+      },
+      {
+        "name": "decoder",
+        "passed": true
+      },
+      {
+        "name": "database",
+        "passed": true
+      },
+      {
+        "name": "library",
+        "passed": true
+      },
+      {
+        "name": "storage",
+        "passed": true
+      },
+      {
+        "name": "audio-availability",
+        "passed": true
+      },
+      {
+        "name": "bluetooth-service",
+        "available": true,
+        "optional": true
+      },
+      {
+        "name": "wifi-service",
+        "available": true,
+        "optional": true
+      },
+      {
+        "name": "input",
+        "passed": true
+      }
+    ]
+  },
+  "radio_preferences_before": {
+    "wifi": false,
+    "bluetooth": false
+  },
+  "radio_preferences_after": {
+    "wifi": false,
+    "bluetooth": false
+  },
+  "metric_deltas": {
+    "wifi_errors": 0.0,
+    "bluetooth_errors": 0.0,
+    "audio_xruns": 0.0,
+    "graphics_context_losses": 0.0,
+    "playback_errors": 0.0
+  },
+  "connectivity_final": {
+    "activated": true,
+    "powered": false,
+    "calibrated": true,
+    "error": 0,
+    "transport_errors": 0,
+    "recoveries": 0
+  },
+  "confirmed_application_defects": [
+    "Disabled Wi-Fi is classified as unavailable with an error.",
+    "Wi-Fi errors overwrite a global UI notice on unrelated screens and remain after recovery."
+  ],
+  "not_qualified": [
+    "Wi-Fi association and DHCP",
+    "Bluetooth peer discovery/pairing and A2DP playback",
+    "offline charging",
+    "suspend/resume",
+    "SD hotplug"
+  ],
+  "device_writes": "Temporary radio power/discovery only, restored by existing Reborn test hooks; no installation or persistent preference changes.",
+  "raw_capture_relative": "out/radio-inspection-20260918T115744Z"
+}
