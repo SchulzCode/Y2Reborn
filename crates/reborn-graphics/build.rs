@@ -12,4 +12,5 @@ fn main() {
     }
     b.compile("reborn_graphics");
     println!("cargo:rerun-if-changed=native/graphics.c");
+    println!("cargo:rerun-if-changed=native/splash-handoff.h");
 }

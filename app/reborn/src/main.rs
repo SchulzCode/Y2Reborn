@@ -591,6 +591,7 @@ fn run() -> Result<(), String> {
         })
         .map_err(|e| e.to_string())?;
     let mut inputs = inputs;
+    let mut first_frame_presented = false;
     let (mut periodic, mut checkpoint, mut render_time) = (
         Instant::now(),
         Instant::now(),
@@ -978,6 +979,26 @@ fn run() -> Result<(), String> {
                         rt.graphics = Some(g);
                     }
                     let _ = log.diagnostic(&root.join("diagnostics"), rt.snapshot(), true);
+                } else if !first_frame_presented {
+                    first_frame_presented = true;
+                    log.emit(
+                        Level::Info,
+                        "startup",
+                        "ready",
+                        "First Reborn frame presented",
+                        None,
+                        json!({"display_handoff":"explicit KMS presentation"}),
+                    );
+                    // Early splash evidence lives on the /run mount carried out
+                    // of initramfs; retain this bounded record alongside app logs.
+                    if let Ok(bytes) = fs::read("/run/reborn-splash/events.jsonl") {
+                        if bytes.len() <= 8192 {
+                            let _ = reborn_core::atomic_write(
+                                &root.join("logs/splash-boot.jsonl"),
+                                &bytes,
+                            );
+                        }
+                    }
                 }
             }
             rt.dirty = false;

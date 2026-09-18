@@ -24,6 +24,7 @@ static double now(void) {
   clock_gettime(CLOCK_MONOTONIC, &t);
   return t.tv_sec + t.tv_nsec / 1e9;
 }
+#include "splash-handoff.h"
 struct fb {
   uint32_t id;
   int fd;
@@ -202,8 +203,8 @@ int rb_graphics_open(RbGraphics **out, const uint8_t *font) {
   }
   if (g->fd < 0)
     goto fail;
-  if (drmSetMaster(g->fd))
-    goto fail;
+  /* Initialization/rendering can happen while the splash is DRM master.
+   * Acquire master only when the first complete frame is ready to scan out. */
   drmModeRes *r = drmModeGetResources(g->fd);
   if (!r)
     goto fail;
@@ -426,12 +427,25 @@ int rb_graphics_present(RbGraphics *g) {
     return -EIO;
   }
   if (!g->modeset) {
-    if (drmModeSetCrtc(g->fd, g->crtc, f->id, 0, 0, &g->connector, 1,
-                       &g->mode)) {
+    int handoff = rb_splash_begin("/run/reborn-splash/control.sock");
+    if (handoff < -1) {
       gbm_surface_release_buffer(g->surface, bo);
-      return -errno;
+      return handoff + 1;
+    }
+    if (drmSetMaster(g->fd) || drmModeSetCrtc(g->fd, g->crtc, f->id, 0, 0, &g->connector, 1,
+                       &g->mode)) {
+      int error = errno;
+      if (handoff >= 0) close(handoff);
+      gbm_surface_release_buffer(g->surface, bo);
+      return -error;
     }
     g->modeset = 1;
+    if (handoff >= 0) {
+      /* The old splash FB is destroyed after our acknowledgement. Never try
+       * restoring that retired buffer on shutdown or context recreation. */
+      drmModeFreeCrtc(g->old); g->old = NULL;
+      rb_splash_presented(handoff);
+    }
   } else {
     g->flip.waiting = true;
     if (drmModePageFlip(g->fd, g->crtc, f->id, DRM_MODE_PAGE_FLIP_EVENT,
