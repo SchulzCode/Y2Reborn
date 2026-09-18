@@ -9,13 +9,13 @@ use dbus::{
     message::MatchRule,
     Message, Path as DbusPath,
 };
-use reborn_core::atomic_write;
+use reborn_core::{atomic_write, RadioScan};
 use reborn_observability::{HealthState, Level, Observer};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::{
     collections::HashMap,
-    path::Path,
+    path::{Path, PathBuf},
     sync::{
         mpsc::{sync_channel, Receiver, RecvTimeoutError, SyncSender},
         Arc, Mutex,
@@ -42,6 +42,8 @@ pub struct Status {
     pub devices: Vec<Device>,
     pub pending: Option<Pairing>,
     pub error: Option<String>,
+    #[serde(default)]
+    pub scan: RadioScan,
 }
 impl Status {
     pub fn playback_rate(&self, address: &str) -> Result<u32, String> {
@@ -168,17 +170,54 @@ fn call(c: &Connection, path: &str, interface: &str, method: &str) -> Result<(),
     Ok(())
 }
 fn power(c: &Connection, adapter: &str, on: bool, persist: bool) -> Result<(), String> {
+    power_at(
+        c,
+        adapter,
+        on,
+        persist,
+        Path::new("/data/bluetooth/enabled"),
+    )
+}
+fn power_at(
+    c: &Connection,
+    adapter: &str,
+    on: bool,
+    persist: bool,
+    preference: &Path,
+) -> Result<(), String> {
     c.with_proxy("org.bluez", adapter, Duration::from_secs(15))
         .set("org.bluez.Adapter1", "Powered", on)
         .map_err(dbus_error)?;
     if persist {
-        atomic_write(
-            Path::new("/data/bluetooth/enabled"),
-            if on { b"1\n" } else { b"0\n" },
-        )
-        .map_err(|e| e.to_string())?;
+        atomic_write(preference, if on { b"1\n" } else { b"0\n" }).map_err(|e| e.to_string())?;
     }
     Ok(())
+}
+// The same sequence is used by the worker and covered with a fallible fake
+// adapter. Discovery is never attempted before successful radio activation.
+fn start_scan(
+    powered: bool,
+    mut perform: impl FnMut(&str) -> Result<(), String>,
+) -> Result<(), String> {
+    if !powered {
+        perform("PowerOn")?;
+    }
+    perform("StartDiscovery")
+}
+struct Discovery {
+    id: u64,
+    until: Instant,
+}
+impl Discovery {
+    fn new(id: u64, now: Instant) -> Self {
+        Self {
+            id,
+            until: now + Duration::from_secs(15),
+        }
+    }
+    fn expired(&self, now: Instant) -> bool {
+        now >= self.until
+    }
 }
 fn rejected(msg: &Message) -> Message {
     msg.error(
@@ -188,6 +227,17 @@ fn rejected(msg: &Message) -> Message {
 }
 impl Bluetooth {
     pub fn spawn(log: Observer) -> std::io::Result<Self> {
+        Self::spawn_with(
+            log,
+            Connection::new_system,
+            "/data/bluetooth/enabled".into(),
+        )
+    }
+    fn spawn_with(
+        log: Observer,
+        connect: impl Fn() -> Result<Connection, dbus::Error> + Send + 'static,
+        preference: PathBuf,
+    ) -> std::io::Result<Self> {
         let (tx, rx) = sync_channel(8);
         let (et, er) = sync_channel(2);
         thread::Builder::new()
@@ -195,7 +245,7 @@ impl Bluetooth {
             .spawn(move || {
                 let mut connected: Vec<String> = vec![];
                 loop {
-                    let c = match Connection::new_system() {
+                    let c = match connect() {
                         Ok(c) => c,
                         Err(_) => {
                             log.health_set(
@@ -295,13 +345,24 @@ impl Bluetooth {
                     let mut refresh = Instant::now() - Duration::from_secs(5);
                     let mut current = Status::default();
                     let mut adapter = String::new();
+                    let mut discovery: Option<Discovery> = None;
+                    let mut operation_error = None;
                     loop {
-                        if c.process(Duration::from_millis(20)).is_err(){break}
+                        if c.process(Duration::from_millis(20)).is_err(){
+                            current.available = false;
+                            current.error = Some("Bluetooth service disconnected".into());
+                            if current.scan.active() { current.scan = RadioScan::Failed { message: "Bluetooth service disconnected".into() }; }
+                            let _ = et.try_send(current);
+                            break;
+                        }
+                        let mut changed = false;
                         if let Ok(mut ops)=operations.lock(){ops.retain(|_,(id,start,method)|{if start.elapsed()>Duration::from_secs(70){log.add("bluetooth_errors",1.);log.emit(Level::Error,"bluetooth","operation_timeout","BlueZ operation deadline exceeded",Some(*id),json!({"method":method}));false}else{true}});}
                         if refresh.elapsed() > Duration::from_secs(2) {
                             match status(&c) {
-                                Ok((a, s)) => {
+                                Ok((a, mut s)) => {
                                     adapter = a;
+                                    s.scan = current.scan.clone();
+                                    s.error = operation_error.clone();
                                     current = s
                                 }
                                 Err(e) => {
@@ -310,6 +371,37 @@ impl Bluetooth {
                                 }
                             }
                             refresh = Instant::now();
+                            changed = true;
+                        }
+                        if discovery.is_some() && (!current.available || !current.powered) {
+                            let message = "Bluetooth radio became unavailable during scan".to_string();
+                            if let Some(job) = discovery.take() {
+                                log.add("bluetooth_errors", 1.);
+                                log.emit(Level::Warn, "bluetooth", "scan_failed", &message, Some(job.id), json!({"recovery_attempted":false}));
+                            }
+                            current.scan = RadioScan::Failed { message: message.clone() };
+                            current.error = Some(message.clone());
+                            operation_error = Some(message);
+                            changed = true;
+                        }
+                        if discovery.as_ref().is_some_and(|d| d.expired(Instant::now())) {
+                            let job = discovery.take().unwrap();
+                            // Stop only the discovery session held by this D-Bus connection.
+                            match call(&c, &adapter, "org.bluez.Adapter1", "StopDiscovery") {
+                                Ok(()) => {
+                                    current.scan = RadioScan::Complete { found: current.devices.len() };
+                                    current.discovering = false;
+                                    log.emit(Level::Info, "bluetooth", "scan_complete", "Bluetooth scan completed", Some(job.id), json!({"count":current.devices.len()}));
+                                }
+                                Err(e) => {
+                                    current.scan = RadioScan::Failed { message: e.clone() };
+                                    current.error = Some(e.clone()); operation_error = Some(e.clone());
+                                    log.add("bluetooth_errors", 1.);
+                                    log.emit(Level::Warn, "bluetooth", "scan_failed", &e, Some(job.id), json!({"method":"StopDiscovery","recovery_attempted":false}));
+                                }
+                            }
+                            refresh = Instant::now() - Duration::from_secs(5);
+                            changed = true;
                         }
                         if let Ok(mut p) = pending.lock() {
                             if p.as_ref()
@@ -326,31 +418,61 @@ impl Bluetooth {
                             Err(std::sync::mpsc::TryRecvError::Disconnected) => return,
                             Err(_) => None,
                         };
-                        let mut changed = false;
                         if let Some(cmd) = command {
                             if matches!(cmd, Command::Stop) {
                                 return;
                             }
                             let id = log.correlation();
                             let operation = match &cmd {
+                                Command::Power(_) => "Powered",
+                                Command::Scan(true) => "StartDiscovery",
+                                Command::Scan(false) => "StopDiscovery",
                                 Command::Pair(_) => "Pair",
                                 Command::Connect(_) => "Connect",
                                 Command::Disconnect(_) => "Disconnect",
-                                _ => "RemoveDevice",
+                                Command::Forget(_) => "RemoveDevice",
+                                Command::Confirm(_) => "ConfirmPairing",
+                                _ => "Refresh",
                             };
+                            // Repeated presses while starting/scanning do not cancel or
+                            // restart the bounded operation.
+                            if matches!(cmd, Command::Scan(true)) && discovery.is_some() { continue; }
+                            let scan_command = matches!(cmd, Command::Scan(_));
+                            operation_error = None;
+                            current.error = None;
                             let result = match cmd {
                                 Command::Stop | Command::Refresh => Ok(()),
-                                Command::Power(on) => power(&c, &adapter, on, true),
-                                Command::Scan(on) => call(
-                                    &c,
-                                    &adapter,
-                                    "org.bluez.Adapter1",
-                                    if on {
-                                        "StartDiscovery"
-                                    } else {
-                                        "StopDiscovery"
-                                    },
-                                ),
+                                Command::Power(on) => {
+                                    if discovery.is_none() { current.scan = RadioScan::Idle; }
+                                    if !on {
+                                        if discovery.take().is_some() { let _ = call(&c, &adapter, "org.bluez.Adapter1", "StopDiscovery"); }
+                                        current.scan = RadioScan::Idle;
+                                    }
+                                    power_at(&c, &adapter, on, true, &preference)
+                                }
+                                Command::Scan(true) => {
+                                    current.scan = RadioScan::Starting;
+                                    let _ = et.try_send(current.clone());
+                                    log.emit(Level::Info, "bluetooth", "scan_start", "Bluetooth scan requested", Some(id), json!({"enable_if_off":true,"seconds":15}));
+                                    let result = start_scan(current.powered, |method| {
+                                        if adapter.is_empty() { return Err("Bluetooth is still starting; try again".into()); }
+                                        if method == "PowerOn" { power_at(&c, &adapter, true, true, &preference) }
+                                        else { call(&c, &adapter, "org.bluez.Adapter1", method) }
+                                    });
+                                    if result.is_ok() {
+                                        current.powered = true;
+                                        current.discovering = true;
+                                        current.scan = RadioScan::Scanning;
+                                        discovery = Some(Discovery::new(id, Instant::now()));
+                                        log.emit(Level::Info, "bluetooth", "scan_started", "Bluetooth discovery active", Some(id), json!({}));
+                                    }
+                                    result
+                                }
+                                Command::Scan(false) => {
+                                    discovery = None;
+                                    current.scan = RadioScan::Idle;
+                                    call(&c, &adapter, "org.bluez.Adapter1", "StopDiscovery")
+                                }
                                 Command::Confirm(accept) => {
                                     if let Ok(mut p) = pending.lock() {
                                         if let Some(v) = p.take() {
@@ -402,6 +524,8 @@ impl Bluetooth {
                             };
                             if let Err(e) = result {
                                 current.error = Some(e.clone());
+                                operation_error = Some(e.clone());
+                                if scan_command { current.scan = RadioScan::Failed { message: e.clone() }; }
                                 log.add("bluetooth_errors", 1.);
                                 log.emit(
                                     Level::Warn,
@@ -409,7 +533,7 @@ impl Bluetooth {
                                     "operation_failed",
                                     &e,
                                     Some(id),
-                                    json!({"recovery_attempted":false}),
+                                    json!({"method":operation,"recovery_attempted":false}),
                                 );
                             } else {
                                 log.emit(
@@ -418,7 +542,7 @@ impl Bluetooth {
                                     "operation_requested",
                                     "BlueZ operation sent",
                                     Some(id),
-                                    json!({}),
+                                    json!({"method":operation}),
                                 );
                             }
                             changed = true;
@@ -446,13 +570,13 @@ impl Bluetooth {
                         log.health_set(
                             "bluetooth",
                             if current.available {
-                                HealthState::Ok
+                                if current.error.is_some() { HealthState::Degraded } else { HealthState::Ok }
                             } else {
                                 HealthState::Unavailable
                             },
                             false,
                             if current.available {
-                                "BlueZ adapter available"
+                                current.error.as_deref().unwrap_or(if current.powered { "BlueZ adapter powered" } else { "Bluetooth off" })
                             } else {
                                 "BlueZ unavailable"
                             },
@@ -508,6 +632,221 @@ pub fn scan_test(seconds: u64) -> Result<serde_json::Value, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn worker_discovery_publishes_devices_stops_and_retains_failure() {
+        use dbus::{arg::Variant, channel::Channel};
+        use std::{
+            fs,
+            io::{BufRead, BufReader},
+            process::{Child, Command as Process, Stdio},
+            sync::atomic::{AtomicBool, AtomicUsize, Ordering},
+        };
+        // A private bus and fake adapter: no host system bus or real radio access.
+        struct Bus(Child);
+        impl Drop for Bus {
+            fn drop(&mut self) {
+                let _ = self.0.kill();
+                let _ = self.0.wait();
+            }
+        }
+        let mut bus = Bus(Process::new("dbus-daemon")
+            .args(["--session", "--nofork", "--nopidfile", "--print-address=1"])
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap());
+        let mut address = String::new();
+        BufReader::new(bus.0.stdout.take().unwrap())
+            .read_line(&mut address)
+            .unwrap();
+        fn connect(address: &str) -> Result<Connection, dbus::Error> {
+            let mut channel = Channel::open_private(address.trim())?;
+            channel.register()?;
+            Ok(channel.into())
+        }
+        let service = connect(&address).unwrap();
+        service
+            .request_name("org.bluez", false, true, false)
+            .unwrap();
+        service
+            .request_name("org.bluealsa", false, true, false)
+            .unwrap();
+        let stop = Arc::new(AtomicBool::new(false));
+        let ending = stop.clone();
+        let starts = Arc::new(AtomicUsize::new(0));
+        let starts_out = starts.clone();
+        let stops = Arc::new(AtomicUsize::new(0));
+        let stops_out = stops.clone();
+        let fail = Arc::new(AtomicBool::new(false));
+        let fail_scan = fail.clone();
+        let mut powered = false;
+        let mut discovering = false;
+        let mut found = false;
+        service.start_receive(
+            MatchRule::new_method_call(),
+            Box::new(move |msg, c| {
+                let member = msg.member().unwrap().to_string();
+                let mut reply = msg.method_return();
+                match member.as_str() {
+                    "GetManagedObjects" => {
+                        let mut objects = Objects::new();
+                        if msg.path().unwrap() != "/org/bluealsa" {
+                            let mut properties = PropMap::new();
+                            properties.insert("Powered".into(), Variant(Box::new(powered)));
+                            properties.insert("Discovering".into(), Variant(Box::new(discovering)));
+                            objects.insert(
+                                DbusPath::from("/org/bluez/hci0"),
+                                HashMap::from([("org.bluez.Adapter1".into(), properties)]),
+                            );
+                            if found {
+                                let mut properties = PropMap::new();
+                                properties.insert(
+                                    "Alias".into(),
+                                    Variant(Box::new("Test headphones".to_string())),
+                                );
+                                properties.insert(
+                                    "Address".into(),
+                                    Variant(Box::new("01:02:03:04:05:06".to_string())),
+                                );
+                                properties.insert("Paired".into(), Variant(Box::new(false)));
+                                properties.insert("Connected".into(), Variant(Box::new(false)));
+                                properties.insert(
+                                    "UUIDs".into(),
+                                    Variant(Box::new(vec![
+                                        "0000110b-0000-1000-8000-00805f9b34fb".to_string()
+                                    ])),
+                                );
+                                objects.insert(
+                                    DbusPath::from("/org/bluez/hci0/dev_01_02_03_04_05_06"),
+                                    HashMap::from([("org.bluez.Device1".into(), properties)]),
+                                );
+                            }
+                        }
+                        reply = reply.append1(objects);
+                    }
+                    "Set" => {
+                        let (_, property, value): (String, String, Variant<bool>) =
+                            msg.read3().unwrap();
+                        assert_eq!(property, "Powered");
+                        powered = value.0;
+                    }
+                    "StartDiscovery" => {
+                        assert!(powered, "must power on before discovery");
+                        starts_out.fetch_add(1, Ordering::Relaxed);
+                        if fail_scan.load(Ordering::Relaxed) {
+                            reply = msg.error(
+                                &"org.bluez.Error.Failed".into(),
+                                c"injected adapter failure",
+                            );
+                        } else {
+                            discovering = true;
+                            found = true;
+                        }
+                    }
+                    "StopDiscovery" => {
+                        discovering = false;
+                        stops_out.fetch_add(1, Ordering::Relaxed);
+                    }
+                    "RegisterAgent" => {}
+                    _ => panic!("unexpected method {member}"),
+                }
+                c.send(reply).unwrap();
+                true
+            }),
+        );
+        let server = thread::spawn(move || {
+            while !ending.load(Ordering::Relaxed) {
+                service.process(Duration::from_millis(10)).unwrap();
+            }
+        });
+        let directory = std::env::temp_dir().join(format!("rb-bluez-{}", bus.0.id()));
+        fs::create_dir_all(&directory).unwrap();
+        let log = Observer::new(&directory.join("logs")).unwrap();
+        let bt = Bluetooth::spawn_with(
+            log.clone(),
+            move || connect(&address),
+            directory.join("enabled"),
+        )
+        .unwrap();
+        fn wait(events: &Receiver<Status>, matches: impl Fn(&Status) -> bool) -> Status {
+            let end = Instant::now() + Duration::from_secs(20);
+            loop {
+                let s = events
+                    .recv_timeout(end.saturating_duration_since(Instant::now()))
+                    .unwrap();
+                if matches(&s) {
+                    return s;
+                }
+            }
+        }
+        wait(&bt.events, |s| s.available && !s.powered);
+        bt.commands.send(Command::Scan(true)).unwrap();
+        wait(&bt.events, |s| s.scan == RadioScan::Starting);
+        let scanning = wait(&bt.events, |s| {
+            s.scan == RadioScan::Scanning && !s.devices.is_empty()
+        });
+        assert_eq!(scanning.devices[0].name, "Test headphones");
+        assert!(scanning.devices[0].audio);
+        assert_eq!(
+            fs::read_to_string(directory.join("enabled")).unwrap(),
+            "1\n"
+        );
+        bt.commands.send(Command::Scan(true)).unwrap(); // same operation stays active
+        let complete = wait(&bt.events, |s| matches!(s.scan, RadioScan::Complete { .. }));
+        assert_eq!(complete.scan, RadioScan::Complete { found: 1 });
+        assert!(!complete.discovering);
+        assert_eq!(starts.load(Ordering::Relaxed), 1);
+        assert_eq!(stops.load(Ordering::Relaxed), 1);
+        fail.store(true, Ordering::Relaxed);
+        bt.commands.send(Command::Scan(true)).unwrap();
+        wait(&bt.events, |s| matches!(s.scan, RadioScan::Failed { .. }));
+        // A periodic successful ObjectManager read must not erase the operation error.
+        let failed = wait(&bt.events, |s| matches!(s.scan, RadioScan::Failed { .. }));
+        assert!(failed.error.unwrap().contains("org.bluez.Error.Failed"));
+        bt.commands.send(Command::Power(false)).unwrap();
+        let off = wait(&bt.events, |s| !s.powered);
+        assert_eq!(off.scan, RadioScan::Idle);
+        assert!(off.error.is_none());
+        bt.commands.send(Command::Stop).unwrap();
+        while bt.events.recv_timeout(Duration::from_secs(2)).is_ok() {}
+        stop.store(true, Ordering::Relaxed);
+        server.join().unwrap();
+        drop(bt);
+        drop(log);
+        let _ = fs::remove_dir_all(directory);
+    }
+    #[test]
+    fn scan_powers_on_before_discovery_and_preserves_errors() {
+        let mut calls = vec![];
+        start_scan(false, |method| {
+            calls.push(method.to_string());
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(calls, ["PowerOn", "StartDiscovery"]);
+        calls.clear();
+        start_scan(true, |method| {
+            calls.push(method.to_string());
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(calls, ["StartDiscovery"]);
+        calls.clear();
+        let error = start_scan(false, |method| {
+            calls.push(method.to_string());
+            Err("org.bluez.Error.NotReady".into())
+        })
+        .unwrap_err();
+        assert_eq!(calls, ["PowerOn"]);
+        assert_eq!(error, "org.bluez.Error.NotReady");
+        assert!(start_scan(true, |_| Err("org.bluez.Error.Failed".into())).is_err());
+    }
+    #[test]
+    fn discovery_has_a_fixed_deadline() {
+        let now = Instant::now();
+        let scan = Discovery::new(7, now);
+        assert!(!scan.expired(now + Duration::from_secs(14)));
+        assert!(scan.expired(now + Duration::from_secs(15)));
+    }
     fn connected() -> Status {
         Status {
             bluealsa: true,

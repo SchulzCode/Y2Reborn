@@ -44,7 +44,11 @@ struct Runtime {
 }
 impl Runtime {
     fn fail(&mut self, sub: &str, error: String) {
-        self.ui.notice = error.clone();
+        match self.model.screen {
+            Screen::Wifi if sub == "ui" => self.ui.wifi.failed(error.clone()),
+            Screen::Bluetooth if sub == "ui" => self.ui.bluetooth.failed(error.clone()),
+            _ => self.ui.notice = error.clone(),
+        }
         self.log.emit(
             Level::Error,
             sub,
@@ -196,13 +200,19 @@ impl Runtime {
                 .commands
                 .try_send(wifi::Command::Power(!self.wifi_state.enabled))
                 .map_err(|_| "Wi-Fi busy")?,
-            Effect::WifiScan => self
-                .wifi
-                .as_ref()
-                .ok_or("Wi-Fi unavailable")?
-                .commands
-                .try_send(wifi::Command::Scan)
-                .map_err(|_| "Wi-Fi busy")?,
+            Effect::WifiScan => {
+                if self.ui.wifi.scan.active() {
+                    return Ok(());
+                }
+                self.wifi
+                    .as_ref()
+                    .ok_or("Wi-Fi unavailable")?
+                    .commands
+                    .try_send(wifi::Command::Scan)
+                    .map_err(|_| "Wi-Fi busy")?;
+                self.ui.wifi.requested();
+                self.wifi_state.scan = reborn_core::RadioScan::Starting;
+            }
             Effect::WifiConnect { ssid, password } => self
                 .wifi
                 .as_ref()
@@ -231,13 +241,19 @@ impl Runtime {
                 .commands
                 .try_send(bluetooth::Command::Power(!self.bt_state.powered))
                 .map_err(|_| "Bluetooth busy")?,
-            Effect::BluetoothScan => self
-                .bluetooth
-                .as_ref()
-                .ok_or("Bluetooth unavailable")?
-                .commands
-                .try_send(bluetooth::Command::Scan(!self.bt_state.discovering))
-                .map_err(|_| "Bluetooth busy")?,
+            Effect::BluetoothScan => {
+                if self.ui.bluetooth.scan.active() {
+                    return Ok(());
+                }
+                self.bluetooth
+                    .as_ref()
+                    .ok_or("Bluetooth unavailable")?
+                    .commands
+                    .try_send(bluetooth::Command::Scan(true))
+                    .map_err(|_| "Bluetooth busy")?;
+                self.ui.bluetooth.requested();
+                self.bt_state.scan = reborn_core::RadioScan::Starting;
+            }
             Effect::BluetoothDevice { path, operation } => {
                 if operation == "output" {
                     let address = self
@@ -710,7 +726,20 @@ fn run() -> Result<(), String> {
         }
         if let Some(service) = &rt.wifi {
             while let Ok(s) = service.events.try_recv() {
-                rt.ui.wifi_enabled = s.enabled;
+                rt.ui.wifi = reborn_ui::RadioView {
+                    available: s.available,
+                    powered: s.enabled,
+                    scan: s.scan.clone(),
+                    error: s.error.clone(),
+                    connection: if s.state == "COMPLETED" {
+                        format!("Connected: {}", s.ssid)
+                    } else if s.state == "STARTING" {
+                        "Starting Wi-Fi...".into()
+                    } else {
+                        String::new()
+                    },
+                    count: s.networks.len(),
+                };
                 rt.ui.networks = s
                     .networks
                     .iter()
@@ -736,9 +765,6 @@ fn run() -> Result<(), String> {
                         key: format!("saved:{}", n.saved_id.unwrap_or(0)),
                     })
                     .collect();
-                if let Some(e) = &s.error {
-                    rt.ui.notice = e.clone()
-                }
                 rt.wifi_state = s;
                 rt.dirty |= rt.model.screen == Screen::Wifi;
             }
@@ -757,7 +783,18 @@ fn run() -> Result<(), String> {
                             .iter()
                             .any(|d| &d.address == address && d.connected);
                 }
-                rt.ui.bluetooth_enabled = s.powered;
+                rt.ui.bluetooth = reborn_ui::RadioView {
+                    available: s.available,
+                    powered: s.powered,
+                    scan: s.scan.clone(),
+                    error: s.error.clone(),
+                    connection: if s.discovering {
+                        "Bluetooth discovery active".into()
+                    } else {
+                        String::new()
+                    },
+                    count: s.devices.len(),
+                };
                 rt.ui.bluetooth_devices = s
                     .devices
                     .iter()
@@ -819,6 +856,40 @@ fn run() -> Result<(), String> {
                     json!({"tests":reborn_control::TESTS.iter().map(|(n,a)|json!({"name":n,"audible":a,"bounded":true})).collect::<Vec<_>>()}),
                 ),
                 Command::Scan => rt.effect(Effect::Scan).map(|_| json!({"accepted":true})),
+                Command::Radio { radio, action } => {
+                    use reborn_control::{Radio, RadioAction};
+                    // Scan uses exactly the button/UI path, not an independent
+                    // diagnostic implementation which could hide UI-worker bugs.
+                    let r = match (radio, action) {
+                        (Radio::Wifi, RadioAction::Scan) => rt.effect(Effect::WifiScan),
+                        (Radio::Bluetooth, RadioAction::Scan) => rt.effect(Effect::BluetoothScan),
+                        (Radio::Wifi, RadioAction::On | RadioAction::Off) => rt
+                            .wifi
+                            .as_ref()
+                            .ok_or("Wi-Fi service unavailable".to_string())
+                            .and_then(|w| {
+                                w.commands
+                                    .try_send(wifi::Command::Power(matches!(
+                                        action,
+                                        RadioAction::On
+                                    )))
+                                    .map_err(|_| "Wi-Fi busy".into())
+                            }),
+                        (Radio::Bluetooth, RadioAction::On | RadioAction::Off) => rt
+                            .bluetooth
+                            .as_ref()
+                            .ok_or("Bluetooth service unavailable".to_string())
+                            .and_then(|w| {
+                                w.commands
+                                    .try_send(bluetooth::Command::Power(matches!(
+                                        action,
+                                        RadioAction::On
+                                    )))
+                                    .map_err(|_| "Bluetooth busy".into())
+                            }),
+                    };
+                    r.map(|_| json!({"accepted":true,"radio":radio,"action":action}))
+                }
                 Command::Playback { action } => rt.play_control(action).map(|_| rt.status()),
                 Command::InputMonitor { seconds } => {
                     if monitor.is_some() {

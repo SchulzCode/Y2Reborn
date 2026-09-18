@@ -8,6 +8,25 @@ use std::{
 
 pub const VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), "-baseline.01");
 pub const MAX_QUEUE: usize = 20_000;
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum RadioScan {
+    #[default]
+    Idle,
+    Starting,
+    Scanning,
+    Complete {
+        found: usize,
+    },
+    Failed {
+        message: String,
+    },
+}
+impl RadioScan {
+    pub fn active(&self) -> bool {
+        matches!(self, Self::Starting | Self::Scanning)
+    }
+}
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum PlaybackState {

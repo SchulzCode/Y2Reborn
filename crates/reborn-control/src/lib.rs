@@ -51,12 +51,29 @@ pub enum Command {
         saved: Option<u32>,
     },
     Scan,
+    Radio {
+        radio: Radio,
+        action: RadioAction,
+    },
     InputMonitor {
         seconds: u64,
     },
     Playback {
         action: PlaybackAction,
     },
+}
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Radio {
+    Wifi,
+    Bluetooth,
+}
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RadioAction {
+    Scan,
+    On,
+    Off,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "action", content = "value", rename_all = "snake_case")]
@@ -335,6 +352,24 @@ pub fn call(path: &Path, request: &Request) -> Result<Response, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn radio_protocol_is_enumerated_and_rejects_extra_payloads() {
+        assert!(parse(
+            br#"{"version":1,"id":3,"command":{"op":"radio","radio":"wifi","action":"scan"}}"#
+        )
+        .is_ok());
+        for command in [
+            json!({"op":"radio","radio":"bluetooth","action":"pair"}),
+            json!({"op":"radio","radio":"wifi","action":"exec"}),
+            json!({"op":"radio","radio":"wifi","action":"scan","path":"/bin/sh"}),
+            json!({"op":"radio","radio":"arbitrary","action":"scan"}),
+        ] {
+            assert!(parse(
+                &serde_json::to_vec(&json!({"version":1,"id":3,"command":command})).unwrap()
+            )
+            .is_err());
+        }
+    }
     #[test]
     fn malformed_and_no_exec() {
         for s in [

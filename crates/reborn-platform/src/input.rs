@@ -47,6 +47,11 @@ pub fn map(kind: u16, code: u16, value: i32) -> Option<Action> {
     if kind != 1 || !(value == 1 || value == 2) {
         return None;
     }
+    // Navigation/volume may repeat while held. One press must not repeatedly
+    // activate a row, reverse a radio toggle, or start/stop discovery.
+    if value == 2 && !matches!(code, 103 | 108 | 115 | 114) {
+        return None;
+    }
     match code {
         103 => Some(Action::Up),
         108 => Some(Action::Down),
@@ -111,6 +116,15 @@ impl Input {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn holding_select_cannot_toggle_a_radio_back_off() {
+        assert_eq!(map(1, 28, 1), Some(Action::Select));
+        for code in [28, 106, 116, 164] {
+            assert_eq!(map(1, code, 2), None);
+        }
+        assert_eq!(map(1, 108, 2), Some(Action::Down));
+        assert_eq!(map(1, 115, 2), Some(Action::VolumeUp));
+    }
     #[test]
     fn physical_keys() {
         for c in [

@@ -1,6 +1,6 @@
 #![forbid(unsafe_code)]
 use font8x8::UnicodeFonts;
-use reborn_core::{Action, AppModel, AudioOutput, Screen, Track};
+use reborn_core::{Action, AppModel, AudioOutput, RadioScan, Screen, Track};
 use reborn_graphics::Quad;
 #[derive(Clone)]
 pub struct Item {
@@ -37,12 +37,77 @@ struct View {
     filter: String,
 }
 #[derive(Default)]
+pub struct RadioView {
+    pub available: bool,
+    pub powered: bool,
+    pub scan: RadioScan,
+    pub error: Option<String>,
+    pub connection: String,
+    pub count: usize,
+}
+impl RadioView {
+    fn message(&self, bluetooth: bool) -> String {
+        let name = if bluetooth { "Bluetooth" } else { "Wi-Fi" };
+        match &self.scan {
+            RadioScan::Starting => return format!("Starting {name}..."),
+            RadioScan::Scanning => {
+                return format!(
+                    "Scanning... {} {}",
+                    self.count,
+                    if bluetooth { "devices" } else { "networks" }
+                )
+            }
+            RadioScan::Failed { message } => return message.clone(),
+            _ => {}
+        }
+        if let Some(error) = &self.error {
+            return error.clone();
+        }
+        if !self.available {
+            return format!("{name} service is starting or unavailable");
+        }
+        if !self.powered {
+            return format!("{name} is off. Scan will turn it on.");
+        }
+        if let RadioScan::Complete { found } = self.scan {
+            return if found == 0 {
+                if bluetooth {
+                    "No devices found. Put device in pairing mode.".into()
+                } else {
+                    "No networks found. Select Scan to try again.".into()
+                }
+            } else {
+                format!(
+                    "Scan complete: {found} {}",
+                    if bluetooth { "devices" } else { "networks" }
+                )
+            };
+        }
+        if !self.connection.is_empty() {
+            return self.connection.clone();
+        }
+        format!("{name} is on. Select Scan to discover.")
+    }
+    pub fn requested(&mut self) {
+        self.scan = RadioScan::Starting;
+        self.error = None;
+    }
+    pub fn failed(&mut self, error: String) {
+        if self.scan.active() {
+            self.scan = RadioScan::Failed {
+                message: error.clone(),
+            };
+        }
+        self.error = Some(error);
+    }
+}
+#[derive(Default)]
 pub struct Ui {
     pub selected: usize,
     pub filter: String,
     pub notice: String,
-    pub wifi_enabled: bool,
-    pub bluetooth_enabled: bool,
+    pub wifi: RadioView,
+    pub bluetooth: RadioView,
     pub networks: Vec<Item>,
     pub saved_networks: Vec<Item>,
     pub bluetooth_devices: Vec<Item>,
@@ -124,12 +189,16 @@ impl Ui {
                 .collect(),
             Screen::Wifi => {
                 let mut v = labels(&[
-                    if self.wifi_enabled {
+                    if self.wifi.powered {
                         "Turn Wi-Fi off"
                     } else {
                         "Turn Wi-Fi on"
                     },
-                    "Scan networks",
+                    match self.wifi.scan {
+                        RadioScan::Starting => "Starting Wi-Fi...",
+                        RadioScan::Scanning => "Scanning networks...",
+                        _ => "Scan networks",
+                    },
                 ]);
                 v.extend(self.saved_networks.iter().cloned());
                 v.extend(self.networks.iter().cloned());
@@ -140,12 +209,16 @@ impl Ui {
                     labels(&["Pair", "Connect", "Disconnect", "Forget", "Use for audio"])
                 } else {
                     let mut v = labels(&[
-                        if self.bluetooth_enabled {
+                        if self.bluetooth.powered {
                             "Turn Bluetooth off"
                         } else {
                             "Turn Bluetooth on"
                         },
-                        "Scan devices",
+                        match self.bluetooth.scan {
+                            RadioScan::Starting => "Starting Bluetooth...",
+                            RadioScan::Scanning => "Scanning devices...",
+                            _ => "Scan devices",
+                        },
                         "Use wired output",
                     ]);
                     v.extend(self.bluetooth_devices.iter().cloned());
@@ -297,10 +370,18 @@ impl Ui {
             }
             Screen::Wifi => {
                 if self.selected == 0 {
-                    return Effect::WifiPower;
+                    return if self.wifi.scan == RadioScan::Starting {
+                        Effect::None
+                    } else {
+                        Effect::WifiPower
+                    };
                 }
                 if self.selected == 1 {
-                    return Effect::WifiScan;
+                    return if self.wifi.scan.active() {
+                        Effect::None
+                    } else {
+                        Effect::WifiScan
+                    };
                 }
                 if let Some(id) = key.strip_prefix("saved:").and_then(|s| s.parse().ok()) {
                     return Effect::WifiSaved(id);
@@ -324,8 +405,20 @@ impl Ui {
                     };
                 } else {
                     match self.selected {
-                        0 => return Effect::BluetoothPower,
-                        1 => return Effect::BluetoothScan,
+                        0 => {
+                            return if self.bluetooth.scan == RadioScan::Starting {
+                                Effect::None
+                            } else {
+                                Effect::BluetoothPower
+                            }
+                        }
+                        1 => {
+                            return if self.bluetooth.scan.active() {
+                                Effect::None
+                            } else {
+                                Effect::BluetoothScan
+                            }
+                        }
                         2 => return Effect::Output(AudioOutput::Wired),
                         _ => self.go(m, Screen::Bluetooth, key),
                     }
@@ -553,9 +646,14 @@ impl Ui {
                 );
             }
         }
-        if !self.notice.is_empty() {
+        let notice = match m.screen {
+            Screen::Wifi => self.wifi.message(false),
+            Screen::Bluetooth => self.bluetooth.message(true),
+            _ => self.notice.clone(),
+        };
+        if !notice.is_empty() {
             rect(&mut d, 0., 332., 480., 28., 0x17232fff);
-            text(&mut d, 12., 341., &self.notice, 1., 0xf9d68aff)
+            text(&mut d, 12., 341., &notice, 1., 0xf9d68aff)
         }
         d
     }
@@ -596,6 +694,98 @@ pub fn font_atlas() -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn footer(ui: &Ui, screen: Screen) -> String {
+        ui.draw(
+            &AppModel {
+                screen,
+                ..Default::default()
+            },
+            &[],
+            "ok",
+            false,
+        )
+        .iter()
+        .filter(|q| q.y == 341.)
+        .filter_map(|q| q.glyph.map(char::from))
+        .collect()
+    }
+    #[test]
+    fn radio_progress_completion_empty_and_failure_are_visible() {
+        let mut ui = Ui::default();
+        ui.wifi.available = true;
+        assert!(footer(&ui, Screen::Wifi).starts_with("Wi-Fi is off"));
+        ui.wifi.requested();
+        assert_eq!(footer(&ui, Screen::Wifi), "Starting Wi-Fi...");
+        ui.wifi.powered = true;
+        ui.wifi.scan = RadioScan::Scanning;
+        assert!(footer(&ui, Screen::Wifi).starts_with("Scanning..."));
+        ui.wifi.scan = RadioScan::Complete { found: 28 };
+        assert_eq!(footer(&ui, Screen::Wifi), "Scan complete: 28 networks");
+        ui.wifi.scan = RadioScan::Complete { found: 0 };
+        assert!(footer(&ui, Screen::Wifi).starts_with("No networks found"));
+        ui.wifi.requested();
+        ui.wifi.failed("Scan timed out".into());
+        assert_eq!(footer(&ui, Screen::Wifi), "Scan timed out");
+        ui.bluetooth.available = true;
+        ui.bluetooth.powered = true;
+        ui.bluetooth.scan = RadioScan::Complete { found: 0 };
+        assert!(footer(&ui, Screen::Bluetooth).contains("pairing mode"));
+        assert!(!footer(&ui, Screen::Bluetooth).contains("timed out"));
+        assert!(footer(&ui, Screen::Main).is_empty());
+    }
+    #[test]
+    fn scans_are_button_accessible_and_duplicate_activation_is_ignored() {
+        let mut ui = Ui {
+            selected: 1,
+            ..Default::default()
+        };
+        let mut model = AppModel {
+            screen: Screen::Wifi,
+            ..Default::default()
+        };
+        assert!(matches!(
+            ui.action(&mut model, &[], Action::Select),
+            Effect::WifiScan
+        ));
+        ui.wifi.requested();
+        assert!(ui.rows(&model, &[])[1].label.starts_with("Starting"));
+        assert!(matches!(
+            ui.action(&mut model, &[], Action::Select),
+            Effect::None
+        ));
+        ui.wifi.scan = RadioScan::Scanning;
+        assert!(ui.rows(&model, &[])[1].label.starts_with("Scanning"));
+        ui.wifi.scan = RadioScan::Complete { found: 1 };
+        ui.networks = vec![Item {
+            label: "Home -40 dBm secure".into(),
+            key: "Home".into(),
+        }];
+        assert_eq!(ui.rows(&model, &[])[2].key, "Home");
+        ui.action(&mut model, &[], Action::Down);
+        ui.action(&mut model, &[], Action::Select);
+        assert!(ui.text_entry);
+        assert_eq!(ui.ssid, "Home");
+        ui.entry(Action::Back);
+        model.screen = Screen::Bluetooth;
+        ui.selected = 1;
+        assert!(matches!(
+            ui.action(&mut model, &[], Action::Select),
+            Effect::BluetoothScan
+        ));
+        ui.bluetooth.requested();
+        assert!(matches!(
+            ui.action(&mut model, &[], Action::Select),
+            Effect::None
+        ));
+        ui.bluetooth.scan = RadioScan::Complete { found: 1 };
+        ui.bluetooth_devices = vec![Item {
+            label: "Headphones available".into(),
+            key: "/org/bluez/hci0/dev_01_02_03_04_05_06".into(),
+        }];
+        ui.selected = 3;
+        ui.action(&mut model, &[], Action::Select);
+        assert_eq!(ui.rows(&model, &[])[0].label, "Pair");
+    }
     #[test]
     fn button_only_navigation() {
         let mut u = Ui::default();

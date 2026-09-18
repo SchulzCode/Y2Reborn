@@ -1,5 +1,5 @@
 #![forbid(unsafe_code)]
-use reborn_control::{Command, PlaybackAction, Request, Test};
+use reborn_control::{Command, PlaybackAction, Radio, RadioAction, Request, Test};
 use reborn_observability::Level;
 use serde_json::json;
 use std::{
@@ -25,6 +25,25 @@ fn number(args: &[String], flag: &str, default: u64) -> Result<u64, String> {
 fn command(a: &[String]) -> Result<Command, String> {
     let first = a.first().map(String::as_str).unwrap_or("status");
     let next = a.get(1).map(String::as_str);
+    if matches!(first, "wifi" | "bluetooth") {
+        if a.iter().any(|s| s == "--follow") {
+            return Err("Radio operations cannot use --follow; poll status instead".into());
+        }
+        let action = match next {
+            Some("scan") => RadioAction::Scan,
+            Some("on") => RadioAction::On,
+            Some("off") => RadioAction::Off,
+            _ => return Err("Use wifi|bluetooth scan|on|off".into()),
+        };
+        return Ok(Command::Radio {
+            radio: if first == "wifi" {
+                Radio::Wifi
+            } else {
+                Radio::Bluetooth
+            },
+            action,
+        });
+    }
     Ok(match first{
  "status"=>Command::Status,"health"=>Command::Health,"metrics"=>Command::Metrics,"snapshot"=>Command::Snapshot,"diagnose"=>Command::Diagnose,"scan"=>Command::Scan,
  "logs"=>Command::Logs{last:number(a,"--last",100)? as usize,subsystem:arg(a,"--subsystem").map(str::to_owned),level:arg(a,"--level").map(|s|Level::parse(s).ok_or("invalid log level")).transpose()?,since_ms:arg(a,"--since").map(|s|s.trim_end_matches('s').parse::<u64>().map(|n|n.saturating_mul(1000)).map_err(|_|"invalid --since")).transpose()?},
@@ -36,7 +55,7 @@ fn command(a: &[String]) -> Result<Command, String> {
 fn run() -> Result<i32, String> {
     let args = std::env::args().skip(1).collect::<Vec<_>>();
     if args.iter().any(|s| s == "--help") {
-        io::stdout().write_all(b"rebornctl status|health|metrics|snapshot|logs|events|log-level|diagnose|test|scan|input|play|pause|resume|stop|seek|output [--json] [--socket PATH]\n").map_err(|e|e.to_string())?;
+        io::stdout().write_all(b"rebornctl status|health|metrics|snapshot|logs|events|log-level|diagnose|test|scan|input|play|pause|resume|stop|seek|output [--json] [--socket PATH]\nrebornctl wifi|bluetooth scan|on|off [--json]\nRadio scan enables that radio and reports progress through status.\n").map_err(|e|e.to_string())?;
         return Ok(0);
     }
     let path = PathBuf::from(arg(&args, "--socket").unwrap_or("/run/reborn/control.sock"));
@@ -104,4 +123,23 @@ fn main() {
         }
     };
     std::process::exit(code);
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn radio_commands_use_worker_protocol() {
+        for name in ["wifi", "bluetooth"] {
+            for action in ["scan", "on", "off"] {
+                let cmd = command(&[name.into(), action.into(), "--json".into()]).unwrap();
+                let value = serde_json::to_value(cmd).unwrap();
+                assert_eq!(value["op"], "radio");
+                assert_eq!(value["radio"], name);
+                assert_eq!(value["action"], action);
+            }
+        }
+        assert!(command(&["wifi".into(), "exec".into()]).is_err());
+        assert!(command(&["bluetooth".into(), "pair".into()]).is_err());
+        assert!(command(&["wifi".into(), "scan".into(), "--follow".into()]).is_err());
+    }
 }

@@ -5,7 +5,13 @@ def module(name,path):
  spec=importlib.util.spec_from_file_location(name,path);m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m);return m
 qualification=module('qualification',root/'tools/qualification/reborn-baseline.py')
 package=module('package',root/'tools/build/package.py')
+radio_ui=module('radio_ui',root/'tools/qualification/reborn-radio-ui.py')
 class Tools(unittest.TestCase):
+ def test_radio_worker_qualification_requires_progress_and_completion(self):
+  samples=[{'scan':{'state':'starting'}},{'scan':{'state':'scanning'}},{'scan':{'state':'complete','found':0}}]
+  self.assertTrue(radio_ui.validate_progress(samples)['passed'])
+  for bad in [[],[samples[-1]],samples[:2],[samples[0],{'scan':{'state':'failed','message':'timeout'}}]]:
+   with self.assertRaises(RuntimeError):radio_ui.validate_progress(bad)
  def good(self):return {'session':'same','build_id':'candidate','graphics':{'renderer':'Mali400'},'storage':[{'kind':{'kind':'internal'},'online':True},{'kind':{'kind':'sd_card'},'online':True}],'wifi':{'saved':[{}]},'bluetooth':{'devices':[{'connected':True}]}}
  def test_qualification_pass_and_optional_warnings(self):
   s=self.good();fails,warns=qualification.classify(s,s,{'overall':'ok'},{},{},{'passed':True},[]);self.assertEqual((fails,warns),([],[]))
