@@ -40,6 +40,15 @@ Original synthesized fixtures carry CC0 provenance and hashes. Native libraries
 retain their Buildroot license/source receipts; Rust vendors retain upstream
 licenses. The graphics lifetime code is adapted from Y2Linux's MIT gpu-check.
 
+The player ELF has no direct `libav*` `DT_NEEDED` entries. Buildroot packages
+the single `libreborn_media.so` membrane under `/usr/lib/reborn`, which is
+loaded on first media use. Reborn starts after `S02y2-data`; radio and network
+workers retry independently while their providers start later. The GPU context
+is opened before the library scan, but KMS ownership remains with the early
+splash until Reborn presents its first complete frame. Startup phase events
+cover model restore, graphics, storage, library workers, core services, radio
+workers and runtime readiness.
+
 ## Threading, playback, storage and UI
 
 The UI thread alone owns the application state. Fixed workers: playback, audio,

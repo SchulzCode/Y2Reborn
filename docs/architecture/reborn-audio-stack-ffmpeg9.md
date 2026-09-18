@@ -7,6 +7,15 @@ Reborn has one media path. `reborn-media` opens the local file with FFmpeg
 opaque context, cancellation, bounded scheduling and diagnostics; it has no
 decoder, software resampler, integer volume stage or competing DSP path.
 
+The cold startup path does not link the FFmpeg membrane into the `reborn`
+executable. Buildroot installs the one shared membrane at
+`/usr/lib/reborn/libreborn_media.so`; `reborn-media` resolves its `rb_*` API on
+the first media operation and keeps that handle resident for the process
+lifetime. This preserves one FFmpeg implementation while keeping the six large
+FFmpeg libraries out of the dynamic loader's pre-`main` work. The startup log
+records the pinned version immediately and obtains the actual component
+manifest when the membrane is opened.
+
 The normal graph is:
 
 ```text
@@ -47,8 +56,9 @@ final format conversion, ALSA parameters, transition timing and fixed-cardinalit
 audio metrics. A rate or channel change is reported as resampling; the
 intentional FLTP-to-packed-sink conversion is reported separately. Embedded and
 bounded local sidecar cover images use the same FFmpeg image decoders and
-libswscale path.
-`status --json` includes the same state and the runtime FFmpeg component
-manifest. Build verification rejects missing required components, any encoder
-or muxer, network protocols, the FFmpeg command-line tools, `libavdevice`, and
-unrelated codec families.
+libswscale path. `status --json` and `audio --json` report the runtime component
+manifest once the membrane has been loaded; they do not trigger a cold FFmpeg
+load on the UI thread. The decoder diagnostic loads it on its worker when an
+early manifest is required. Build verification rejects missing required
+components, any encoder or muxer, network protocols, the FFmpeg command-line
+tools, `libavdevice`, and unrelated codec families.

@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
     ffi::{c_char, c_double, c_int, c_void, CStr, CString},
-    path::Path,
+    path::{Path, PathBuf},
     ptr::NonNull,
     sync::{Arc, OnceLock},
 };
@@ -70,57 +70,159 @@ struct RawDspConfig {
     crossfade_ms: u32,
 }
 
-unsafe extern "C" {
-    fn rb_cancel_new() -> *mut c_void;
-    fn rb_cancel_free(p: *mut c_void);
-    fn rb_cancel_set(p: *mut c_void);
-    fn rb_media_logging(
-        f: extern "C" fn(c_int, *const c_char),
-        enabled: extern "C" fn(c_int) -> c_int,
-    );
-    fn rb_media_version() -> *const c_char;
-    fn rb_media_components(out: *mut c_char, size: c_int) -> c_int;
-    fn rb_media_error(code: c_int, out: *mut c_char, size: c_int);
-    fn rb_media_open(
-        path: *const c_char,
-        rate: c_int,
-        output_format: c_int,
-        dsp: *const RawDspConfig,
-        cancel: *mut c_void,
-        out: *mut *mut c_void,
-        meta: *mut RawMetadata,
-    ) -> c_int;
-    fn rb_media_close(p: *mut c_void);
-    fn rb_media_read(
-        p: *mut c_void,
-        out: *mut u8,
-        capacity: c_int,
-        packets: *mut u64,
-        frames: *mut u64,
-        position: *mut i64,
-    ) -> c_int;
-    fn rb_media_seek(p: *mut c_void, ms: i64) -> c_int;
-    fn rb_media_art(p: *mut c_void, out: *mut u8, side: c_int) -> c_int;
-    fn rb_media_art_file(path: *const c_char, out: *mut u8, side: c_int) -> c_int;
-    fn rb_media_convert(
-        input: *const u8,
-        frames: c_int,
-        rate: c_int,
-        input_format: c_int,
-        output_format: c_int,
-        output: *mut u8,
-        capacity_frames: c_int,
-    ) -> c_int;
-    fn rb_media_crossfade(
-        a: *const u8,
-        b: *const u8,
-        frames: c_int,
-        rate: c_int,
-        format: c_int,
-        output: *mut u8,
-        capacity_frames: c_int,
-        written_frames: *mut c_int,
-    ) -> c_int;
+type CancelNew = unsafe extern "C" fn() -> *mut c_void;
+type CancelFree = unsafe extern "C" fn(*mut c_void);
+type CancelSet = unsafe extern "C" fn(*mut c_void);
+type MediaLogging =
+    unsafe extern "C" fn(extern "C" fn(c_int, *const c_char), extern "C" fn(c_int) -> c_int);
+type MediaComponents = unsafe extern "C" fn(*mut c_char, c_int) -> c_int;
+type MediaError = unsafe extern "C" fn(c_int, *mut c_char, c_int);
+type MediaOpen = unsafe extern "C" fn(
+    *const c_char,
+    c_int,
+    c_int,
+    *const RawDspConfig,
+    *mut c_void,
+    *mut *mut c_void,
+    *mut RawMetadata,
+) -> c_int;
+type MediaClose = unsafe extern "C" fn(*mut c_void);
+type MediaRead =
+    unsafe extern "C" fn(*mut c_void, *mut u8, c_int, *mut u64, *mut u64, *mut i64) -> c_int;
+type MediaSeek = unsafe extern "C" fn(*mut c_void, i64) -> c_int;
+type MediaArtwork = unsafe extern "C" fn(*mut c_void, *mut u8, c_int) -> c_int;
+type MediaArtworkFile = unsafe extern "C" fn(*const c_char, *mut u8, c_int) -> c_int;
+type MediaConvert =
+    unsafe extern "C" fn(*const u8, c_int, c_int, c_int, c_int, *mut u8, c_int) -> c_int;
+type MediaCrossfade = unsafe extern "C" fn(
+    *const u8,
+    *const u8,
+    c_int,
+    c_int,
+    c_int,
+    *mut u8,
+    c_int,
+    *mut c_int,
+) -> c_int;
+
+struct MediaApi {
+    // Kept open for the whole process. Decoder contexts can outlive the call
+    // which first loaded this membrane, so unloading is deliberately absent.
+    _handle: *mut c_void,
+    cancel_new: CancelNew,
+    cancel_free: CancelFree,
+    cancel_set: CancelSet,
+    logging: MediaLogging,
+    components: MediaComponents,
+    error: MediaError,
+    open: MediaOpen,
+    close: MediaClose,
+    read: MediaRead,
+    seek: MediaSeek,
+    artwork: MediaArtwork,
+    artwork_file: MediaArtworkFile,
+    convert: MediaConvert,
+    crossfade: MediaCrossfade,
+}
+
+// The loaded library is process lifetime state. FFmpeg contexts remain
+// separately owned by their calling worker and retain their existing
+// cancellation/thread-safety contract.
+unsafe impl Send for MediaApi {}
+unsafe impl Sync for MediaApi {}
+
+impl MediaApi {
+    unsafe fn symbol<T: Copy>(handle: *mut c_void, name: &'static [u8]) -> Result<T, String> {
+        let ptr = libc::dlsym(handle, name.as_ptr().cast());
+        if ptr.is_null() {
+            return Err(format!(
+                "FFmpeg media membrane symbol {} is missing",
+                String::from_utf8_lossy(&name[..name.len().saturating_sub(1)])
+            ));
+        }
+        // POSIX specifies dlsym results as usable function addresses. A
+        // transmute_copy is required because Rust keeps data and function
+        // pointers as distinct types even on this target.
+        Ok(std::mem::transmute_copy(&ptr))
+    }
+
+    fn load() -> Result<Self, String> {
+        let mut candidates = Vec::<PathBuf>::new();
+        if let Ok(path) = std::env::var("REBORN_MEDIA_LIB") {
+            candidates.push(path.into());
+        }
+        if let Some(path) = option_env!("REBORN_MEDIA_BUILD_LIB") {
+            candidates.push(path.into());
+        }
+        candidates.extend([
+            PathBuf::from("/usr/lib/reborn/libreborn_media.so"),
+            PathBuf::from("/usr/lib/libreborn_media.so"),
+        ]);
+        let mut last_error = String::from("no FFmpeg media membrane path succeeded");
+        for path in candidates {
+            let Ok(name) = CString::new(path.to_string_lossy().as_bytes()) else {
+                continue;
+            };
+            // SAFETY: path is NUL-free and the handle remains open for the
+            // lifetime of the returned API.
+            let handle = unsafe { libc::dlopen(name.as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
+            if handle.is_null() {
+                let detail = unsafe { libc::dlerror() };
+                if !detail.is_null() {
+                    last_error = unsafe { CStr::from_ptr(detail) }
+                        .to_string_lossy()
+                        .into_owned();
+                }
+                continue;
+            }
+            let loaded = unsafe {
+                Ok(Self {
+                    _handle: handle,
+                    cancel_new: Self::symbol(handle, b"rb_cancel_new\0")?,
+                    cancel_free: Self::symbol(handle, b"rb_cancel_free\0")?,
+                    cancel_set: Self::symbol(handle, b"rb_cancel_set\0")?,
+                    logging: Self::symbol(handle, b"rb_media_logging\0")?,
+                    components: Self::symbol(handle, b"rb_media_components\0")?,
+                    error: Self::symbol(handle, b"rb_media_error\0")?,
+                    open: Self::symbol(handle, b"rb_media_open\0")?,
+                    close: Self::symbol(handle, b"rb_media_close\0")?,
+                    read: Self::symbol(handle, b"rb_media_read\0")?,
+                    seek: Self::symbol(handle, b"rb_media_seek\0")?,
+                    artwork: Self::symbol(handle, b"rb_media_art\0")?,
+                    artwork_file: Self::symbol(handle, b"rb_media_art_file\0")?,
+                    convert: Self::symbol(handle, b"rb_media_convert\0")?,
+                    crossfade: Self::symbol(handle, b"rb_media_crossfade\0")?,
+                })
+            };
+            match loaded {
+                Ok(api) => return Ok(api),
+                Err(error) => {
+                    last_error = error;
+                    // The process never unloads a successful membrane. A
+                    // partially resolved handle is safe to release here.
+                    unsafe { libc::dlclose(handle) };
+                }
+            }
+        }
+        Err(last_error)
+    }
+}
+
+static API: OnceLock<Result<MediaApi, String>> = OnceLock::new();
+
+fn api() -> Result<&'static MediaApi, String> {
+    match API.get_or_init(|| {
+        let api = MediaApi::load()?;
+        if LOG.get().is_some() {
+            // SAFETY: the callbacks are static and the loaded membrane stays
+            // resident for the lifetime of the process.
+            unsafe { (api.logging)(log_callback, log_enabled) };
+        }
+        Ok(api)
+    }) {
+        Ok(api) => Ok(api),
+        Err(error) => Err(error.clone()),
+    }
 }
 
 static LOG: OnceLock<Observer> = OnceLock::new();
@@ -162,27 +264,39 @@ extern "C" fn log_callback(level: c_int, message: *const c_char) {
 }
 pub fn initialize_logging(log: Observer) {
     if LOG.set(log).is_ok() {
-        // SAFETY: callbacks have static lifetime and are installed once.
-        unsafe { rb_media_logging(log_callback, log_enabled) }
+        if let Some(Ok(api)) = API.get() {
+            // SAFETY: callbacks have static lifetime and the loaded membrane
+            // remains resident for the process lifetime.
+            unsafe { (api.logging)(log_callback, log_enabled) }
+        }
     }
 }
+pub const FFMPEG_VERSION: &str = "9.0.1";
 pub fn version() -> String {
-    // SAFETY: FFmpeg returns an immutable process-lifetime string.
-    unsafe { CStr::from_ptr(rb_media_version()) }
-        .to_string_lossy()
-        .into_owned()
+    // This constant is the pinned production FFmpeg ABI. The actual loaded
+    // library version is exposed by runtime_components(), which is used by
+    // status/diagnostics after the lazy membrane has been opened.
+    FFMPEG_VERSION.into()
 }
-pub fn runtime_components() -> Result<Value, String> {
+fn components(api: &MediaApi) -> Result<Value, String> {
     let mut bytes = vec![0 as c_char; 512 * 1024];
     // SAFETY: the C function writes at most the supplied capacity and NUL terminates JSON.
-    let n = unsafe { rb_media_components(bytes.as_mut_ptr(), bytes.len() as c_int) };
+    let n = unsafe { (api.components)(bytes.as_mut_ptr(), bytes.len() as c_int) };
     if n < 0 {
-        return Err(error(n));
+        return Err(error(api, n));
     }
     let json = unsafe { CStr::from_ptr(bytes.as_ptr()) }
         .to_string_lossy()
         .into_owned();
     serde_json::from_str(&json).map_err(|e| format!("FFmpeg component manifest: {e}"))
+}
+pub fn runtime_components() -> Result<Value, String> {
+    components(api()?)
+}
+pub fn runtime_components_if_loaded() -> Option<Value> {
+    API.get()
+        .and_then(|result| result.as_ref().ok())
+        .and_then(|api| components(api).ok())
 }
 pub fn convert_pcm(
     input: &[u8],
@@ -194,11 +308,12 @@ pub fn convert_pcm(
     if input.is_empty() || !input.len().is_multiple_of(input_frame_bytes) {
         return Err("PCM conversion input is not frame aligned".into());
     }
+    let api = api()?;
     let frames = input.len() / input_frame_bytes;
     let mut output = vec![0u8; frames * output_format.bytes_per_frame()];
     let frames_i32 = i32::try_from(frames).map_err(|_| "PCM conversion is too large")?;
     let r = unsafe {
-        rb_media_convert(
+        (api.convert)(
             input.as_ptr(),
             frames_i32,
             rate as c_int,
@@ -215,7 +330,7 @@ pub fn convert_pcm(
         )
     };
     if r < 0 {
-        return Err(error(r));
+        return Err(error(api, r));
     }
     output.truncate(r as usize * output_format.bytes_per_frame());
     Ok(output)
@@ -233,11 +348,12 @@ pub fn crossfade_pcm(
     {
         return Err("crossfade input is not frame aligned".into());
     }
+    let api = api()?;
     let frames_i32 = i32::try_from(frames).map_err(|_| "crossfade window is too large")?;
     let mut output = vec![0u8; frames * format.bytes_per_frame()];
     let mut written = 0;
     let r = unsafe {
-        rb_media_crossfade(
+        (api.crossfade)(
             a.as_ptr(),
             b.as_ptr(),
             frames_i32,
@@ -252,16 +368,16 @@ pub fn crossfade_pcm(
         )
     };
     if r < 0 {
-        return Err(error(r));
+        return Err(error(api, r));
     }
     output.truncate(written.max(0) as usize * format.bytes_per_frame());
     Ok(output)
 }
-fn error(code: c_int) -> String {
+fn error(api: &MediaApi, code: c_int) -> String {
     let mut b = [0 as c_char; 256];
     // SAFETY: C receives a writable fixed buffer and promises NUL termination.
     unsafe {
-        rb_media_error(code, b.as_mut_ptr(), b.len() as c_int);
+        (api.error)(code, b.as_mut_ptr(), b.len() as c_int);
         format!(
             "FFmpeg {code}: {}",
             CStr::from_ptr(b.as_ptr()).to_string_lossy()
@@ -269,7 +385,10 @@ fn error(code: c_int) -> String {
     }
 }
 
-struct CancelInner(NonNull<c_void>);
+struct CancelInner {
+    raw: NonNull<c_void>,
+    api: &'static MediaApi,
+}
 // SAFETY: the allocation contains only C11 atomics and is reference counted.
 unsafe impl Send for CancelInner {}
 // SAFETY: cancellation access is atomic on the C side.
@@ -277,22 +396,23 @@ unsafe impl Sync for CancelInner {}
 impl Drop for CancelInner {
     fn drop(&mut self) {
         // SAFETY: this is the final Arc owner.
-        unsafe { rb_cancel_free(self.0.as_ptr()) }
+        unsafe { (self.api.cancel_free)(self.raw.as_ptr()) }
     }
 }
 #[derive(Clone)]
 pub struct Cancel(Arc<CancelInner>);
 impl Cancel {
     pub fn new() -> Result<Self, String> {
+        let api = api()?;
         // SAFETY: constructor returns a new allocation or null.
-        let p = unsafe { rb_cancel_new() };
+        let p = unsafe { (api.cancel_new)() };
         NonNull::new(p)
-            .map(|p| Self(Arc::new(CancelInner(p))))
+            .map(|raw| Self(Arc::new(CancelInner { raw, api })))
             .ok_or_else(|| "cancellation allocation failed".into())
     }
     pub fn cancel(&self) {
         // SAFETY: Arc keeps the atomic allocation alive for this call.
-        unsafe { rb_cancel_set(self.0 .0.as_ptr()) }
+        unsafe { (self.0.api.cancel_set)(self.0.raw.as_ptr()) }
     }
 }
 
@@ -390,6 +510,7 @@ pub struct Metadata {
 
 pub struct Decoder {
     raw: NonNull<c_void>,
+    api: &'static MediaApi,
     _cancel: Cancel,
     pub metadata: Metadata,
     spec: OutputSpec,
@@ -426,6 +547,7 @@ impl Decoder {
         if !path.is_file() {
             return Err("media must be an existing regular file".into());
         }
+        let api = cancel.0.api;
         use std::os::unix::ffi::OsStrExt;
         let name = CString::new(path.as_os_str().as_bytes()).map_err(|_| "NUL in path")?;
         let raw_dsp = dsp.raw();
@@ -433,7 +555,7 @@ impl Decoder {
         // SAFETY: output storage and path live through this synchronous call; C retains only the cancellation pointer.
         let mut meta: RawMetadata = unsafe { std::mem::zeroed() };
         let r = unsafe {
-            rb_media_open(
+            (api.open)(
                 name.as_ptr(),
                 spec.rate as c_int,
                 match spec.format {
@@ -441,13 +563,13 @@ impl Decoder {
                     PcmFormat::S32LE => 2,
                 },
                 &raw_dsp,
-                cancel.0 .0.as_ptr(),
+                cancel.0.raw.as_ptr(),
                 &mut ptr,
                 &mut meta,
             )
         };
         if r < 0 {
-            return Err(error(r));
+            return Err(error(api, r));
         }
         fn text(b: &[c_char]) -> String {
             let v = b
@@ -460,6 +582,7 @@ impl Decoder {
         let raw = NonNull::new(ptr).ok_or_else(|| "missing decoder".to_string())?;
         Ok(Self {
             raw,
+            api,
             _cancel: cancel,
             spec,
             metadata: Metadata {
@@ -514,7 +637,7 @@ impl Decoder {
         let (mut packets, mut frames, mut pos) = (0, 0, 0);
         // SAFETY: unique decoder borrow and a buffer sized for 4096 stereo frames.
         let n = unsafe {
-            rb_media_read(
+            (self.api.read)(
                 self.raw.as_ptr(),
                 data.as_mut_ptr(),
                 4096,
@@ -524,7 +647,7 @@ impl Decoder {
             )
         };
         if n < 0 {
-            return Err(error(n));
+            return Err(error(self.api, n));
         }
         if n == 0 {
             return Ok(None);
@@ -544,9 +667,9 @@ impl Decoder {
             return Err("seek overflow".into());
         }
         // SAFETY: uniquely borrowed initialized context and range-checked timestamp.
-        let r = unsafe { rb_media_seek(self.raw.as_ptr(), ms as i64) };
+        let r = unsafe { (self.api.seek)(self.raw.as_ptr(), ms as i64) };
         if r < 0 {
-            Err(error(r))
+            Err(error(self.api, r))
         } else {
             Ok(())
         }
@@ -554,9 +677,9 @@ impl Decoder {
     pub fn artwork(&mut self) -> Result<Vec<u8>, String> {
         let mut b = vec![0; 160 * 160 * 4];
         // SAFETY: C receives exactly side*side*4 writable bytes.
-        let r = unsafe { rb_media_art(self.raw.as_ptr(), b.as_mut_ptr(), 160) };
+        let r = unsafe { (self.api.artwork)(self.raw.as_ptr(), b.as_mut_ptr(), 160) };
         if r < 0 {
-            Err(error(r))
+            Err(error(self.api, r))
         } else {
             Ok(b)
         }
@@ -565,11 +688,12 @@ impl Decoder {
 pub fn external_artwork(path: &Path) -> Result<Vec<u8>, String> {
     use std::os::unix::ffi::OsStrExt;
     let name = CString::new(path.as_os_str().as_bytes()).map_err(|_| "NUL in path")?;
+    let api = api()?;
     let mut b = vec![0; 160 * 160 * 4];
     // SAFETY: C receives a valid local path and exactly side*side*4 writable bytes.
-    let r = unsafe { rb_media_art_file(name.as_ptr(), b.as_mut_ptr(), 160) };
+    let r = unsafe { (api.artwork_file)(name.as_ptr(), b.as_mut_ptr(), 160) };
     if r < 0 {
-        Err(error(r))
+        Err(error(api, r))
     } else {
         Ok(b)
     }
@@ -577,7 +701,7 @@ pub fn external_artwork(path: &Path) -> Result<Vec<u8>, String> {
 impl Drop for Decoder {
     fn drop(&mut self) {
         // SAFETY: unique context is closed exactly once.
-        unsafe { rb_media_close(self.raw.as_ptr()) }
+        unsafe { (self.api.close)(self.raw.as_ptr()) }
     }
 }
 

@@ -34,7 +34,7 @@ try:
  for cli in ['ffmpeg','ffplay','ffprobe']:
   assert not (base/'usr/bin'/cli).exists(),cli
  assert not list((base/'usr/lib').glob('libavdevice.so*'))
- for script in ['etc/init.d/S60reborn','usr/libexec/reborn-supervise']:
+ for script in ['etc/init.d/S05reborn','usr/libexec/reborn-supervise']:
   subprocess.run(q+[str(base/'bin/busybox'),'sh','-n',str(base/script)],check=True)
  print(json.dumps({'passed':True,'hardware_validation':False,'checks':8,'results':results},indent=2))
 finally:

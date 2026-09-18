@@ -40,7 +40,7 @@ def main():
  assert re.search(r'Filesystem volume name:\s+Y2ROOT',header)
  assert '79324c69-6e75-4801-8000-000000000101' in header
  subprocess.run(['e2fsck','-fn',str(root)],check=True,stdout=subprocess.PIPE,stderr=subprocess.STDOUT)
- expected={'usr/bin/reborn','usr/bin/rebornctl','etc/init.d/S60reborn','usr/libexec/reborn-supervise','usr/share/reborn/fixtures/tone.flac'}
+ expected={'usr/bin/reborn','usr/bin/rebornctl','etc/init.d/S05reborn','usr/libexec/reborn-supervise','usr/share/reborn/fixtures/tone.flac'}
  with tarfile.open(a.build/'buildroot/images/rootfs.tar')as t:
   members={m.name.removeprefix('./'):m for m in t.getmembers()};assert expected<=members.keys()
   assert not any(n.startswith('data/reborn/')for n in members)

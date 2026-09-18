@@ -359,7 +359,7 @@ impl Runtime {
         Ok(())
     }
     fn status(&self) -> Value {
-        json!({"version":reborn_core::VERSION,"build_id":option_env!("REBORN_BUILD_ID").unwrap_or("development"),"session":self.log.session(),"uptime_seconds":self.log.uptime(),"current_screen":self.model.screen,"screen_off":self.model.screen_off,"playback":{"state":self.model.playback,"track_id":self.model.current().map(|t|t.id),"position_ms":self.model.position_ms,"duration_ms":self.model.current().map(|t|t.duration_ms),"queue_length":self.model.queue.len(),"queue_position":self.model.queue_position,"generation":self.model.generation},"output":self.model.output,"audio":self.playback.audio_state(),"library":{"tracks_loaded":self.tracks.len(),"schema":reborn_library::SCHEMA_VERSION},"scanner":self.scan_state,"wifi":self.wifi_state,"bluetooth":self.bt_state,"storage":self.model.sources,"power":self.power,"graphics":{"available":self.graphics.is_some(),"renderer":self.graphics.as_ref().map(|g|&g.info),"headless":self.headless},"decoder":{"ffmpeg":reborn_media::version(),"runtime":reborn_media::runtime_components().ok()},"buffers":{"frames":self.log.metrics()["audio_buffer_frames"],"milliseconds":self.log.metrics()["audio_buffer_ms"]}})
+        json!({"version":reborn_core::VERSION,"build_id":option_env!("REBORN_BUILD_ID").unwrap_or("development"),"session":self.log.session(),"uptime_seconds":self.log.uptime(),"current_screen":self.model.screen,"screen_off":self.model.screen_off,"playback":{"state":self.model.playback,"track_id":self.model.current().map(|t|t.id),"position_ms":self.model.position_ms,"duration_ms":self.model.current().map(|t|t.duration_ms),"queue_length":self.model.queue.len(),"queue_position":self.model.queue_position,"generation":self.model.generation},"output":self.model.output,"audio":self.playback.audio_state(),"library":{"tracks_loaded":self.tracks.len(),"schema":reborn_library::SCHEMA_VERSION},"scanner":self.scan_state,"wifi":self.wifi_state,"bluetooth":self.bt_state,"storage":self.model.sources,"power":self.power,"graphics":{"available":self.graphics.is_some(),"renderer":self.graphics.as_ref().map(|g|&g.info),"headless":self.headless},"decoder":{"ffmpeg":reborn_media::version(),"runtime":reborn_media::runtime_components_if_loaded()},"buffers":{"frames":self.log.metrics()["audio_buffer_frames"],"milliseconds":self.log.metrics()["audio_buffer_ms"]}})
     }
     fn snapshot(&self) -> Value {
         json!({"status":self.status(),"health":self.log.health(),"metrics":self.log.metrics(),"recent_errors":self.log.events(20,None,Some(Level::Warn),None),"resource_usage":fs::read_to_string("/proc/self/status").unwrap_or_default(),"kernel_events":kernel_events()})
@@ -470,7 +470,18 @@ fn option(args: &[String], key: &str) -> Option<String> {
         .and_then(|i| args.get(i + 1))
         .cloned()
 }
+fn startup_phase(log: &Observer, started: Instant, phase: &str) {
+    log.emit(
+        Level::Info,
+        "startup",
+        "phase",
+        phase,
+        None,
+        json!({"phase":phase,"elapsed_ms":started.elapsed().as_millis()}),
+    );
+}
 fn run() -> Result<(), String> {
+    let process_started = Instant::now();
     let args = std::env::args().skip(1).collect::<Vec<_>>();
     if args.iter().any(|s| s == "--version") {
         let _ = writeln!(std::io::stdout(), "{}", reborn_core::VERSION);
@@ -505,33 +516,12 @@ fn run() -> Result<(), String> {
     reborn_platform::install_signals();
     reborn_media::initialize_logging(log.clone());
     reborn_audio::initialize_logging(log.clone());
-    log.emit(Level::Info,"startup","starting","Reborn Baseline 01",None,json!({"version":reborn_core::VERSION,"ffmpeg":reborn_media::version(),"headless":headless}));
+    log.emit(Level::Info,"startup","starting","Reborn Baseline 01",None,json!({"version":reborn_core::VERSION,"ffmpeg":reborn_media::version(),"headless":headless,"process_setup_ms":process_started.elapsed().as_millis()}));
     let mut model = AppModel::restore(&root.join("state/session.json")).unwrap_or_default();
-    if let Some(m) = option(&args, "--music-dir") {
-        model.settings.music_directory = m.into();
-    }
-    if !headless && !model.settings.music_directory.starts_with("/data/") {
-        return Err("internal music must live under Y2DATA".into());
-    }
-    fs::create_dir_all(&model.settings.music_directory).map_err(|e| e.to_string())?;
-    if !headless && storage::sd_present() {
-        let _ = storage::mount_sd();
-    }
-    model.sources = if headless {
-        vec![Source {
-            id: "internal".into(),
-            kind: reborn_core::MediaSource::Internal,
-            root: model.settings.music_directory.clone(),
-            online: true,
-            mount: "host-test".into(),
-        }]
-    } else {
-        storage::sources(&model.settings.music_directory)
-    };
-    let db = Database::spawn(root.join("library.db"), log.clone())?;
-    db.sources(model.sources.clone())?;
-    let scanner = Scanner::spawn(db.clone(), log.clone())?;
-    scanner.scan(model.sources.clone())?;
+    startup_phase(&log, process_started, "model_restored");
+    // Open the display as soon as the process is alive. KMS handoff still
+    // happens on the first rendered frame, so the early splash keeps owning
+    // scanout while storage and library workers start below it.
     let graphics = if headless {
         log.health_set(
             "graphics",
@@ -557,6 +547,34 @@ fn run() -> Result<(), String> {
             }
         }
     };
+    startup_phase(&log, process_started, "graphics_ready");
+    if let Some(m) = option(&args, "--music-dir") {
+        model.settings.music_directory = m.into();
+    }
+    if !headless && !model.settings.music_directory.starts_with("/data/") {
+        return Err("internal music must live under Y2DATA".into());
+    }
+    fs::create_dir_all(&model.settings.music_directory).map_err(|e| e.to_string())?;
+    if !headless && storage::sd_present() {
+        let _ = storage::mount_sd();
+    }
+    model.sources = if headless {
+        vec![Source {
+            id: "internal".into(),
+            kind: reborn_core::MediaSource::Internal,
+            root: model.settings.music_directory.clone(),
+            online: true,
+            mount: "host-test".into(),
+        }]
+    } else {
+        storage::sources(&model.settings.music_directory)
+    };
+    startup_phase(&log, process_started, "storage_ready");
+    let db = Database::spawn(root.join("library.db"), log.clone())?;
+    db.sources(model.sources.clone())?;
+    let scanner = Scanner::spawn(db.clone(), log.clone())?;
+    scanner.scan(model.sources.clone())?;
+    startup_phase(&log, process_started, "library_workers_ready");
     let inputs = if headless {
         None
     } else {
@@ -583,6 +601,7 @@ fn run() -> Result<(), String> {
         true,
         "ALSA card discovery",
     );
+    startup_phase(&log, process_started, "core_services_ready");
     let playback = playback::Playback::spawn(log.clone(), root.join("cache"))?;
     let wifi = if headless {
         None
@@ -594,6 +613,7 @@ fn run() -> Result<(), String> {
     } else {
         Some(bluetooth::Bluetooth::spawn(log.clone()).map_err(|e| e.to_string())?)
     };
+    startup_phase(&log, process_started, "radio_workers_ready");
     let socket =
         PathBuf::from(option(&args, "--socket").unwrap_or("/run/reborn/control.sock".into()));
     let server = reborn_control::Server::spawn(&socket, log.clone()).map_err(|e| e.to_string())?;
@@ -626,6 +646,7 @@ fn run() -> Result<(), String> {
         last_activity: Instant::now(),
         query: None,
     };
+    startup_phase(&log, process_started, "runtime_ready");
     let last_snapshot = Arc::new(Mutex::new(json!({"starting":true})));
     let watcher = last_snapshot.clone();
     let wl = log.clone();
@@ -883,7 +904,7 @@ fn run() -> Result<(), String> {
             let result: Result<Value, String> = match req.command.clone() {
                 Command::Status => Ok(rt.status()),
                 Command::Audio => Ok(
-                    json!({"audio":rt.playback.audio_state(),"ffmpeg":reborn_media::runtime_components()?}),
+                    json!({"audio":rt.playback.audio_state(),"ffmpeg":reborn_media::runtime_components_if_loaded()}),
                 ),
                 Command::Health => Ok(log.health()),
                 Command::Metrics => Ok(log.metrics()),
