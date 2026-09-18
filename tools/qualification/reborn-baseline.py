@@ -2,8 +2,9 @@
 """Bounded owner-SSH qualification. Reads no private key bytes; never installs/flashes."""
 import argparse,datetime,json,pathlib,subprocess,shlex,sys,hashlib
 
-def classify(status_before,status_after,health,before,after,tests,kernel):
+def classify(status_before,status_after,health,before,after,tests,kernel,expected_build=None):
  failures=[];warnings=[]
+ if expected_build and any(s.get('build_id')!=expected_build for s in (status_before,status_after)): failures.append('unexpected Reborn build identity')
  if status_before.get('session')!=status_after.get('session'): failures.append('Reborn restarted during qualification')
  if health.get('overall')=='failed': failures.append('subsystem health failed')
  if health.get('overall')=='degraded': warnings.append('subsystem health degraded')
@@ -15,11 +16,11 @@ def classify(status_before,status_after,health,before,after,tests,kernel):
  if any(any(word in str(e).lower() for word in ('gpu hang','lima', 'drm')) for e in kernel): failures.append('relevant kernel GPU fault in snapshot; inspect timing')
  if not status_after.get('wifi',{}).get('saved'): warnings.append('Wi-Fi network not configured')
  if not any(d.get('connected') for d in status_after.get('bluetooth',{}).get('devices',[])): warnings.append('Bluetooth peer not connected')
- if len(status_after.get('storage',[]))<2: warnings.append('SD absent')
+ if not any(s.get('online') and s.get('kind',{}).get('kind')=='sd_card' for s in status_after.get('storage',[])): warnings.append('SD absent')
  return failures,warnings
 
 def main():
- p=argparse.ArgumentParser(description=__doc__);p.add_argument('--host',default='root@10.42.0.1');p.add_argument('--identity',type=pathlib.Path,default=pathlib.Path.home()/'.ssh/y2linux_ed25519');p.add_argument('--known-hosts',type=pathlib.Path,required=True,help='Existing owner-approved pinned host key file');p.add_argument('--output',type=pathlib.Path,default=pathlib.Path('out/qualification'));p.add_argument('--radio-scans',action='store_true',help='Explicit bounded Wi-Fi and Bluetooth discovery; restore prior power state');p.add_argument('--wired-audio',action='store_true',help='Explicit 1-second low-level wired signal, requires paused playback');a=p.parse_args()
+ p=argparse.ArgumentParser(description=__doc__);p.add_argument('--host',default='root@10.42.0.1');p.add_argument('--identity',type=pathlib.Path,default=pathlib.Path.home()/'.ssh/y2linux_ed25519');p.add_argument('--known-hosts',type=pathlib.Path,required=True,help='Existing owner-approved pinned host key file');p.add_argument('--expected-build',help='Require this Reborn source commit before and after tests');p.add_argument('--output',type=pathlib.Path,default=pathlib.Path('out/qualification'));p.add_argument('--radio-scans',action='store_true',help='Explicit bounded Wi-Fi and Bluetooth discovery; restore prior power state');p.add_argument('--wired-audio',action='store_true',help='Explicit 1-second low-level wired signal, requires paused playback');a=p.parse_args()
  if not a.known_hosts.is_file():p.error('approved known-hosts pin is required')
  out=a.output/datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%dT%H%M%SZ');out.mkdir(parents=True,exist_ok=False)
  ssh=['ssh','-i',str(a.identity),'-o','BatchMode=yes','-o','StrictHostKeyChecking=yes','-o',f'UserKnownHostsFile={a.known_hosts}','-o','ConnectTimeout=5',a.host]
@@ -37,11 +38,11 @@ def main():
   if a.wired_audio:call('test-audio-wired',['test','audio-wired'])
   if a.radio_scans:
    call('test-wifi-scan',['test','wifi-scan']);call('test-bluetooth-scan',['test','bluetooth-scan','--seconds','10'])
-  after=call('metrics-after',['metrics']);final=call('status-after',['status']);final_snapshot=call('snapshot-after',['snapshot']);events=call('logs',['logs','--last','200'])
+  after=call('metrics-after',['metrics']);final=call('status-after',['status']);health_after=call('health-after',['health']);final_snapshot=call('snapshot-after',['snapshot']);events=call('logs',['logs','--last','200'])
   with (out/'selected-logs.jsonl').open('w')as f:
    if isinstance(events,list):
     for event in events:f.write(json.dumps(event)+'\n')
-  failures,warnings=classify(status,final,health,before,after,tests,[e for e in final_snapshot.get('kernel_events',[]) if e not in snapshot.get('kernel_events',[])]);failures+=errors
+  failures,warnings=classify(status,final,health_after,before,after,tests,[e for e in final_snapshot.get('kernel_events',[]) if e not in snapshot.get('kernel_events',[])],a.expected_build);failures+=errors
   bundle=call('diagnostic',['diagnose']);name=bundle.get('path','');safe=pathlib.PurePosixPath(name)
   if safe.parent==pathlib.PurePosixPath('/data/reborn/diagnostics') and safe.name.startswith('reborn-diagnostic-') and safe.name.endswith('.tar.gz'):
    result=subprocess.run(ssh+[shlex.join(['cat',name])],capture_output=True,timeout=30)

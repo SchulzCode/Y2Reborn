@@ -1,0 +1,31 @@
+{
+  "schema": "org.reborn.baseline-01/v1",
+  "status": "HOST_VALIDATED_PHYSICAL_PENDING",
+  "reborn_commit": "77e673232a586e1f027538861bcbbec3466b36fd",
+  "integration_commit": "08b0e7d17c453037edf64f58a1798ff4457ca0ce",
+  "kernel_source_commit": "7e318afbffe640c6bf9da458f61ac2108f7d5bde",
+  "rust": "1.90.0",
+  "target": "armv7-unknown-linux-gnueabihf",
+  "root": {
+    "file": "Y2ROOT.img",
+    "sha256": "c353152dea44a554486e024a4d8a8105fbbdfd1310db5749b28d7e5b8e5c8012",
+    "bytes": 536870912,
+    "used_bytes": 89853952,
+    "used_bytes_delta": 7331840
+  },
+  "fallback": {
+    "file": "fallback/Y2ROOT.img",
+    "sha256": "1dec3b9c462587d804a022ef97e45222329065d263f53c2159ce00f728db145f",
+    "bytes": 536870912
+  },
+  "bootimg_changed": false,
+  "required_installed_bootimg": {
+    "version": "6.18.0-y2linux-gpu-02",
+    "sha256": "2e5f7e785e80dfc646e57d0ccfadff683d54a2c5303671c819ea4e42863089a9"
+  },
+  "data_policy": "preserve Y2DATA, no payload or format",
+  "binary_sizes": {
+    "reborn": 1829852,
+    "rebornctl": 441260
+  }
+}

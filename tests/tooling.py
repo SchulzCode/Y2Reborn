@@ -6,10 +6,12 @@ def module(name,path):
 qualification=module('qualification',root/'tools/qualification/reborn-baseline.py')
 package=module('package',root/'tools/build/package.py')
 class Tools(unittest.TestCase):
- def good(self):return {'session':'same','graphics':{'renderer':'Mali400'},'storage':[{},{}],'wifi':{'saved':[{}]},'bluetooth':{'devices':[{'connected':True}]}}
+ def good(self):return {'session':'same','build_id':'candidate','graphics':{'renderer':'Mali400'},'storage':[{'kind':{'kind':'internal'},'online':True},{'kind':{'kind':'sd_card'},'online':True}],'wifi':{'saved':[{}]},'bluetooth':{'devices':[{'connected':True}]}}
  def test_qualification_pass_and_optional_warnings(self):
   s=self.good();fails,warns=qualification.classify(s,s,{'overall':'ok'},{},{},{'passed':True},[]);self.assertEqual((fails,warns),([],[]))
   s['wifi']={};s['bluetooth']={};s['storage']=[];fails,warns=qualification.classify(s,s,{'overall':'ok'},{},{},{'passed':True},[]);self.assertFalse(fails);self.assertEqual(len(warns),3)
+  s=self.good();s['storage'][1]['online']=False;fails,warns=qualification.classify(s,s,{'overall':'ok'},{},{},{'passed':True},[]);self.assertEqual(warns,['SD absent'])
+  s=self.good();fails,_=qualification.classify(s,s,{'overall':'ok'},{},{},{'passed':True},[],'other-build');self.assertEqual(fails,['unexpected Reborn build identity'])
  def test_restart_xrun_and_software_renderer_fail(self):
   s=self.good();other={**s,'session':'new','graphics':{'renderer':'llvmpipe'}};fail,_=qualification.classify(s,other,{'overall':'failed'},{'audio_xruns':1},{'audio_xruns':2},{'passed':False},['lima timeout']);self.assertEqual(len(fail),6)
  def test_root_only_preserves_all_other_rows(self):

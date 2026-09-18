@@ -1,0 +1,229 @@
+{
+  "passed": true,
+  "hardware_validation": false,
+  "checks": 8,
+  "results": [
+    {
+      "command": [
+        "status"
+      ],
+      "result": {
+        "bluetooth": {
+          "available": false,
+          "bluealsa": false,
+          "devices": [],
+          "discovering": false,
+          "error": null,
+          "pcms": [],
+          "pending": null,
+          "powered": false
+        },
+        "buffers": {
+          "frames": 0.0,
+          "milliseconds": 0.0
+        },
+        "build_id": "77e673232a586e1f027538861bcbbec3466b36fd",
+        "current_screen": "main",
+        "decoder": {
+          "ffmpeg": "6.1.5"
+        },
+        "graphics": {
+          "available": false,
+          "headless": true,
+          "renderer": null
+        },
+        "library": {
+          "schema": 1,
+          "tracks_loaded": 0
+        },
+        "output": {
+          "kind": "wired"
+        },
+        "playback": {
+          "duration_ms": null,
+          "generation": 0,
+          "position_ms": 0,
+          "queue_length": 0,
+          "queue_position": 0,
+          "state": "stopped",
+          "track_id": null
+        },
+        "power": {
+          "backlight": null,
+          "supplies": []
+        },
+        "scanner": {
+          "state": "scanning"
+        },
+        "screen_off": false,
+        "session": "1789729665030-3",
+        "storage": [
+          {
+            "id": "internal",
+            "kind": {
+              "kind": "internal"
+            },
+            "mount": "host-test",
+            "online": true,
+            "root": "/build/buildroot/target/usr/share/reborn/fixtures"
+          }
+        ],
+        "uptime_seconds": 0,
+        "version": "0.1.0-baseline.01",
+        "wifi": {
+          "available": false,
+          "enabled": false,
+          "error": null,
+          "ip": "",
+          "networks": [],
+          "saved": [],
+          "ssid": "",
+          "state": ""
+        }
+      }
+    },
+    {
+      "command": [
+        "test",
+        "decoder"
+      ],
+      "result": {
+        "artwork_passed": true,
+        "elapsed_ms": 114,
+        "passed": true,
+        "tests": [
+          {
+            "blocks": 47,
+            "elapsed_ms": 6,
+            "errors": 0,
+            "fixture": "tone.flac",
+            "frames": 48000,
+            "packets": 47,
+            "passed": true,
+            "peak": 116
+          },
+          {
+            "blocks": 43,
+            "elapsed_ms": 22,
+            "errors": 0,
+            "fixture": "tone.mp3",
+            "frames": 48000,
+            "packets": 43,
+            "passed": true,
+            "peak": 110
+          },
+          {
+            "blocks": 47,
+            "elapsed_ms": 20,
+            "errors": 0,
+            "fixture": "tone.m4a",
+            "frames": 48128,
+            "packets": 48,
+            "passed": true,
+            "peak": 127
+          },
+          {
+            "blocks": 48,
+            "elapsed_ms": 19,
+            "errors": 0,
+            "fixture": "tone.ogg",
+            "frames": 47872,
+            "packets": 49,
+            "passed": true,
+            "peak": 121
+          },
+          {
+            "blocks": 51,
+            "elapsed_ms": 26,
+            "errors": 0,
+            "fixture": "tone.opus",
+            "frames": 47688,
+            "packets": 51,
+            "passed": true,
+            "peak": 118
+          },
+          {
+            "blocks": 47,
+            "elapsed_ms": 10,
+            "errors": 0,
+            "fixture": "tone.wav",
+            "frames": 48000,
+            "packets": 47,
+            "passed": true,
+            "peak": 116
+          }
+        ]
+      }
+    },
+    {
+      "command": [
+        "test",
+        "database"
+      ],
+      "result": {
+        "passed": true,
+        "quick_check": "ok",
+        "schema": 1,
+        "tracks": 7,
+        "write_test": "rolled_back"
+      }
+    },
+    {
+      "command": [
+        "test",
+        "library"
+      ],
+      "result": {
+        "missing_online": 0,
+        "offline": 0,
+        "passed": true,
+        "sample": 7
+      }
+    },
+    {
+      "command": [
+        "metrics"
+      ],
+      "result": {
+        "audio_buffer_frames": 0.0,
+        "audio_buffer_ms": 0.0,
+        "audio_recoveries": 0.0,
+        "audio_xruns": 0.0,
+        "bluetooth_connects": 0.0,
+        "bluetooth_disconnects": 0.0,
+        "bluetooth_errors": 0.0,
+        "database_query_latency_ms": 0.8362550000000001,
+        "decoder_stalls": 0.0,
+        "ffmpeg_decode_errors": 0.0,
+        "ffmpeg_frames_decoded": 0.0,
+        "ffmpeg_packets_decoded": 0.0,
+        "graphics_context_losses": 0.0,
+        "graphics_frame_time_ms": 0.0,
+        "graphics_frames": 0.0,
+        "graphics_missed_frames": 0.0,
+        "library_scan_errors": 0.0,
+        "library_scan_files_per_sec": 45.48927947327262,
+        "library_tracks": 7.0,
+        "log_write_errors": 0.0,
+        "logs_dropped": 0.0,
+        "playback_errors": 0.0,
+        "playback_tracks_completed": 0.0,
+        "playback_tracks_started": 0.0,
+        "reborn_uptime_seconds": 0.0,
+        "sd_insertions": 0.0,
+        "sd_removals": 0.0,
+        "wifi_connects": 0.0,
+        "wifi_disconnects": 0.0,
+        "wifi_errors": 0.0
+      }
+    },
+    {
+      "command": [
+        "diagnose"
+      ],
+      "result": {
+        "path": "/build/reborn-arm-check/data/diagnostics/reborn-diagnostic-1789729665509-6.tar.gz"
+      }
+    }
+  ]
+}
