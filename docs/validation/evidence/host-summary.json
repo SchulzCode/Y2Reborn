@@ -1,5 +1,5 @@
 {
-  "unit_tests": 45,
+  "unit_tests": 47,
   "daemon_checks": 20,
   "tooling_tests": 3,
   "clippy": "passed with -D warnings",

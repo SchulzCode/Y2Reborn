@@ -117,6 +117,11 @@ fn decoder(fixtures: &Path, log: &Observer) -> Result<Value, String> {
             return Err(format!("fixture decoded unexpected PCM: {name}"));
         }
     }
+    let mut art = Decoder::open(&fixtures.join("artwork.flac"), 48000, Cancel::new()?)?;
+    let rgba = art.artwork()?;
+    if rgba.len() != 160 * 160 * 4 || rgba[..4] != [40, 160, 90, 255] {
+        return Err("artwork fixture pixel mismatch".into());
+    }
     log.emit(
         Level::Info,
         "media",
@@ -125,7 +130,9 @@ fn decoder(fixtures: &Path, log: &Observer) -> Result<Value, String> {
         None,
         json!({"formats":results.len()}),
     );
-    Ok(json!({"passed":true,"tests":results,"elapsed_ms":start.elapsed().as_millis()}))
+    Ok(
+        json!({"passed":true,"tests":results,"artwork_passed":true,"elapsed_ms":start.elapsed().as_millis()}),
+    )
 }
 fn audio(output: AudioOutput, fixtures: &Path, log: &Observer) -> Result<Value, String> {
     let before = log.metrics()["audio_xruns"].as_f64().unwrap_or(0.);

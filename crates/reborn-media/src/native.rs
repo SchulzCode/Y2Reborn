@@ -369,3 +369,18 @@ mod corruption_tests {
         assert!(Decoder::open(Path::new("/missing"), 96000, Cancel::new().unwrap()).is_err());
     }
 }
+
+#[cfg(test)]
+mod artwork_tests {
+    use super::*;
+    #[test]
+    fn embedded_art_is_decoded_once_to_fixed_rgba() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/fixtures/artwork.flac");
+        let mut d = Decoder::open(&path, 48000, Cancel::new().unwrap()).unwrap();
+        assert!(d.metadata.artwork);
+        let pixels = d.artwork().unwrap();
+        assert_eq!(pixels.len(), 160 * 160 * 4);
+        assert_eq!(&pixels[..4], &[40, 160, 90, 255]);
+        assert!(d.read().unwrap().is_some());
+    }
+}

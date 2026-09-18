@@ -9,6 +9,8 @@
     "tone.mp3": "c4a0e727a4b51d580552505ae0e82fcb081d4c51e2cef947edc68cee626972ba",
     "tone.ogg": "7a7e1571a81dff6a5f45de49675218236a7afd58dc4d001b4eb32e00b360d00f",
     "tone.opus": "b8f50068f089efa55b63fc081e52b70c82f33383c26cdf9196c27e09d99fb8f4",
-    "tone.wav": "ea9651fcf63da662166bd4a71cbeec5331215ab8ba39677f9eb58e68b7a12f48"
-  }
+    "tone.wav": "ea9651fcf63da662166bd4a71cbeec5331215ab8ba39677f9eb58e68b7a12f48",
+    "artwork.flac": "784607262d394a689f713542be5e5ea03d35cdfdc98dc22d6157453423fb0e50"
+  },
+  "artwork_origin": "Original 8x8 RGB (40,160,90) test pattern; CC0-1.0"
 }

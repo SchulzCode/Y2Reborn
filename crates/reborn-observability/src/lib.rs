@@ -887,3 +887,31 @@ mod failure_tests {
             .all(|e| serde_json::to_vec(e).unwrap().len() <= EVENT_LIMIT));
     }
 }
+
+#[cfg(test)]
+mod retention_tests {
+    use super::*;
+    #[test]
+    fn archive_rotation_total_is_bounded() {
+        let p = std::env::temp_dir().join(format!("reborn-archives-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&p);
+        let o = Observer::new(&p.join("logs")).unwrap();
+        let archives = p.join("diagnostics");
+        for _ in 0..7 {
+            o.diagnostic(&archives, json!({"test":true}), false)
+                .unwrap();
+        }
+        let files = fs::read_dir(&archives)
+            .unwrap()
+            .map(Result::unwrap)
+            .collect::<Vec<_>>();
+        assert_eq!(files.len(), 4);
+        assert!(
+            files
+                .iter()
+                .map(|e| e.metadata().unwrap().len())
+                .sum::<u64>()
+                < 4 * BUNDLE_BYTES as u64
+        );
+    }
+}
