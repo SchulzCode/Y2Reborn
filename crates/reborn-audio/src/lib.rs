@@ -1,20 +1,30 @@
 mod native;
 pub use native::{initialize_logging, wired_device, AlsaSink};
+use reborn_core::{AudioOutput, PcmFormat};
 use serde::Serialize;
-#[derive(Debug, Clone, Copy, Serialize, Default)]
+#[derive(Debug, Clone, Serialize, Default)]
 pub struct Parameters {
     pub rate: u32,
     pub period: u32,
     pub buffer: u32,
+    pub format: PcmFormat,
+    pub channels: u32,
+    pub hardware_mixer_gain_db: Option<f32>,
+    pub device: String,
+    pub fallback: bool,
+    pub fallback_reason: String,
 }
-#[derive(Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct SinkSpec {
-    pub output: reborn_core::AudioOutput,
+    pub output: AudioOutput,
     pub rate: u32,
+    pub format: PcmFormat,
+    pub fallback: bool,
+    pub fallback_reason: String,
 }
 pub trait AudioSink {
     fn parameters(&self) -> Parameters;
-    fn write(&mut self, samples: &[i16]) -> Result<usize, String>;
+    fn write(&mut self, pcm: &[u8]) -> Result<usize, String>;
     fn discard(&mut self) -> Result<(), String>;
     fn delay(&self) -> u64;
 }
@@ -23,12 +33,6 @@ pub fn valid_address(s: &str) -> bool {
         && s.split(':').count() == 6
         && s.split(':')
             .all(|p| p.len() == 2 && p.bytes().all(|c| c.is_ascii_hexdigit()))
-}
-pub fn gain(samples: &mut [i16], volume: u8) {
-    let gain = (volume.min(100) as f32 / 100.).powi(2);
-    for s in samples {
-        *s = (*s as f32 * gain).round() as i16;
-    }
 }
 #[cfg(test)]
 mod tests {
@@ -39,19 +43,18 @@ mod tests {
         assert!(!valid_address("12:34:56:78:90:AB,PROFILE=hfp"));
     }
     #[test]
-    fn gain_is_bounded() {
-        let mut v = [i16::MAX, i16::MIN];
-        gain(&mut v, 255);
-        assert_eq!(v, [i16::MAX, i16::MIN]);
-        gain(&mut v, 0);
-        assert_eq!(v, [0, 0]);
-    }
-    #[test]
     fn missing_sink_is_error() {
         let p = std::env::temp_dir().join("reborn-alsa-test");
         let o = reborn_observability::Observer::new(&p).unwrap();
-        assert!(
-            AlsaSink::open_named("reborn-nonexistent-test-device", 48000, false, o, 1).is_err()
-        );
+        assert!(AlsaSink::open_named(
+            "reborn-nonexistent-test-device",
+            48000,
+            PcmFormat::S32LE,
+            false,
+            None,
+            o,
+            1,
+        )
+        .is_err());
     }
 }

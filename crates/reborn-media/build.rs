@@ -5,6 +5,7 @@ fn main() {
         "libavformat",
         "libavcodec",
         "libavutil",
+        "libavfilter",
         "libswresample",
         "libswscale",
     ] {

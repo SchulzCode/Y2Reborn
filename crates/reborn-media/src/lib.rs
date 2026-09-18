@@ -1,2 +1,5 @@
 mod native;
-pub use native::{initialize_logging, version, Cancel, Decoder, Metadata, Pcm};
+pub use native::{
+    convert_pcm, crossfade_pcm, external_artwork, initialize_logging, runtime_components, version,
+    Cancel, Decoder, DspConfig, Metadata, OutputSpec, Pcm,
+};

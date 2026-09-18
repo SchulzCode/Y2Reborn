@@ -1,16 +1,204 @@
 {
-  "license": "CC0-1.0",
-  "origin": "Original deterministic synthesized sine; no third-party media",
-  "duration_seconds": 1,
-  "peak_dbfs": -46,
+  "artwork_cases": [
+    "embedded JPEG",
+    "embedded PNG",
+    "embedded WebP",
+    "external JPEG",
+    "external PNG",
+    "external WebP"
+  ],
+  "ffmpeg_required": "9.0.1",
   "files": {
-    "tone.flac": "dccf372c22726ef63fcfd4522ff8826a46c6f05ace9eb0341eb618487afbf8ae",
-    "tone.m4a": "701ca6acf42fd63552ce8c85d2b66bb96385ae7599aab31f303c2e465b365b1a",
-    "tone.mp3": "c4a0e727a4b51d580552505ae0e82fcb081d4c51e2cef947edc68cee626972ba",
-    "tone.ogg": "7a7e1571a81dff6a5f45de49675218236a7afd58dc4d001b4eb32e00b360d00f",
-    "tone.opus": "b8f50068f089efa55b63fc081e52b70c82f33383c26cdf9196c27e09d99fb8f4",
-    "tone.wav": "ea9651fcf63da662166bd4a71cbeec5331215ab8ba39677f9eb58e68b7a12f48",
-    "artwork.flac": "784607262d394a689f713542be5e5ea03d35cdfdc98dc22d6157453423fb0e50"
+    "aac.aac": {
+      "bytes": 2614,
+      "sha256": "dfc609e7de12f540302ff0307a5e79057c531b9069b8718700a370ab202049a8"
+    },
+    "aiff-pcm24.aiff": {
+      "bytes": 72054,
+      "sha256": "2c0fc006f8f4f311c678e8aafe8d4b443f02a5ff57936684c3a5b47698ad9c87"
+    },
+    "ape-silence.ape": {
+      "bytes": 910,
+      "sha256": "5a510978f003c19bbe862817dbc8c29e1fd12bba9696b5c25e51e398c787ad2f"
+    },
+    "artwork-external.jpg": {
+      "bytes": 206,
+      "sha256": "fef634554bc1d752afd5cde2850a7b81a5ac552d09c6575eb5ce31e0a85147f5"
+    },
+    "artwork-external.png": {
+      "bytes": 74,
+      "sha256": "c98ce64dfcaeba4c0bad99fa2d96afa258174173c3138774cf0d0aab1aedc103"
+    },
+    "artwork-external.webp": {
+      "bytes": 60,
+      "sha256": "de92a58187592c29d1b43ae60cd435ac11ef37ecded0d9737e08536f1e05bc4f"
+    },
+    "artwork-jpeg.flac": {
+      "bytes": 12043,
+      "sha256": "ddb4e838bd1a8572f9c171b8793e154cdb37c989830c4fe735c716aef0bcc52d"
+    },
+    "artwork-png.flac": {
+      "bytes": 11910,
+      "sha256": "19d2b69e03bf58492b5c1417d10ceece0c8ec8aa39f30ba14bad881cdd51949e"
+    },
+    "artwork-webp.flac": {
+      "bytes": 11897,
+      "sha256": "d3f98fd0c1b910e5e1d53fa7a0d274588e8813fa1aa06d6e0f2565b022b784e6"
+    },
+    "artwork.flac": {
+      "bytes": 11910,
+      "sha256": "19d2b69e03bf58492b5c1417d10ceece0c8ec8aa39f30ba14bad881cdd51949e"
+    },
+    "corrupt-metadata.mp3": {
+      "bytes": 5160,
+      "sha256": "4fcc6dfd14fa9ce15c277b6ca730ec84138488b43e4a2d3fd17549d742c4a3a2"
+    },
+    "flac-16-44100.flac": {
+      "bytes": 11791,
+      "sha256": "7f3848b1aef86a3223751263f99c0ae8a41c5b67f5e6440f000c4fd5c44a5a3e"
+    },
+    "flac-16-48000.flac": {
+      "bytes": 11815,
+      "sha256": "1fd7c5dbad793214fab6599c8a6aafd2e2a25bd85c134827be5cb1aa7754f1d7"
+    },
+    "flac-24-44100.flac": {
+      "bytes": 15985,
+      "sha256": "2f6c4ddea9491eddc81889d76580215d759dc7ab3caed4bef217053ed913e660"
+    },
+    "flac-24-48000.flac": {
+      "bytes": 16283,
+      "sha256": "7ad2be9fa4258ccba697376d4275b72e9482048f6802ccd486639ecb16a8169a"
+    },
+    "flac-24-88200.flac": {
+      "bytes": 22848,
+      "sha256": "f4cf2e8bdfe9ddce9727c2093d0645c86c45eeedfe0b7b407cb5163455e18b31"
+    },
+    "flac-24-96000.flac": {
+      "bytes": 24026,
+      "sha256": "9dee3d56d98a41b0d5237c8f57926c1e6b5e0c0287e0a700eb9da8be5ba2d17e"
+    },
+    "gapless-a.flac": {
+      "bytes": 11429,
+      "sha256": "f582fbc2f82a388d52d5fd85e4be272e6ca20beeb40b0437d056757b6727ca68"
+    },
+    "gapless-b.flac": {
+      "bytes": 11429,
+      "sha256": "8d29c7734f8e946790af7e003e9bcb2fd9ddd1a824d5bc8082d444eb1875759f"
+    },
+    "m4a-aac.m4a": {
+      "bytes": 3595,
+      "sha256": "cde80d55e49a5dc712601f74fb14168adfccbda53a35abc95f188fb62faaf1b5"
+    },
+    "m4a-alac.m4a": {
+      "bytes": 28541,
+      "sha256": "c517251726fdc70120562782b51492c84f834bcf22100a10176d26dc20a2247f"
+    },
+    "malformed.mp3": {
+      "bytes": 180,
+      "sha256": "5659e4bcb935e5cc173b476c707ad0f4d028cb0adee12f2e85c953af50def6e4"
+    },
+    "mp3.mp3": {
+      "bytes": 5146,
+      "sha256": "49db88de577e82cd2763a1ca7fcb12dcffe425778a23a84bc14a2dd21c1acacb"
+    },
+    "opus.opus": {
+      "bytes": 4275,
+      "sha256": "c8d0e43b13231a0b23498ab71cd66ec127b36562f8b434745a623f648d3b46e6"
+    },
+    "source-no-metadata.flac": {
+      "bytes": 11520,
+      "sha256": "102ae10961147293094371605f1630d9b78c3b6b4110e2d9ad1667312137e211"
+    },
+    "tone.flac": {
+      "bytes": 22340,
+      "sha256": "598ed827d7083129136a3c367e9070fd2b2b6f386ff439e909745eaa2b17cd8c"
+    },
+    "tone.m4a": {
+      "bytes": 8908,
+      "sha256": "701ca6acf42fd63552ce8c85d2b66bb96385ae7599aab31f303c2e465b365b1a"
+    },
+    "tone.mp3": {
+      "bytes": 16748,
+      "sha256": "c4a0e727a4b51d580552505ae0e82fcb081d4c51e2cef947edc68cee626972ba"
+    },
+    "tone.ogg": {
+      "bytes": 7222,
+      "sha256": "b2d974f6d40af96029334d08c056adf14fb8b34ad4e577fe3541db2c351671de"
+    },
+    "tone.opus": {
+      "bytes": 14253,
+      "sha256": "438d125ea7b9d5cf8f007d2520f065cd21ea0c5047546a5f1f2b2bfb1b54d196"
+    },
+    "tone.wav": {
+      "bytes": 192078,
+      "sha256": "ea9651fcf63da662166bd4a71cbeec5331215ab8ba39677f9eb58e68b7a12f48"
+    },
+    "truncated-flac.flac": {
+      "bytes": 128,
+      "sha256": "786f4af6cc68cd4644d6e0e16af29365eb4a1b7f9dda05278b96d3719a4b64be"
+    },
+    "truncated-wav.wav": {
+      "bytes": 96,
+      "sha256": "b7b679461a4398dce75a33c33149da1f9ff83ac281d9f4906c73e977d217d435"
+    },
+    "vorbis.ogg": {
+      "bytes": 5094,
+      "sha256": "820c078c21ba5903849107df686c7e8f44a2fd49efecf3bdf099dae94cfffb2b"
+    },
+    "wav-float32.wav": {
+      "bytes": 96092,
+      "sha256": "2537736edd0a1f8e6ee52de59b1d63d67c0a9cf7e864c759f57902bd1c5eb26c"
+    },
+    "wav-pcm16.wav": {
+      "bytes": 44178,
+      "sha256": "e50c94cede62b27648147a9e12e1d2bea81a80629b679aa7bb5c01c247c0258e"
+    },
+    "wav-pcm24.wav": {
+      "bytes": 72102,
+      "sha256": "9d2b70e8d2d20daa334d8d834db929b0c78457efe5966d805dd3004f200083d7"
+    },
+    "wav-pcm32.wav": {
+      "bytes": 96102,
+      "sha256": "bc7c9870252c9f1f340a87c4b710ff0dab202c051d23a346d9fd36df5d0ba874"
+    },
+    "wavpack-silence.wv": {
+      "bytes": 4096,
+      "sha256": "4bd868cf5801211e911c21ad715880d21a26efd97a6ed56cea79cafcf55a0282"
+    }
   },
-  "artwork_origin": "Original 8x8 RGB (40,160,90) test pattern; CC0-1.0"
+  "gapless": {
+    "boundary_sample": -7905,
+    "frames_per_track": 4096,
+    "rate": 44100
+  },
+  "license": "CC0-1.0 for generated files; silent APE/WavPack decoder specimens are checked-in test inputs",
+  "metadata_cases": [
+    "tagged ReplayGain",
+    "no metadata",
+    "corrupt metadata",
+    "truncated audio"
+  ],
+  "origin": "deterministic 440 Hz and ramp signals generated locally by FFmpeg 9.0.1",
+  "schema": "org.y2reborn.audio-fixtures/v2",
+  "source_combinations": [
+    "FLAC 16/44.1",
+    "FLAC 16/48",
+    "FLAC 24/44.1",
+    "FLAC 24/48",
+    "FLAC 24/88.2",
+    "FLAC 24/96",
+    "WAV PCM16",
+    "WAV PCM24",
+    "WAV PCM32",
+    "WAV float32",
+    "MP3",
+    "AAC ADTS",
+    "M4A AAC",
+    "ALAC",
+    "Vorbis",
+    "Opus",
+    "AIFF PCM24",
+    "APE",
+    "WavPack"
+  ]
 }

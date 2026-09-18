@@ -281,6 +281,7 @@ version = "0.1.0"
 dependencies = [
  "cc",
  "pkg-config",
+ "reborn-core",
  "reborn-observability",
  "serde",
  "serde_json",

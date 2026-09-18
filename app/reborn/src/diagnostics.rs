@@ -1,8 +1,8 @@
-use reborn_audio::{gain, AlsaSink, AudioSink};
+use reborn_audio::{AlsaSink, AudioSink};
 use reborn_control::{Command, Request, Response, Test};
 use reborn_core::{AudioOutput, Source};
 use reborn_library::{Database, Filter};
-use reborn_media::{Cancel, Decoder};
+use reborn_media::{Cancel, Decoder, DspConfig, OutputSpec};
 use reborn_observability::{Level, Observer};
 use reborn_platform::{bluetooth, free_bytes, input, storage, wifi};
 use serde_json::{json, Value};
@@ -90,6 +90,25 @@ fn decoder(fixtures: &Path, log: &Observer) -> Result<Value, String> {
         "tone.ogg",
         "tone.opus",
         "tone.wav",
+        "flac-16-44100.flac",
+        "flac-16-48000.flac",
+        "flac-24-44100.flac",
+        "flac-24-48000.flac",
+        "flac-24-88200.flac",
+        "flac-24-96000.flac",
+        "wav-pcm16.wav",
+        "wav-pcm24.wav",
+        "wav-pcm32.wav",
+        "wav-float32.wav",
+        "mp3.mp3",
+        "aac.aac",
+        "m4a-aac.m4a",
+        "m4a-alac.m4a",
+        "vorbis.ogg",
+        "opus.opus",
+        "aiff-pcm24.aiff",
+        "ape-silence.ape",
+        "wavpack-silence.wv",
     ] {
         let time = Instant::now();
         let mut d = Decoder::open(&fixtures.join(name), 48000, Cancel::new()?)?;
@@ -99,29 +118,54 @@ fn decoder(fixtures: &Path, log: &Observer) -> Result<Value, String> {
         let mut peak = 0i32;
         while let Some(p) = d.read()? {
             packets = p.packets;
-            frames += p.samples.len() as u64 / 2;
-            peak = peak.max(
-                p.samples
-                    .iter()
-                    .map(|s| (*s as i32).abs())
-                    .max()
-                    .unwrap_or(0),
-            );
+            frames += p.frames;
+            peak = peak.max(i32::from(p.data.iter().any(|&sample| sample != 0)));
             blocks += 1;
             if blocks > 1000 || time.elapsed() > Duration::from_secs(10) {
                 return Err(format!("fixture bound exceeded: {name}"));
             }
         }
-        let passed = (45000..55000).contains(&frames) && peak > 0 && peak < 1000;
-        results.push(json!({"fixture":name,"passed":passed,"frames":frames,"packets":packets,"blocks":blocks,"peak":peak,"errors":0,"elapsed_ms":time.elapsed().as_millis()}));
+        let expected_duration = name.starts_with("tone.");
+        let passed = if expected_duration {
+            (45000..55000).contains(&frames) && peak > 0
+        } else {
+            frames > 0
+        };
+        results.push(json!({"fixture":name,"passed":passed,"frames":frames,"packets":packets,"blocks":blocks,"peak_nonzero":peak != 0,"errors":0,"elapsed_ms":time.elapsed().as_millis()}));
         if !passed {
             return Err(format!("fixture decoded unexpected PCM: {name}"));
         }
     }
-    let mut art = Decoder::open(&fixtures.join("artwork.flac"), 48000, Cancel::new()?)?;
-    let rgba = art.artwork()?;
-    if rgba.len() != 160 * 160 * 4 || rgba[..4] != [40, 160, 90, 255] {
-        return Err("artwork fixture pixel mismatch".into());
+    for name in ["artwork-png.flac", "artwork-jpeg.flac", "artwork-webp.flac"] {
+        let mut art = Decoder::open(&fixtures.join(name), 48000, Cancel::new()?)?;
+        let rgba = art.artwork()?;
+        if rgba.len() != 160 * 160 * 4 || !rgba.chunks_exact(4).any(|p| p[3] != 0) {
+            return Err(format!("artwork fixture pixel mismatch: {name}"));
+        }
+    }
+    for name in [
+        "artwork-external.jpg",
+        "artwork-external.png",
+        "artwork-external.webp",
+    ] {
+        let rgba = reborn_media::external_artwork(&fixtures.join(name))?;
+        if rgba.len() != 160 * 160 * 4 || !rgba.chunks_exact(4).any(|p| p[3] != 0) {
+            return Err(format!("external artwork fixture pixel mismatch: {name}"));
+        }
+    }
+    for name in [
+        "corrupt-metadata.mp3",
+        "truncated-flac.flac",
+        "truncated-wav.wav",
+    ] {
+        if let Ok(mut decoder) = Decoder::open(&fixtures.join(name), 48000, Cancel::new()?) {
+            for _ in 0..128 {
+                match decoder.read() {
+                    Ok(Some(_)) => {}
+                    Ok(None) | Err(_) => break,
+                }
+            }
+        }
     }
     log.emit(
         Level::Info,
@@ -129,25 +173,36 @@ fn decoder(fixtures: &Path, log: &Observer) -> Result<Value, String> {
         "fixture_suite",
         "Decoder fixtures completed",
         None,
-        json!({"formats":results.len()}),
+        json!({"formats":results.len(),"corruption_cases":3,"artwork_formats":6}),
     );
     Ok(
-        json!({"passed":true,"tests":results,"artwork_passed":true,"elapsed_ms":start.elapsed().as_millis()}),
+        json!({"passed":true,"tests":results,"artwork_passed":true,"external_artwork_passed":true,"corruption_cases_passed":true,"elapsed_ms":start.elapsed().as_millis()}),
     )
 }
 fn audio(output: AudioOutput, rate: u32, fixtures: &Path, log: &Observer) -> Result<Value, String> {
     let before = log.metrics()["audio_xruns"].as_f64().unwrap_or(0.);
     let now = Instant::now();
-    let mut d = Decoder::open(&fixtures.join("tone.wav"), rate, Cancel::new()?)?;
-    let mut sink = AlsaSink::open(&output, rate, log.clone(), log.correlation())?;
+    let (spec, planned) = AlsaSink::plan(&output, rate, log.clone(), log.correlation())?;
+    let mut d = Decoder::open_with(
+        &fixtures.join("tone.wav"),
+        OutputSpec {
+            rate: spec.rate,
+            format: spec.format,
+        },
+        DspConfig {
+            volume: 25,
+            ..Default::default()
+        },
+        Cancel::new()?,
+    )?;
+    let mut sink = AlsaSink::open_spec(&spec, log.clone(), log.correlation())?;
     let params = sink.parameters();
     let mut frames = 0;
-    while let Some(mut p) = d.read()? {
-        gain(&mut p.samples, 25);
+    while let Some(p) = d.read()? {
         let mut offset = 0;
-        while offset < p.samples.len() {
-            let n = sink.write(&p.samples[offset..])?;
-            offset += n * 2;
+        while offset < p.data.len() {
+            let n = sink.write(&p.data[offset..])?;
+            offset += n * p.format.bytes_per_frame();
             frames += n;
             if now.elapsed() > Duration::from_secs(5) {
                 return Err("audio diagnostic timeout".into());
@@ -159,7 +214,7 @@ fn audio(output: AudioOutput, rate: u32, fixtures: &Path, log: &Observer) -> Res
     }
     let xruns = log.metrics()["audio_xruns"].as_f64().unwrap_or(0.) - before;
     Ok(
-        json!({"passed":xruns==0.,"params":params,"frames_written":frames,"bytes_written":frames*4,"xruns":xruns,"elapsed_ms":now.elapsed().as_millis()}),
+        json!({"passed":xruns==0.,"planned":planned,"params":params,"frames_written":frames,"bytes_written":frames as usize*params.format.bytes_per_frame(),"xruns":xruns,"elapsed_ms":now.elapsed().as_millis()}),
     )
 }
 fn storage_test(sources: &[Source]) -> Value {

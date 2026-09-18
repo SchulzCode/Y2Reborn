@@ -12,8 +12,8 @@ Bluetooth peer/audio qualification remain physical gates.
 | Crate | Owned responsibility |
 | --- | --- |
 | reborn-core | Typed AppModel, actions/events/commands, queue, generation, settings, atomic checkpoints |
-| reborn-media | Unique FFmpeg decoder ownership, metadata, stereo S16 resampling, embedded artwork |
-| reborn-audio | AudioSink, ALSA PCM/mixer, wired/BlueALSA selection, recovery, gain |
+| reborn-media | Unique FFmpeg decoder, FLTP DSP/filter graph, final libswresample conversion, metadata and embedded artwork |
+| reborn-audio | AudioSink, ALSA PCM/mixer, wired/BlueALSA selection and recovery |
 | reborn-library | SQLite schema v1, DB worker, incremental scanner, source availability |
 | reborn-platform | Evdev mapping, mount identity, rfkill/wpa control, BlueZ Agent1, power_supply/backlight |
 | reborn-graphics | DRM/GBM/EGL/GLES2 ownership, shaders, glyph/art textures, page flips, offscreen test |
@@ -32,8 +32,10 @@ Direct Rust dependencies: serde/serde_json, libc, rusqlite, dbus, font8x8,
 flate2/tar; cc/pkg-config are build dependencies. No async runtime or bindgen.
 
 Production FFmpeg **9.0.1**, SQLite **3.50.4**, Mesa **24.0.9**, libdrm **2.4.124**
-come from Buildroot **2025.02.17**. Only local-file audio demuxers/decoders and
-JPEG/PNG artwork are selected; no FFmpeg executable, encoder or network protocol.
+come from Buildroot **2025.02.17**. The media contract and selected component
+families are documented in [the FFmpeg 9 audio-stack design](reborn-audio-stack-ffmpeg9.md):
+local music demuxers/decoders, FLTP libavfilter processing, libswresample,
+JPEG/PNG/WebP artwork and no FFmpeg executable, encoder or network protocol.
 Original synthesized fixtures carry CC0 provenance and hashes. Native libraries
 retain their Buildroot license/source receipts; Rust vendors retain upstream
 licenses. The graphics lifetime code is adapted from Y2Linux's MIT gpu-check.
@@ -49,17 +51,20 @@ and observability locks are coordination only, not shared application authority.
 FFmpeg contexts use one decoder thread. ALSA writes are nonblocking, with at most
 20 ms waits; stale generations are discarded on stop, pause, seek and output
 switch. Pause releases the sink; resume decodes from the last measured position.
-Wired playback uses the physically proven 44.1 kHz stereo S16 mode. Bluetooth
-uses the selected peer's BlueALSA PCM rate (44.1 or 48 kHz); discovery uses the
+Wired playback prefers S32_LE at the source-native qualified rate, while the
+current qualification profile deliberately selects the physically proven 44.1
+kHz stereo S16 mode. Bluetooth consumes the same processed PCM stream and
+adapts at its final BlueALSA sink boundary; discovery uses the
 4.3.1 ObjectManager API. A missing or unsupported PCM fails before output changes.
 Eight 2048-frame blocks bound decoder buffering to about 372 ms plus the sink.
 The native resampler staging buffer is bounded separately. EOF drains pending
 PCM; a stalled sink reports an error rather than blocking the UI.
 
 Wired ALSA is discovered by card identity **Y2Audio**, not card number. The sink
-selects stereo S16_LE, period near 512, buffer near 4096, and rejects a mismatched
-sample rate. It saves/restores Master/Headphone mixer state, uses the proven
--24 dB hardware level and conservative software gain. BlueALSA uses validated
+negotiates the qualified stereo format/rate from the platform profile, logs any
+explicit fallback, and rejects an unqualified combination. It saves/restores
+Master/Headphone mixer state, uses the proven -24 dB hardware level and keeps
+software volume inside the FFmpeg filter graph. BlueALSA uses validated
 peer addresses with PROFILE=a2dp; BlueZ and BlueALSA own transport/codecs/keys.
 Opening an audio sink holds the platform's shared `/run/y2/activity.lock`;
 closing it releases the suspend lease. This prevents the existing explicit

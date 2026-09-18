@@ -44,6 +44,54 @@ pub enum AudioOutput {
     Wired,
     Bluetooth(String),
 }
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum PcmFormat {
+    #[serde(rename = "S16_LE")]
+    S16LE,
+    #[default]
+    #[serde(rename = "S32_LE")]
+    S32LE,
+}
+impl PcmFormat {
+    pub const fn bytes_per_sample(self) -> usize {
+        match self {
+            Self::S16LE => 2,
+            Self::S32LE => 4,
+        }
+    }
+    pub const fn bytes_per_frame(self) -> usize {
+        self.bytes_per_sample() * 2
+    }
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::S16LE => "S16_LE",
+            Self::S32LE => "S32_LE",
+        }
+    }
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ReplayGainMode {
+    #[default]
+    Off,
+    Track,
+    Album,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EqBand {
+    pub frequency_hz: f32,
+    pub gain_db: f32,
+    pub q: f32,
+}
+impl Default for EqBand {
+    fn default() -> Self {
+        Self {
+            frequency_hz: 1000.0,
+            gain_db: 0.0,
+            q: 1.0,
+        }
+    }
+}
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "id", rename_all = "snake_case")]
 pub enum MediaSource {
@@ -121,6 +169,14 @@ pub struct Settings {
     pub volume: u8,
     pub screen_timeout_seconds: u32,
     pub music_directory: PathBuf,
+    #[serde(default)]
+    pub replay_gain: ReplayGainMode,
+    #[serde(default)]
+    pub eq_enabled: bool,
+    #[serde(default)]
+    pub eq_bands: Vec<EqBand>,
+    #[serde(default)]
+    pub crossfade_ms: u32,
 }
 impl Default for Settings {
     fn default() -> Self {
@@ -128,6 +184,10 @@ impl Default for Settings {
             volume: 35,
             screen_timeout_seconds: 60,
             music_directory: "/data/music".into(),
+            replay_gain: ReplayGainMode::Off,
+            eq_enabled: false,
+            eq_bands: Vec::new(),
+            crossfade_ms: 0,
         }
     }
 }
@@ -165,10 +225,25 @@ pub enum PlaybackCommand {
 }
 #[derive(Debug, Clone)]
 pub enum Event {
-    TrackStarted { generation: u64 },
-    TrackEnded { generation: u64 },
-    Position { generation: u64, ms: u64 },
-    PlaybackError { generation: u64, message: String },
+    TrackStarted {
+        generation: u64,
+    },
+    TrackBoundary {
+        generation: u64,
+        next_track_id: Option<i64>,
+        output_position_ms: u64,
+    },
+    TrackEnded {
+        generation: u64,
+    },
+    Position {
+        generation: u64,
+        ms: u64,
+    },
+    PlaybackError {
+        generation: u64,
+        message: String,
+    },
     Input(Action),
     SourceChanged(Vec<Source>),
     BluetoothDisconnected(String),
@@ -212,6 +287,23 @@ impl AppModel {
             }
             Event::TrackEnded { generation } if generation == self.generation => {
                 self.playback = PlaybackState::Stopped
+            }
+            Event::TrackBoundary {
+                generation,
+                next_track_id,
+                output_position_ms,
+            } if generation == self.generation => {
+                let next_position = next_track_id.and_then(|id| {
+                    self.queue
+                        .iter()
+                        .position(|track| track.id == id)
+                        .filter(|position| *position > self.queue_position)
+                });
+                if let Some(next_position) = next_position {
+                    self.queue_position = next_position;
+                    self.position_ms = output_position_ms;
+                    self.playback = PlaybackState::Buffering;
+                }
             }
             Event::Position { generation, ms } if generation == self.generation => {
                 self.position_ms = ms
@@ -263,6 +355,8 @@ impl AppModel {
         m.screen_off = false;
         m.generation = 0;
         m.settings.volume = m.settings.volume.min(100);
+        m.settings.crossfade_ms = m.settings.crossfade_ms.min(30_000);
+        m.settings.eq_bands.truncate(8);
         Ok(m)
     }
     pub fn checkpoint(&self, path: &Path) -> io::Result<()> {

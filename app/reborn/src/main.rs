@@ -76,20 +76,62 @@ impl Runtime {
         if !track.path.is_file() {
             return Err("track source unavailable".into());
         }
-        let rate = self.output_rate()?;
+        let requested_rate = match &self.model.output {
+            AudioOutput::Wired if track.sample_rate >= 8_000 => track.sample_rate,
+            _ => self.output_rate()?,
+        };
+        let (spec, _planned) = match reborn_audio::AlsaSink::plan(
+            &self.model.output,
+            requested_rate,
+            self.log.clone(),
+            self.log.correlation(),
+        ) {
+            Ok(plan) => plan,
+            Err(error)
+                if matches!(&self.model.output, AudioOutput::Wired) && requested_rate != 44_100 =>
+            {
+                self.log.emit(
+                    Level::Warn,
+                    "audio",
+                    "qualified_rate_fallback",
+                    "Source rate is not in the current wired qualification profile",
+                    Some(self.log.correlation()),
+                    json!({"source_rate":requested_rate,"selected_rate":44100,"reason":error}),
+                );
+                reborn_audio::AlsaSink::plan(
+                    &self.model.output,
+                    44_100,
+                    self.log.clone(),
+                    self.log.correlation(),
+                )?
+            }
+            Err(error) => return Err(error),
+        };
+        let queue = self
+            .model
+            .queue
+            .iter()
+            .skip(self.model.queue_position + 1)
+            .cloned()
+            .collect();
+        let dsp = reborn_media::DspConfig {
+            volume: self.model.settings.volume,
+            replay_gain: self.model.settings.replay_gain,
+            eq_enabled: self.model.settings.eq_enabled,
+            eq_bands: self.model.settings.eq_bands.clone(),
+            crossfade_ms: self.model.settings.crossfade_ms,
+        };
         self.model.invalidate();
         self.model.playback = PlaybackState::Buffering;
         self.art = false;
         self.dirty = true;
         self.playback.load(
             track,
+            queue,
             self.model.position_ms,
-            reborn_audio::SinkSpec {
-                output: self.model.output.clone(),
-                rate,
-            },
+            spec,
             self.model.generation,
-            self.model.settings.volume,
+            dsp,
             self.log.correlation(),
         )
     }
@@ -185,7 +227,12 @@ impl Runtime {
             Effect::Volume(delta) => {
                 self.model.settings.volume =
                     (self.model.settings.volume as i16 + delta as i16).clamp(0, 100) as u8;
-                self.playback.volume(self.model.settings.volume);
+                if matches!(
+                    self.model.playback,
+                    PlaybackState::Playing | PlaybackState::Buffering
+                ) {
+                    self.load()?;
+                }
                 self.ui.notice = format!("Volume {}", self.model.settings.volume);
             }
             Effect::Scan => {
@@ -312,7 +359,7 @@ impl Runtime {
         Ok(())
     }
     fn status(&self) -> Value {
-        json!({"version":reborn_core::VERSION,"build_id":option_env!("REBORN_BUILD_ID").unwrap_or("development"),"session":self.log.session(),"uptime_seconds":self.log.uptime(),"current_screen":self.model.screen,"screen_off":self.model.screen_off,"playback":{"state":self.model.playback,"track_id":self.model.current().map(|t|t.id),"position_ms":self.model.position_ms,"duration_ms":self.model.current().map(|t|t.duration_ms),"queue_length":self.model.queue.len(),"queue_position":self.model.queue_position,"generation":self.model.generation},"output":self.model.output,"library":{"tracks_loaded":self.tracks.len(),"schema":reborn_library::SCHEMA_VERSION},"scanner":self.scan_state,"wifi":self.wifi_state,"bluetooth":self.bt_state,"storage":self.model.sources,"power":self.power,"graphics":{"available":self.graphics.is_some(),"renderer":self.graphics.as_ref().map(|g|&g.info),"headless":self.headless},"decoder":{"ffmpeg":reborn_media::version()},"buffers":{"frames":self.log.metrics()["audio_buffer_frames"],"milliseconds":self.log.metrics()["audio_buffer_ms"]}})
+        json!({"version":reborn_core::VERSION,"build_id":option_env!("REBORN_BUILD_ID").unwrap_or("development"),"session":self.log.session(),"uptime_seconds":self.log.uptime(),"current_screen":self.model.screen,"screen_off":self.model.screen_off,"playback":{"state":self.model.playback,"track_id":self.model.current().map(|t|t.id),"position_ms":self.model.position_ms,"duration_ms":self.model.current().map(|t|t.duration_ms),"queue_length":self.model.queue.len(),"queue_position":self.model.queue_position,"generation":self.model.generation},"output":self.model.output,"audio":self.playback.audio_state(),"library":{"tracks_loaded":self.tracks.len(),"schema":reborn_library::SCHEMA_VERSION},"scanner":self.scan_state,"wifi":self.wifi_state,"bluetooth":self.bt_state,"storage":self.model.sources,"power":self.power,"graphics":{"available":self.graphics.is_some(),"renderer":self.graphics.as_ref().map(|g|&g.info),"headless":self.headless},"decoder":{"ffmpeg":reborn_media::version(),"runtime":reborn_media::runtime_components().ok()},"buffers":{"frames":self.log.metrics()["audio_buffer_frames"],"milliseconds":self.log.metrics()["audio_buffer_ms"]}})
     }
     fn snapshot(&self) -> Value {
         json!({"status":self.status(),"health":self.log.health(),"metrics":self.log.metrics(),"recent_errors":self.log.events(20,None,Some(Level::Warn),None),"resource_usage":fs::read_to_string("/proc/self/status").unwrap_or_default(),"kernel_events":kernel_events()})
@@ -360,7 +407,12 @@ impl Runtime {
             PlaybackAction::Bluetooth(s) => self.switch(AudioOutput::Bluetooth(s)),
             PlaybackAction::Volume(v) => {
                 self.model.settings.volume = v.min(100);
-                self.playback.volume(v.min(100));
+                if matches!(
+                    self.model.playback,
+                    PlaybackState::Playing | PlaybackState::Buffering
+                ) {
+                    self.load()?;
+                }
                 Ok(())
             }
         }
@@ -675,15 +727,9 @@ fn run() -> Result<(), String> {
                         rt.model.apply(Event::Position { generation, ms });
                         continue;
                     }
-                    let ended = matches!(&event,Event::TrackEnded{generation}if *generation==rt.model.generation);
                     let error = matches!(&event,Event::PlaybackError{generation,..}if *generation==rt.model.generation);
                     rt.model.apply(event);
                     rt.dirty = true;
-                    if ended && rt.model.step(1) {
-                        if let Err(e) = rt.load() {
-                            rt.fail("playback", e)
-                        }
-                    }
                     if error {
                         rt.model.invalidate();
                         rt.playback.stop(rt.model.generation);
@@ -836,6 +882,9 @@ fn run() -> Result<(), String> {
             let reply = env.reply;
             let result: Result<Value, String> = match req.command.clone() {
                 Command::Status => Ok(rt.status()),
+                Command::Audio => Ok(
+                    json!({"audio":rt.playback.audio_state(),"ffmpeg":reborn_media::runtime_components()?}),
+                ),
                 Command::Health => Ok(log.health()),
                 Command::Metrics => Ok(log.metrics()),
                 Command::Snapshot => Ok(rt.snapshot()),
