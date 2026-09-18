@@ -519,10 +519,9 @@ fn run() -> Result<(), String> {
     log.emit(Level::Info,"startup","starting","Reborn Baseline 01",None,json!({"version":reborn_core::VERSION,"ffmpeg":reborn_media::version(),"headless":headless,"process_setup_ms":process_started.elapsed().as_millis()}));
     let mut model = AppModel::restore(&root.join("state/session.json")).unwrap_or_default();
     startup_phase(&log, process_started, "model_restored");
-    // Open the display as soon as the process is alive. KMS handoff still
-    // happens on the first rendered frame, so the early splash keeps owning
-    // scanout while storage and library workers start below it.
-    let graphics = if headless {
+    // Open the display as soon as the process is alive. The first bounded
+    // frame below hands KMS to Reborn while storage and library workers start.
+    let mut graphics = if headless {
         log.health_set(
             "graphics",
             HealthState::Unavailable,
@@ -548,6 +547,25 @@ fn run() -> Result<(), String> {
         }
     };
     startup_phase(&log, process_started, "graphics_ready");
+    let ui = Ui::default();
+    let mut first_frame_presented = false;
+    if let Some(g) = &mut graphics {
+        // Hand scanout to Reborn as soon as the renderer exists. The model is
+        // already restored, so this bounded initial frame gives the user the
+        // real UI while storage, library and radio workers start below it.
+        let draw = ui.draw(&model, &[], "starting", false);
+        if g.render(&draw).is_ok() {
+            first_frame_presented = true;
+            log.emit(
+                Level::Info,
+                "startup",
+                "ready",
+                "First Reborn frame presented",
+                None,
+                json!({"display_handoff":"explicit KMS presentation","initial":true}),
+            );
+        }
+    }
     if let Some(m) = option(&args, "--music-dir") {
         model.settings.music_directory = m.into();
     }
@@ -626,7 +644,7 @@ fn run() -> Result<(), String> {
     .map_err(|e| e.to_string())?;
     let mut rt = Runtime {
         model,
-        ui: Ui::default(),
+        ui,
         tracks: vec![],
         playback,
         log: log.clone(),
@@ -680,7 +698,6 @@ fn run() -> Result<(), String> {
         })
         .map_err(|e| e.to_string())?;
     let mut inputs = inputs;
-    let mut first_frame_presented = false;
     let (mut periodic, mut checkpoint, mut render_time) = (
         Instant::now(),
         Instant::now(),
