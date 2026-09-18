@@ -1,0 +1,201 @@
+   Compiling reborn v0.1.0 (/home/luca/Dokumente/Code/Y2Reborn/app/reborn)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.23s
+     Running unittests src/main.rs (target/debug/deps/reborn-c03fe685152ce072)
+
+running 2 tests
+test playback::tests::sink_failure_reaches_authoritative_model ... ok
+test playback::tests::stop_invalidates_pending_pcm_and_output_switch_reopens ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.14s
+
+     Running unittests src/ctl.rs (target/debug/deps/rebornctl-2756538dcd3cf8db)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/reborn_audio-610cef8b7603caee)
+
+running 3 tests
+test tests::addresses_cannot_inject_pcm_options ... ok
+test tests::gain_is_bounded ... ok
+ALSA lib pcm.c:2722:(snd_pcm_open_noupdate) [error.pcm] Unknown PCM reborn-nonexistent-test-device
+test tests::missing_sink_is_error ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/reborn_control-894d4af5df4fb32d)
+
+running 4 tests
+test tests::json_roundtrip ... ok
+test tests::bounded_hooks ... ok
+test tests::safe_test_discovery ... ok
+test tests::malformed_and_no_exec ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/reborn_core-7dcfc2228b127774)
+
+running 4 tests
+test tests::bluetooth_loss_pauses_only_selected_peer ... ok
+test tests::queue_boundaries ... ok
+test tests::source_loss_invalidates_pcm ... ok
+test tests::stale_events_cannot_restart_after_stop ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/reborn_graphics-7107f5a8892ab858)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/reborn_library-0ed8020e7651d103)
+
+running 7 tests
+test tests::diff_size_and_mtime ... ok
+test tests::formats ... ok
+test tests::future_schema_rejected ... ok
+test consistency_tests::offline_retains_tracks ... ok
+test consistency_tests::queries_treat_metadata_as_data ... ok
+test tests::schema_and_rollback ... ok
+test consistency_tests::upsert_preserves_id_and_reuses_metadata ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/reborn_media-1a94653cd917dd12)
+
+running 6 tests
+test native::corruption_tests::nonfile_and_rate_rejected ... ok
+test native::corruption_tests::cancel_before_open_is_an_error ... ok
+[mp3 @ 0x7fc4b80034c0] Format mp3 detected only with low score of 1, misdetection possible!
+[mp3 @ 0x7fc4b80034c0] Failed to find two consecutive MPEG audio frames.
+test native::tests::malformed_is_error ... ok
+[wav @ 0x7fc4bc040f40] premature end of file while reading INFO tag
+[wav @ 0x7fc4bc040f40] no 'data' tag found
+test native::tests::cancellation_and_seek ... ok
+[wav @ 0x7fc4bc040f40] Packet corrupt (stream = 0, dts = NOPTS).
+[wav @ 0x7fc4bc040f40] Estimating duration from bitrate, this may be inaccurate
+[pcm_s16le @ 0x7fc4bc041f40] Invalid PCM packet, data has size 1 but at least a size of 4 was expected
+[flac @ 0x7fc4bc040f40] Format flac detected only with low score of 1, misdetection possible!
+[flac @ 0x7fc4bc040f40] Could not find codec parameters for stream 0 (Audio: flac, 0 channels): unspecified sample format
+Consider increasing the value for the 'analyzeduration' (3000000) and 'probesize' (2097152) options
+[flac @ 0x7fc4bc040f40] Format flac detected only with low score of 1, misdetection possible!
+[flac @ 0x7fc4bc041f40] invalid residual
+[flac @ 0x7fc4bc041f40] decode_frame() failed
+[mp3 @ 0x7fc4bc040f40] Format mp3 detected only with low score of 1, misdetection possible!
+[mp3 @ 0x7fc4bc040f40] Failed to find two consecutive MPEG audio frames.
+[mp3 @ 0x7fc4bc040f40] Format mp3 detected only with low score of 12, misdetection possible!
+[mp3 @ 0x7fc4bc040f40] Failed to find two consecutive MPEG audio frames.
+[mp3 @ 0x7fc4bc040f40] Format mp3 detected only with low score of 24, misdetection possible!
+[mp3 @ 0x7fc4bc040f40] Failed to find two consecutive MPEG audio frames.
+[mp3 @ 0x7fc4bc040f40] filesize and duration do not match (growing file?)
+[mp3float @ 0x7fc4bc047a00] Could not update timestamps for skipped samples.
+[mov,mp4,m4a,3gp,3g2,mj2 @ 0x7fc4bc040f40] Format mov,mp4,m4a,3gp,3g2,mj2 detected only with low score of 1, misdetection possible!
+[mov,mp4,m4a,3gp,3g2,mj2 @ 0x7fc4bc040f40] moov atom not found
+[mov,mp4,m4a,3gp,3g2,mj2 @ 0x7fc4bc040f40] error reading header
+[mov,mp4,m4a,3gp,3g2,mj2 @ 0x7fc4bc040f40] moov atom not found
+[mov,mp4,m4a,3gp,3g2,mj2 @ 0x7fc4bc040f40] moov atom not found
+[ogg @ 0x7fc4bc040f40] Format ogg detected only with low score of 1, misdetection possible!
+test native::corruption_tests::truncated_containers_do_not_crash ... ok
+[mp3float @ 0x7fc4b4001d00] Could not update timestamps for skipped samples.
+[mp3float @ 0x7fc4b4001d00] Could not update timestamps for discarded samples.
+[aac @ 0x7fc4b4006c80] Could not update timestamps for discarded samples.
+[vorbis @ 0x7fc4b4001d00] Could not update timestamps for discarded samples.
+[opus @ 0x7fc4b4006c80] Could not update timestamps for skipped samples.
+[opus @ 0x7fc4b4006c80] Could not update timestamps for discarded samples.
+test native::tests::fixture_formats ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running unittests src/lib.rs (target/debug/deps/reborn_observability-65a42a3921a27cc5)
+
+running 12 tests
+test failure_tests::disk_full_is_an_error_not_a_panic ... ok
+test failure_tests::redaction_covers_protected_material ... ok
+test tests::log_failure_no_panic ... ok
+test tests::heartbeat_failed ... ok
+test tests::redaction_recursive ... ok
+test failure_tests::unavailable_directory_retains_ring ... ok
+test tests::runtime_level_and_cardinality ... ok
+test failure_tests::metrics_ignore_unbounded_labels ... ok
+test tests::storm_and_correlation ... ok
+test tests::rotation_bounded ... ok
+test tests::bundle_sanitized_and_bounded ... ok
+test failure_tests::event_count_and_record_size_bounded ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.75s
+
+     Running unittests src/lib.rs (target/debug/deps/reborn_platform-a0dab0805802cc10)
+
+running 4 tests
+test input::tests::physical_keys ... ok
+test storage::tests::escaped_mount ... ok
+test wifi::tests::password_encoding_cannot_inject_commands ... ok
+test storage::tests::mount_names_not_block_numbers ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/reborn_ui-4352c9234c4d866c)
+
+running 3 tests
+test tests::button_only_navigation ... ok
+test tests::password_never_rendered ... ok
+test tests::font_dimensions ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests reborn_audio
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests reborn_control
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests reborn_core
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests reborn_graphics
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests reborn_library
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests reborn_media
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests reborn_observability
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests reborn_platform
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests reborn_ui
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

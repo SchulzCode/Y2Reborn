@@ -1,0 +1,124 @@
+6.18.0-y2linux-gpu-02
+Y2LINUX-GPU-02
+b4f5dc38-d743-4c55-a806-e1f5d4a80d16
+proc /proc proc rw,relatime 0 0
+sysfs /sys sysfs rw,relatime 0 0
+devtmpfs /dev devtmpfs rw,relatime,size=475108k,nr_inodes=118777,mode=755 0 0
+devpts /dev/pts devpts rw,relatime,gid=5,mode=620,ptmxmode=666 0 0
+tmpfs /run tmpfs rw,nosuid,nodev,relatime,mode=755 0 0
+tmpfs /tmp tmpfs rw,nosuid,nodev,relatime 0 0
+debugfs /sys/kernel/debug debugfs rw,relatime 0 0
+/dev/mmcblk0p5 / ext4 rw,relatime 0 0
+/dev/mmcblk0p7 /data ext4 rw,nosuid,nodev,relatime 0 0
+tmpfs /lib/modules tmpfs rw,nosuid,nodev,relatime,mode=755 0 0
+proc /proc proc rw,relatime 0 0
+tmpfs /dev/shm tmpfs rw,relatime 0 0
+/dev/mmcblk0p7 /var/lib/bluetooth ext4 rw,nosuid,nodev,relatime 0 0
+/dev/mmcblk0p7 /var/lib/bluealsa ext4 rw,nosuid,nodev,relatime 0 0
+/dev/mmcblk0p7 /tmp/dbus ext4 rw,nosuid,nodev,relatime 0 0
+ 0 [Y2Audio        ]: Y2Audio - Y2Audio
+                      Y2Audio
+I: Bus=0019 Vendor=0001 Product=0001 Version=0100
+N: Name="Y2 navigation buttons"
+P: Phys=gpio-keys-polled/input0
+S: Sysfs=/devices/platform/navigation-keys/input/input0
+U: Uniq=
+H: Handlers=kbd event0 
+B: PROP=0
+B: EV=3
+B: KEY=10 40000000 600 0 0 10000000
+
+I: Bus=0019 Vendor=0001 Product=0001 Version=0001
+N: Name="mtk-pmic-keys"
+P: Phys=
+S: Sysfs=/devices/platform/1000d000.pwrap/1000d000.pwrap:pmic/mt6323-keys/input/input1
+U: Uniq=
+H: Handlers=kbd event1 
+B: PROP=0
+B: EV=3
+B: KEY=100000 0 0 0
+
+I: Bus=0019 Vendor=0000 Product=0000 Version=0000
+N: Name="mt6582-keypad"
+P: Phys=
+S: Sysfs=/devices/platform/10011000.keypad/input/input2
+U: Uniq=
+H: Handlers=kbd event2 
+B: PROP=0
+B: EV=3
+B: KEY=c0000 0 0 0
+
+I: Bus=0018 Vendor=0000 Product=0000 Version=0000
+N: Name="APT32F click-wheel"
+P: Phys=
+S: Sysfs=/devices/platform/11007000.i2c/i2c-0/0-0051/input/input3
+U: Uniq=
+H: Handlers=kbd event3 
+B: PROP=0
+B: EV=3
+B: KEY=3180 0 0 0
+
+I: Bus=0000 Vendor=0000 Product=0000 Version=0000
+N: Name="Y2Audio Headphone"
+P: Phys=ALSA
+S: Sysfs=/devices/platform/sound/sound/card0/input4
+U: Uniq=
+H: Handlers=event4 
+B: PROP=0
+B: EV=21
+B: SW=c4
+
+/run/wpa_supplicant:
+global
+
+/sys/class/backlight:
+y2-backlight
+
+/sys/class/drm:
+card0
+card1
+card1-DSI-1
+renderD128
+version
+
+/sys/class/power_supply:
+BAT0
+y2-usb-input
+y2-usb-presence
+0
+32
+DEVTYPE=power_supply
+OF_NAME=charger
+OF_FULLNAME=/pwrap@1000d000/pmic/charger
+OF_COMPATIBLE_0=innioasis,y2-mt6323-charger
+OF_COMPATIBLE_N=1
+POWER_SUPPLY_NAME=BAT0
+POWER_SUPPLY_TYPE=Battery
+POWER_SUPPLY_STATUS=Charging
+POWER_SUPPLY_HEALTH=Unknown
+POWER_SUPPLY_PRESENT=1
+POWER_SUPPLY_VOLTAGE_NOW=4151074
+POWER_SUPPLY_CONSTANT_CHARGE_CURRENT=450000
+POWER_SUPPLY_CONSTANT_CHARGE_VOLTAGE=4175000
+POWER_SUPPLY_CHARGE_BEHAVIOUR=auto
+POWER_SUPPLY_TYPE=Battery
+DEVTYPE=power_supply
+OF_NAME=usb
+OF_FULLNAME=/usb@11200000
+OF_COMPATIBLE_0=innioasis,y2-usb
+OF_COMPATIBLE_N=1
+POWER_SUPPLY_NAME=y2-usb-input
+POWER_SUPPLY_TYPE=USB
+POWER_SUPPLY_ONLINE=1
+POWER_SUPPLY_CURRENT_MAX=500000
+POWER_SUPPLY_TYPE=USB
+DEVTYPE=power_supply
+OF_NAME=charger
+OF_FULLNAME=/pwrap@1000d000/pmic/charger
+OF_COMPATIBLE_0=innioasis,y2-mt6323-charger
+OF_COMPATIBLE_N=1
+POWER_SUPPLY_NAME=y2-usb-presence
+POWER_SUPPLY_TYPE=USB
+POWER_SUPPLY_ONLINE=1
+POWER_SUPPLY_TYPE=USB
+POWER_SUPPLY_USB_TYPE=Unknown [SDP] DCP CDP BrickID

@@ -1,0 +1,7 @@
+{
+  "unit_tests": 45,
+  "daemon_checks": 20,
+  "tooling_tests": 3,
+  "clippy": "passed with -D warnings",
+  "hardware_acceptance": false
+}

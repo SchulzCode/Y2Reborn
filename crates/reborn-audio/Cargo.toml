@@ -1,0 +1,15 @@
+[package]
+name = "reborn-audio"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+reborn-core = { path = "../reborn-core" }
+reborn-observability = { path = "../reborn-observability" }
+
+[build-dependencies]
+cc.workspace = true
+pkg-config.workspace = true

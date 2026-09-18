@@ -1,0 +1,12 @@
+[package]
+name = "reborn-ui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+font8x8.workspace = true
+reborn-core = { path = "../reborn-core" }
+reborn-graphics = { path = "../reborn-graphics" }

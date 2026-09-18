@@ -1,0 +1,14 @@
+{
+  "license": "CC0-1.0",
+  "origin": "Original deterministic synthesized sine; no third-party media",
+  "duration_seconds": 1,
+  "peak_dbfs": -46,
+  "files": {
+    "tone.flac": "dccf372c22726ef63fcfd4522ff8826a46c6f05ace9eb0341eb618487afbf8ae",
+    "tone.m4a": "701ca6acf42fd63552ce8c85d2b66bb96385ae7599aab31f303c2e465b365b1a",
+    "tone.mp3": "c4a0e727a4b51d580552505ae0e82fcb081d4c51e2cef947edc68cee626972ba",
+    "tone.ogg": "7a7e1571a81dff6a5f45de49675218236a7afd58dc4d001b4eb32e00b360d00f",
+    "tone.opus": "b8f50068f089efa55b63fc081e52b70c82f33383c26cdf9196c27e09d99fb8f4",
+    "tone.wav": "ea9651fcf63da662166bd4a71cbeec5331215ab8ba39677f9eb58e68b7a12f48"
+  }
+}
