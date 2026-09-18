@@ -19,6 +19,7 @@ pub struct Job {
     pub sources: Vec<Source>,
     pub graphics: Value,
     pub output: AudioOutput,
+    pub output_rate: Result<u32, String>,
     pub audio_busy: bool,
 }
 pub struct Diagnostics {
@@ -134,11 +135,11 @@ fn decoder(fixtures: &Path, log: &Observer) -> Result<Value, String> {
         json!({"passed":true,"tests":results,"artwork_passed":true,"elapsed_ms":start.elapsed().as_millis()}),
     )
 }
-fn audio(output: AudioOutput, fixtures: &Path, log: &Observer) -> Result<Value, String> {
+fn audio(output: AudioOutput, rate: u32, fixtures: &Path, log: &Observer) -> Result<Value, String> {
     let before = log.metrics()["audio_xruns"].as_f64().unwrap_or(0.);
     let now = Instant::now();
-    let mut d = Decoder::open(&fixtures.join("tone.wav"), 48000, Cancel::new()?)?;
-    let mut sink = AlsaSink::open(&output, 48000, log.clone(), log.correlation())?;
+    let mut d = Decoder::open(&fixtures.join("tone.wav"), rate, Cancel::new()?)?;
+    let mut sink = AlsaSink::open(&output, rate, log.clone(), log.correlation())?;
     let params = sink.parameters();
     let mut frames = 0;
     while let Some(mut p) = d.read()? {
@@ -221,7 +222,12 @@ fn run(
                 }
                 job.output.clone()
             };
-            audio(output, fixtures, log)
+            let rate = if matches!(output, AudioOutput::Wired) {
+                44100
+            } else {
+                job.output_rate.clone()?
+            };
+            audio(output, rate, fixtures, log)
         }
         Test::Baseline => {
             let mut tests = vec![];

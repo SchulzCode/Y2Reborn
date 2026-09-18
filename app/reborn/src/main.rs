@@ -72,6 +72,7 @@ impl Runtime {
         if !track.path.is_file() {
             return Err("track source unavailable".into());
         }
+        let rate = self.output_rate()?;
         self.model.invalidate();
         self.model.playback = PlaybackState::Buffering;
         self.art = false;
@@ -79,11 +80,20 @@ impl Runtime {
         self.playback.load(
             track,
             self.model.position_ms,
-            self.model.output.clone(),
+            reborn_audio::SinkSpec {
+                output: self.model.output.clone(),
+                rate,
+            },
             self.model.generation,
             self.model.settings.volume,
             self.log.correlation(),
         )
+    }
+    fn output_rate(&self) -> Result<u32, String> {
+        match &self.model.output {
+            AudioOutput::Wired => Ok(44100),
+            AudioOutput::Bluetooth(address) => self.bt_state.playback_rate(address),
+        }
     }
     fn pause(&mut self) {
         self.log.emit(
@@ -113,15 +123,7 @@ impl Runtime {
     }
     fn switch(&mut self, out: AudioOutput) -> Result<(), String> {
         if let AudioOutput::Bluetooth(address) = &out {
-            if !self
-                .bt_state
-                .devices
-                .iter()
-                .any(|d| &d.address == address && d.connected && d.audio)
-                || !self.bt_state.bluealsa
-            {
-                return Err("connected A2DP peer and BlueALSA required".into());
-            }
+            self.bt_state.playback_rate(address)?;
         }
         let active = matches!(
             self.model.playback,
@@ -857,6 +859,7 @@ fn run() -> Result<(), String> {
                         sources: rt.model.sources.clone(),
                         graphics,
                         output: rt.model.output.clone(),
+                        output_rate: rt.output_rate(),
                         audio_busy: matches!(
                             rt.model.playback,
                             PlaybackState::Playing | PlaybackState::Buffering

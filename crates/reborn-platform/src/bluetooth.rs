@@ -43,6 +43,29 @@ pub struct Status {
     pub pending: Option<Pairing>,
     pub error: Option<String>,
 }
+impl Status {
+    pub fn playback_rate(&self, address: &str) -> Result<u32, String> {
+        let device = self
+            .devices
+            .iter()
+            .find(|d| d.address.eq_ignore_ascii_case(address) && d.connected && d.audio)
+            .ok_or("connected A2DP peer required")?;
+        if !self.bluealsa {
+            return Err("BlueALSA unavailable".into());
+        }
+        let pcm = self
+            .pcms
+            .iter()
+            .find(|p| {
+                p["device"] == device.path && p["mode"] == "sink" && p["transport"] == "A2DP-source"
+            })
+            .ok_or("BlueALSA playback PCM not ready; retry after connection completes")?;
+        match (pcm["sampling"].as_u64(), pcm["channels"].as_u64()) {
+            (Some(rate @ (44100 | 48000)), Some(2)) => Ok(rate as u32),
+            _ => Err("Bluetooth PCM must negotiate stereo 44.1 or 48 kHz for Baseline 01".into()),
+        }
+    }
+}
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Pairing {
     pub device: String,
@@ -123,11 +146,12 @@ fn status(c: &Connection) -> Result<(String, Status), String> {
         )
         .method_call("org.freedesktop.DBus", "NameHasOwner", ("org.bluealsa",));
     state.bluealsa = reply.is_ok_and(|r| r.0);
-    let pcms: Result<(HashMap<DbusPath<'static>, PropMap>,), _> = c
+    // BlueALSA 4.3 exposes PCMs through ObjectManager, not the obsolete GetPCMs method.
+    let pcms: Result<Objects, _> = c
         .with_proxy("org.bluealsa", "/org/bluealsa", Duration::from_secs(1))
-        .method_call("org.bluealsa.Manager1", "GetPCMs", ());
-    if let Ok((pcms,)) = pcms {
-        state.pcms=pcms.into_iter().take(16).map(|(path,p)|json!({"object":path.to_string(),"transport":text(&p,"Transport"),"mode":text(&p,"Mode"),"codec":text(&p,"Codec"),"sampling":p.get("Sampling").and_then(|v|v.0.as_u64()),"channels":p.get("Channels").and_then(|v|v.0.as_u64())})).collect();
+        .get_managed_objects();
+    if let Ok(pcms) = pcms {
+        state.pcms=pcms.into_iter().filter_map(|(path,mut interfaces)| interfaces.remove("org.bluealsa.PCM1").map(|p|(path,p))).take(16).map(|(path,p)|json!({"object":path.to_string(),"device":text(&p,"Device"),"transport":text(&p,"Transport"),"mode":text(&p,"Mode"),"codec":text(&p,"Codec"),"sampling":p.get("Sampling").and_then(|v|v.0.as_u64()),"channels":p.get("Channels").and_then(|v|v.0.as_u64())})).collect();
     }
     state.devices.sort_by(|a, b| a.name.cmp(&b.name));
     state.devices.truncate(128);
@@ -479,4 +503,54 @@ pub fn scan_test(seconds: u64) -> Result<serde_json::Value, String> {
         let _ = power(&c, &adapter, false, false);
     }
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn connected() -> Status {
+        Status {
+            bluealsa: true,
+            devices: vec![Device {
+                path: "/org/bluez/hci0/dev_12_34_56_78_90_AB".into(),
+                address: "12:34:56:78:90:AB".into(),
+                connected: true,
+                audio: true,
+                ..Default::default()
+            }],
+            pcms: vec![
+                json!({"device":"/org/bluez/hci0/dev_12_34_56_78_90_AB", "transport":"A2DP-source", "mode":"sink", "channels":2, "sampling":44100}),
+            ],
+            ..Default::default()
+        }
+    }
+    #[test]
+    fn selects_negotiated_rate_for_exact_peer_and_direction() {
+        let mut s = connected();
+        assert_eq!(s.playback_rate("12:34:56:78:90:ab").unwrap(), 44100);
+        s.pcms[0]["sampling"] = json!(48000);
+        assert_eq!(s.playback_rate("12:34:56:78:90:AB").unwrap(), 48000);
+        s.pcms[0]["device"] = json!("/org/bluez/hci0/dev_other");
+        assert!(s.playback_rate("12:34:56:78:90:AB").is_err());
+        s = connected();
+        s.pcms[0]["mode"] = json!("source");
+        assert!(s.playback_rate("12:34:56:78:90:AB").is_err());
+        s = connected();
+        s.pcms[0]["transport"] = json!("HFP-AG");
+        assert!(s.playback_rate("12:34:56:78:90:AB").is_err());
+    }
+    #[test]
+    fn unavailable_and_unsupported_pcm_never_silently_change_rate() {
+        for (field, value) in [("sampling", json!(96000)), ("channels", json!(1))] {
+            let mut s = connected();
+            s.pcms[0][field] = value;
+            assert!(s.playback_rate("12:34:56:78:90:AB").is_err());
+        }
+        let mut s = connected();
+        s.pcms.clear();
+        assert!(s.playback_rate("12:34:56:78:90:AB").is_err());
+        s = connected();
+        s.devices[0].connected = false;
+        assert!(s.playback_rate("12:34:56:78:90:AB").is_err());
+    }
 }

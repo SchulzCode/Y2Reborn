@@ -1,0 +1,15 @@
+Read-only GPU-02 inspection, 2026-09-18, existing owner SSH and retained host pin.
+Command on root@10.42.0.1:
+dbus-send --system --print-reply --dest=org.bluealsa /org/bluealsa org.freedesktop.DBus.ObjectManager.GetManagedObjects
+
+Exit status: 0
+method return time=1659316922.735297 sender=:1.2 -> destination=:1.4 serial=14 reply_serial=2
+   array [
+   ]
+
+The installed BlueALSA service supports ObjectManager. There is no active PCM.
+The returned wall time also demonstrates that device RTC time is not synchronized;
+use boot/session IDs and monotonic time when correlating evidence.
+No pairing, radio power change, connection, playback or installation was performed.
+Pinned Buildroot BlueALSA 4.3.1 source src/bluealsa-iface.xml and
+src/bluealsa-dbus.c confirm PCM1 Device/Mode/Transport/Sampling/Channels properties.

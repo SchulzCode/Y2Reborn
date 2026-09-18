@@ -1,4 +1,4 @@
-use reborn_audio::{gain, AlsaSink, AudioSink};
+use reborn_audio::{gain, AlsaSink, AudioSink, SinkSpec};
 use reborn_core::{AudioOutput, Event, Track};
 use reborn_media::{Cancel, Decoder, Pcm};
 use reborn_observability::{HealthState, Level, Observer};
@@ -19,6 +19,7 @@ pub enum PlaybackEvent {
 }
 struct Job {
     track: Track,
+    rate: u32,
     position: u64,
     generation: u64,
     id: u64,
@@ -32,7 +33,7 @@ enum SinkCommand {
     Shutdown(SyncSender<()>),
     Open {
         generation: u64,
-        output: AudioOutput,
+        spec: SinkSpec,
         id: u64,
         volume: u8,
     },
@@ -101,7 +102,7 @@ impl Playback {
                         Some(job.id),
                         json!({"track_id":job.track.id,"path":job.track.path}),
                     );
-                    let mut d = Decoder::open(&job.track.path, 48000, job.cancel.clone())?;
+                    let mut d = Decoder::open(&job.track.path, job.rate, job.cancel.clone())?;
                     if job.position > 0 {
                         d.seek(job.position)?;
                     }
@@ -224,6 +225,7 @@ impl Playback {
                 let mut generation = 0;
                 let mut correlation = 0;
                 let mut volume = 35;
+                let mut rate = 44100;
                 let mut pending: Option<(Pcm, usize)> = None;
                 let mut started = false;
                 let mut eof = false;
@@ -240,7 +242,7 @@ impl Playback {
                             }
                             SinkCommand::Open {
                                 generation: g,
-                                output,
+                                spec,
                                 id,
                                 volume: v,
                             } => {
@@ -249,9 +251,10 @@ impl Playback {
                                 generation = g;
                                 correlation = id;
                                 volume = v;
+                                rate = spec.rate;
                                 started = false;
                                 eof = false;
-                                match factory(&output, 48000, al.clone(), id) {
+                                match factory(&spec.output, spec.rate, al.clone(), id) {
                                     Ok(s) => {
                                         sink = Some(s);
                                         al.health_set("audio", HealthState::Ok, true, "sink ready");
@@ -329,7 +332,7 @@ impl Playback {
                                     }
                                     let ms = block.position_ms
                                         + (*offset as u64 / 2).saturating_sub(s.delay()) * 1000
-                                            / 48000;
+                                            / u64::from(block.rate);
                                     let _ = et.try_send(PlaybackEvent::Core(Event::Position {
                                         generation,
                                         ms,
@@ -389,7 +392,7 @@ impl Playback {
                             .unwrap_or(0)
                         + sink.as_ref().map(|s| s.delay()).unwrap_or(0);
                     al.gauge("audio_buffer_frames", n as f64);
-                    al.gauge("audio_buffer_ms", n as f64 / 48.);
+                    al.gauge("audio_buffer_ms", n as f64 * 1000. / f64::from(rate));
                 }
             })
             .map_err(|e| e.to_string())?;
@@ -405,18 +408,22 @@ impl Playback {
         &mut self,
         track: Track,
         position: u64,
-        output: AudioOutput,
+        spec: SinkSpec,
         generation: u64,
         volume: u8,
         id: u64,
     ) -> Result<(), String> {
+        if !matches!(spec.rate, 44100 | 48000) {
+            return Err("unsupported PCM rate".into());
+        }
         self.stop(generation);
+        let rate = spec.rate;
         let cancel = Cancel::new()?;
         self.cancel = Some(cancel.clone());
         self.sink
             .try_send(SinkCommand::Open {
                 generation,
-                output,
+                spec,
                 id,
                 volume,
             })
@@ -424,6 +431,7 @@ impl Playback {
         self.decode
             .try_send(DecodeCommand::Load(Box::new(Job {
                 track,
+                rate,
                 position,
                 generation,
                 id,
@@ -460,11 +468,12 @@ mod tests {
     struct Sink {
         frames: Arc<AtomicU64>,
         fail: bool,
+        rate: u32,
     }
     impl AudioSink for Sink {
         fn parameters(&self) -> Parameters {
             Parameters {
-                rate: 48000,
+                rate: self.rate,
                 period: 512,
                 buffer: 4096,
             }
@@ -502,16 +511,29 @@ mod tests {
         let mut p = Playback::with_sink(
             log,
             root,
-            Box::new(move |_, _, _, _| {
-                calls.fetch_add(1, Ordering::Relaxed);
+            Box::new(move |_, rate, _, _| {
+                let previous = calls.fetch_add(1, Ordering::Relaxed);
+                assert_eq!(rate, if previous == 0 { 44100 } else { 48000 });
                 Ok(Box::new(Sink {
                     frames: count.clone(),
                     fail: false,
+                    rate,
                 }))
             }),
         )
         .unwrap();
-        p.load(track(), 0, AudioOutput::Wired, 1, 35, 1).unwrap();
+        p.load(
+            track(),
+            0,
+            SinkSpec {
+                output: AudioOutput::Wired,
+                rate: 44100,
+            },
+            1,
+            35,
+            1,
+        )
+        .unwrap();
         thread::sleep(Duration::from_millis(60));
         assert!(frames.load(Ordering::Relaxed) > 0);
         p.stop(2);
@@ -523,7 +545,10 @@ mod tests {
         p.load(
             track(),
             500,
-            AudioOutput::Bluetooth("12:34:56:78:90:AB".into()),
+            SinkSpec {
+                output: AudioOutput::Bluetooth("12:34:56:78:90:AB".into()),
+                rate: 48000,
+            },
             3,
             35,
             2,
@@ -543,21 +568,83 @@ mod tests {
         p.stop(4);
     }
     #[test]
+    fn decoder_and_sink_agree_on_both_baseline_rates() {
+        for rate in [44100, 48000] {
+            let frames = Arc::new(AtomicU64::new(0));
+            let count = frames.clone();
+            let root =
+                std::env::temp_dir().join(format!("reborn-rate-{}-{rate}", std::process::id()));
+            let log = Observer::new(&root).unwrap();
+            let mut p = Playback::with_sink(
+                log,
+                root,
+                Box::new(move |_, requested, _, _| {
+                    assert_eq!(requested, rate);
+                    Ok(Box::new(Sink {
+                        frames: count.clone(),
+                        fail: false,
+                        rate,
+                    }))
+                }),
+            )
+            .unwrap();
+            p.load(
+                track(),
+                0,
+                SinkSpec {
+                    output: AudioOutput::Wired,
+                    rate,
+                },
+                1,
+                35,
+                1,
+            )
+            .unwrap();
+            let until = Instant::now() + Duration::from_secs(5);
+            loop {
+                if let Ok(PlaybackEvent::Core(event)) =
+                    p.events.recv_timeout(Duration::from_millis(100))
+                {
+                    match event {
+                        Event::TrackEnded { generation: 1 } => break,
+                        Event::PlaybackError { message, .. } => panic!("{message}"),
+                        _ => {}
+                    }
+                }
+                assert!(Instant::now() < until, "PCM drain deadline");
+            }
+            assert_eq!(frames.load(Ordering::Relaxed), u64::from(rate));
+            p.shutdown(2).unwrap();
+        }
+    }
+    #[test]
     fn sink_failure_reaches_authoritative_model() {
         let root = std::env::temp_dir().join(format!("reborn-sink-fault-{}", std::process::id()));
         let log = Observer::new(&root).unwrap();
         let mut p = Playback::with_sink(
             log,
             root,
-            Box::new(|_, _, _, _| {
+            Box::new(|_, rate, _, _| {
                 Ok(Box::new(Sink {
                     frames: Arc::new(AtomicU64::new(0)),
                     fail: true,
+                    rate,
                 }))
             }),
         )
         .unwrap();
-        p.load(track(), 0, AudioOutput::Wired, 9, 35, 1).unwrap();
+        p.load(
+            track(),
+            0,
+            SinkSpec {
+                output: AudioOutput::Wired,
+                rate: 44100,
+            },
+            9,
+            35,
+            1,
+        )
+        .unwrap();
         let until = Instant::now() + Duration::from_secs(2);
         loop {
             if let Ok(PlaybackEvent::Core(Event::PlaybackError {

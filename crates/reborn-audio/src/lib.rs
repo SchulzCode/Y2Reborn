@@ -7,6 +7,11 @@ pub struct Parameters {
     pub period: u32,
     pub buffer: u32,
 }
+#[derive(Clone)]
+pub struct SinkSpec {
+    pub output: reborn_core::AudioOutput,
+    pub rate: u32,
+}
 pub trait AudioSink {
     fn parameters(&self) -> Parameters;
     fn write(&mut self, samples: &[i16]) -> Result<usize, String>;

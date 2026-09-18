@@ -49,8 +49,10 @@ and observability locks are coordination only, not shared application authority.
 FFmpeg contexts use one decoder thread. ALSA writes are nonblocking, with at most
 20 ms waits; stale generations are discarded on stop, pause, seek and output
 switch. Pause releases the sink; resume decodes from the last measured position.
-The initial rate is 48 kHz stereo S16; the media/sink API also accepts 44.1 kHz.
-Eight 2048-frame blocks bound decoder buffering to about 341 ms plus the sink.
+Wired playback uses the physically proven 44.1 kHz stereo S16 mode. Bluetooth
+uses the selected peer's BlueALSA PCM rate (44.1 or 48 kHz); discovery uses the
+4.3.1 ObjectManager API. A missing or unsupported PCM fails before output changes.
+Eight 2048-frame blocks bound decoder buffering to about 372 ms plus the sink.
 The native resampler staging buffer is bounded separately. EOF drains pending
 PCM; a stalled sink reports an error rather than blocking the UI.
 
@@ -109,8 +111,9 @@ DHCP remains with the existing Y2Linux connectivity service. No wpa_cli backend.
 Passwords are sent only to wpa_supplicant, never stored in Reborn DB/state or
 logged. BlueZ uses system D-Bus ObjectManager, Adapter1, Device1, AgentManager1/
 Agent1. Pair/connect requests are asynchronous on the agent connection with
-bounded pending operations and deadlines. BlueALSA Manager1 exposes available
-PCM/profile/codec state. No bluetoothctl application backend.
+bounded pending operations and deadlines. BlueALSA ObjectManager/PCM1 exposes
+available PCM/rate/codec state. No bluetoothctl application backend. The live
+GPU-02 service accepted the read-only ObjectManager query; no peer was connected.
 
 `power_supply` and backlight are discovered under sysfs. Idle screen timeout is
 60 seconds by default, adjustable 30..600. Screen-off leaves playback running;
