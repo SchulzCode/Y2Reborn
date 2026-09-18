@@ -112,6 +112,16 @@ fn decoder(fixtures: &Path, log: &Observer) -> Result<Value, String> {
     ] {
         let time = Instant::now();
         let mut d = Decoder::open(&fixtures.join(name), 48000, Cancel::new()?)?;
+        // The checked-in APE/WavPack specimens are intentionally long enough
+        // to exercise their real container headers. The device diagnostic
+        // only needs to prove that decoding produces valid PCM, so cap every
+        // non-tone fixture at five seconds instead of making a 62-second
+        // specimen a boot-time test.
+        let frame_budget = if name.starts_with("tone.") {
+            u64::MAX
+        } else {
+            5 * 48_000
+        };
         let mut frames = 0u64;
         let mut packets = 0;
         let mut blocks = 0;
@@ -121,7 +131,10 @@ fn decoder(fixtures: &Path, log: &Observer) -> Result<Value, String> {
             frames += p.frames;
             peak = peak.max(i32::from(p.data.iter().any(|&sample| sample != 0)));
             blocks += 1;
-            if blocks > 1000 || time.elapsed() > Duration::from_secs(10) {
+            if frames >= frame_budget {
+                break;
+            }
+            if blocks > 4096 || time.elapsed() > Duration::from_secs(10) {
                 return Err(format!("fixture bound exceeded: {name}"));
             }
         }
