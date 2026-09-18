@@ -17,7 +17,7 @@ try:
   p=subprocess.run(q+[str(base/'usr/bin/rebornctl'),*args,'--socket',str(sock),'--json'],capture_output=True,timeout=60)
   value=json.loads(p.stdout);assert p.returncode==0,(args,p.returncode,value,p.stderr)
   results.append({'command':args,'result':value})
- assert results[0]['result']['decoder']['ffmpeg'].startswith('6.1.5'),results[0]
+ assert results[0]['result']['decoder']['ffmpeg'].startswith('9.0.1'),results[0]
  for script in ['etc/init.d/S60reborn','usr/libexec/reborn-supervise']:
   subprocess.run(q+[str(base/'bin/busybox'),'sh','-n',str(base/script)],check=True)
  print(json.dumps({'passed':True,'hardware_validation':False,'checks':8,'results':results},indent=2))

@@ -33,7 +33,7 @@ Package: `/home/luca/Dokumente/Code/Y2Linux/out/REBORN-BASELINE-01`.
 4. **Dependencies:** [complete version/license inventory](../architecture/dependencies.json).
    Direct Rust dependencies are serde/serde_json, libc, rusqlite, dbus, font8x8,
    flate2/tar; cc/pkg-config are build-time only. Native production libraries:
-   FFmpeg 6.1.5, SQLite 3.50.4, ALSA 1.2.13, Mesa 24.0.9, libdrm 2.4.124,
+   FFmpeg 9.0.1, SQLite 3.50.4, ALSA 1.2.13, Mesa 24.0.9, libdrm 2.4.124,
    D-Bus 1.14.10, BlueZ 5.79, BlueALSA 4.3.1, wpa_supplicant 2.12, libblkid from
    Buildroot. Buildroot is 2025.02.17. No async runtime, production bindgen,
    Python/Node/Java/Android runtime or FFmpeg executable.
@@ -43,7 +43,7 @@ Package: `/home/luca/Dokumente/Code/Y2Linux/out/REBORN-BASELINE-01`.
    document lifetime and ownership; decoder/graphics/PCM handles stay on their
    owning threads. Application/control/library/observability/UI logic forbids
    unsafe Rust. rusqlite/dbus provide upstream SQLite/D-Bus FFI.
-6. **FFmpeg:** production **6.1.5**, direct libavformat/libavcodec/libavutil/
+6. **FFmpeg:** production **9.0.1**, direct libavformat/libavcodec/libavutil/
    libswresample and libswscale for artwork. Local-file protocols only; selected
    FLAC, MP3, AAC/M4A, Ogg Vorbis, Opus, WAV and PNG/JPEG artwork support.
 
@@ -198,7 +198,7 @@ Package: `/home/luca/Dokumente/Code/Y2Linux/out/REBORN-BASELINE-01`.
     tooling tests**, **8 installed ARM runtime/shell checks**, **94 existing
     platform regressions** pass. Clippy all workspace/all targets passes with
     `-D warnings`. Full production image build passed inside `bwrap --unshare-net`.
-    ARM runtime tests use the installed binaries and production FFmpeg 6.1.5,
+    ARM runtime tests must be rerun with the installed binaries and production FFmpeg 9.0.1,
     with six format fixtures and embedded-art pixel check, SQLite/schema/rollback,
     library, metrics and sanitized diagnostic creation. Host scanner reused all
     six unchanged tracks, skipped malformed media and handled deletion. Raw

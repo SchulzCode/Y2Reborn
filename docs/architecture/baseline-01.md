@@ -31,7 +31,7 @@ packages, including inactive host/Windows support crates, are vendored. The
 Direct Rust dependencies: serde/serde_json, libc, rusqlite, dbus, font8x8,
 flate2/tar; cc/pkg-config are build dependencies. No async runtime or bindgen.
 
-Production FFmpeg **6.1.5**, SQLite **3.50.4**, Mesa **24.0.9**, libdrm **2.4.124**
+Production FFmpeg **9.0.1**, SQLite **3.50.4**, Mesa **24.0.9**, libdrm **2.4.124**
 come from Buildroot **2025.02.17**. Only local-file audio demuxers/decoders and
 JPEG/PNG artwork are selected; no FFmpeg executable, encoder or network protocol.
 Original synthesized fixtures carry CC0 provenance and hashes. Native libraries
@@ -227,7 +227,7 @@ SQLite migration/future-schema/ref-counted identity/offline retention/SQL inject
 scanner incremental reuse/deletion/malformed files, six decoder formats/truncation/
 cancellation, log rotation/ring/size/redaction/disk-full/storm/metrics/heartbeat,
 control validation/JSON/socket permissions/slow clients, UI/navigation and state
-restore. An isolated ARM run exercises the actual FFmpeg 6.1.5/SQLite ELF binaries
+restore. An isolated ARM run will exercise the actual FFmpeg 9.0.1/SQLite ELF binaries
 and JSON control tests; it does not emulate physical Lima/audio/radios.
 
 Remaining physical gates: visible GPU rendering and physical input, real wired

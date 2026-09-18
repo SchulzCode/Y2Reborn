@@ -324,7 +324,7 @@
   "production_native": {
     "Buildroot": "2025.02.17",
     "GCC": "13.3.0",
-    "FFmpeg": "6.1.5",
+    "FFmpeg": "9.0.1",
     "SQLite": "3.50.4",
     "Mesa": "24.0.9",
     "libdrm": "2.4.124"
