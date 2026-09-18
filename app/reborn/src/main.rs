@@ -983,7 +983,16 @@ fn run() -> Result<(), String> {
         thread::sleep(Duration::from_millis(15));
     }
     rt.model.invalidate();
-    rt.playback.stop(rt.model.generation);
+    if let Err(e) = rt.playback.shutdown(rt.model.generation) {
+        log.emit(
+            Level::Error,
+            "audio",
+            "shutdown_failed",
+            &e,
+            None,
+            json!({}),
+        );
+    }
     rt.model.playback = PlaybackState::Paused;
     rt.checkpoint();
     rt.scanner.stop();

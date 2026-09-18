@@ -141,6 +141,7 @@ struct State {
     last_bundle: Option<Instant>,
 }
 struct Inner {
+    bundle_lock: Mutex<()>,
     start: Instant,
     boot: String,
     session: String,
@@ -236,6 +237,7 @@ impl Observer {
         let (tx, rx) = sync_channel::<Vec<u8>>(256);
         let session = format!("{}-{}", wall_ms(), std::process::id());
         let o = Self(Arc::new(Inner {
+            bundle_lock: Mutex::new(()),
             start: Instant::now(),
             boot: fs::read_to_string("/proc/sys/kernel/random/boot_id")
                 .unwrap_or_default()
@@ -532,6 +534,11 @@ impl Observer {
             }
             s.last_bundle = Some(Instant::now());
         }
+        let _bundle_guard = self
+            .0
+            .bundle_lock
+            .try_lock()
+            .map_err(|_| io::Error::other("diagnostic writer busy"))?;
         fs::create_dir_all(root)?;
         let mut data = json!({"schema":1,"session":self.session(),"snapshot":snapshot,"health":self.health(),"metrics":self.metrics(),"events":self.events(128,None,None,None),"system":{}});
         for (name, path) in [
@@ -545,6 +552,47 @@ impl Observer {
                 data["system"][name] = json!(v.chars().take(16384).collect::<String>())
             }
         }
+        let mut frequencies = Vec::new();
+        for entry in fs::read_dir("/sys/devices/system/cpu/cpufreq")
+            .into_iter()
+            .flatten()
+            .filter_map(Result::ok)
+            .take(8)
+        {
+            let mut item = json!({"policy":entry.file_name().to_string_lossy()});
+            for name in [
+                "scaling_cur_freq",
+                "scaling_min_freq",
+                "scaling_max_freq",
+                "scaling_governor",
+            ] {
+                if let Ok(v) = fs::read_to_string(entry.path().join(name)) {
+                    item[name] = json!(v.trim());
+                }
+            }
+            frequencies.push(item);
+        }
+        data["system"]["cpu_frequency"] = json!(frequencies);
+        let mut drm = Vec::new();
+        for entry in fs::read_dir("/sys/class/drm")
+            .into_iter()
+            .flatten()
+            .filter_map(Result::ok)
+            .take(32)
+        {
+            let mut item = json!({"node":entry.file_name().to_string_lossy()});
+            for name in ["status", "enabled", "modes"] {
+                if let Ok(v) = fs::read_to_string(entry.path().join(name)) {
+                    item[name] = json!(v.chars().take(512).collect::<String>());
+                }
+            }
+            if let Ok(driver) = fs::canonicalize(entry.path().join("device/driver")) {
+                item["driver"] =
+                    json!(driver.file_name().map(|s| s.to_string_lossy().into_owned()));
+            }
+            drm.push(item);
+        }
+        data["system"]["drm_devices"] = json!(drm);
         let bytes = serde_json::to_vec(&sanitize(&data, true))?;
         if bytes.len() > BUNDLE_BYTES {
             return Err(io::Error::other("diagnostic size bound exceeded"));

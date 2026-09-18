@@ -29,6 +29,7 @@ enum DecodeCommand {
     Stop,
 }
 enum SinkCommand {
+    Shutdown(SyncSender<()>),
     Open {
         generation: u64,
         output: AudioOutput,
@@ -232,6 +233,11 @@ impl Playback {
                     al.heartbeat("audio", 10);
                     while let Ok(cmd) = sr.try_recv() {
                         match cmd {
+                            SinkCommand::Shutdown(reply) => {
+                                drop(sink.take());
+                                let _ = reply.try_send(());
+                                return;
+                            }
                             SinkCommand::Open {
                                 generation: g,
                                 output,
@@ -432,6 +438,15 @@ impl Playback {
         }
         let _ = self.sink.try_send(SinkCommand::Stop);
         let _ = self.decode.try_send(DecodeCommand::Stop);
+    }
+    pub fn shutdown(&mut self, generation: u64) -> Result<(), String> {
+        self.stop(generation);
+        let (tx, rx) = sync_channel(1);
+        self.sink
+            .try_send(SinkCommand::Shutdown(tx))
+            .map_err(|_| "audio worker unavailable")?;
+        rx.recv_timeout(Duration::from_secs(2))
+            .map_err(|_| "audio shutdown deadline exceeded".into())
     }
     pub fn volume(&self, v: u8) {
         let _ = self.sink.try_send(SinkCommand::Volume(v));

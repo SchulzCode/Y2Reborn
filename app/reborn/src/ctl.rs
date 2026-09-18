@@ -43,6 +43,7 @@ fn run() -> Result<i32, String> {
     let cmd = command(&args)?;
     let follow = args.iter().any(|s| s == "--follow");
     let mut last = None;
+    let mut last_session = String::new();
     loop {
         let response = reborn_control::call(
             &path,
@@ -60,6 +61,11 @@ fn run() -> Result<i32, String> {
         if follow {
             if let Some(v) = result.as_array() {
                 for e in v {
+                    let session = e["reborn_session_id"].as_str().unwrap_or("");
+                    if session != last_session {
+                        last = None;
+                        last_session = session.into();
+                    }
                     let n = e["sequence"].as_u64().unwrap_or(0);
                     if last.is_none_or(|p| n > p) {
                         serde_json::to_writer(&mut out, e).map_err(|e| e.to_string())?;

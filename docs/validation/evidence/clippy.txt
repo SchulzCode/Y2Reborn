@@ -1,1 +1,10 @@
-    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.03s
+    Checking reborn-observability v0.1.0 (/home/luca/Dokumente/Code/Y2Reborn/crates/reborn-observability)
+    Checking reborn-graphics v0.1.0 (/home/luca/Dokumente/Code/Y2Reborn/crates/reborn-graphics)
+    Checking reborn-media v0.1.0 (/home/luca/Dokumente/Code/Y2Reborn/crates/reborn-media)
+    Checking reborn-audio v0.1.0 (/home/luca/Dokumente/Code/Y2Reborn/crates/reborn-audio)
+    Checking reborn-platform v0.1.0 (/home/luca/Dokumente/Code/Y2Reborn/crates/reborn-platform)
+    Checking reborn-control v0.1.0 (/home/luca/Dokumente/Code/Y2Reborn/crates/reborn-control)
+    Checking reborn-ui v0.1.0 (/home/luca/Dokumente/Code/Y2Reborn/crates/reborn-ui)
+    Checking reborn-library v0.1.0 (/home/luca/Dokumente/Code/Y2Reborn/crates/reborn-library)
+    Checking reborn v0.1.0 (/home/luca/Dokumente/Code/Y2Reborn/app/reborn)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.48s
