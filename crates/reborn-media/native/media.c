@@ -1040,9 +1040,15 @@ static int list_demuxers(char *out, int size, int *used, int muxers) {
   int first = 1;
   if (!muxers) {
     while ((in = av_demuxer_iterate(&opaque))) {
+      const char *name = in->name;
+      /* The MOV demuxer advertises its container aliases as one runtime
+       * name. Report the configured component name so runtime and generated
+       * Buildroot manifests compare the same thing. */
+      if (!strncmp(name, "mov,", 4))
+        name = "mov";
       if (!first && json_append(out, size, used, ",") < 0)
         return AVERROR(ENOSPC);
-      if (json_string(out, size, used, in->name) < 0)
+      if (json_string(out, size, used, name) < 0)
         return AVERROR(ENOSPC);
       first = 0;
     }
