@@ -1,0 +1,92 @@
+{
+  "meta": {
+    "product": "Reborn",
+    "device": "Y2",
+    "screen": {
+      "width": 480,
+      "height": 360
+    },
+    "navigation": "physical buttons + click wheel; no touch"
+  },
+  "colors": {
+    "bg": "#090B0D",
+    "bgRaised": "#101317",
+    "surface": "#15191E",
+    "surfaceHover": "#1B2026",
+    "surfaceBorder": "#2A3037",
+    "textPrimary": "#F2F1ED",
+    "textSecondary": "#AAAEB5",
+    "textMuted": "#747A83",
+    "accentGold": "#E6B965",
+    "accentGoldBright": "#FFD17B",
+    "accentGoldDim": "#7D6337",
+    "focusGlow": "#F5C973",
+    "danger": "#D46B65",
+    "success": "#74B68B",
+    "track": "#444A51",
+    "black": "#000000"
+  },
+  "typography": {
+    "display": {
+      "recommended": [
+        "Cormorant Garamond",
+        "Noto Serif",
+        "DejaVu Serif"
+      ],
+      "usage": "screen/album/artist titles"
+    },
+    "ui": {
+      "recommended": [
+        "Inter",
+        "Noto Sans",
+        "DejaVu Sans"
+      ],
+      "usage": "menus, metadata, status, settings"
+    },
+    "sizesPx": {
+      "heroTitle": 28,
+      "screenTitle": 20,
+      "sectionTitle": 18,
+      "rowPrimary": 16,
+      "body": 14,
+      "secondary": 12,
+      "micro": 10
+    }
+  },
+  "spacingPx": {
+    "base": 4,
+    "xs": 4,
+    "sm": 8,
+    "md": 12,
+    "lg": 16,
+    "xl": 24,
+    "screenMargin": 16,
+    "rowGap": 8
+  },
+  "radiiPx": {
+    "small": 6,
+    "medium": 10,
+    "large": 14,
+    "pill": 999
+  },
+  "strokePx": {
+    "hairline": 1,
+    "focus": 2,
+    "icon": 2
+  },
+  "focus": {
+    "outline": "2px accentGoldBright",
+    "glowRadiusPx": 6,
+    "fill": "#211B12",
+    "rule": "exactly one focus target at a time"
+  },
+  "layout": {
+    "topStatusBarHeight": 30,
+    "contentTop": 36,
+    "bottomInfoBarHeight": 42,
+    "minRowHeight": 44,
+    "preferredVisibleRows": 5,
+    "albumArtNowPlaying": 168,
+    "albumArtListThumb": 42
+  }
+}

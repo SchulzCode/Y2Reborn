@@ -1,0 +1,32 @@
+/* Reborn Y2 visual reference. Adjust selectors for your actual widgets. */
+QWidget {
+    background: #090B0D;
+    color: #F2F1ED;
+    font-family: "Inter", "Noto Sans", sans-serif;
+}
+QLabel[role="secondary"] { color: #AAAEB5; }
+QLabel[role="muted"] { color: #747A83; }
+
+QFrame[role="card"] {
+    background: #15191E;
+    border: 1px solid #2A3037;
+    border-radius: 10px;
+}
+
+QWidget[focused="true"] {
+    background: #211B12;
+    border: 2px solid #FFD17B;
+    border-radius: 10px;
+}
+
+QProgressBar {
+    background: #444A51;
+    border: none;
+    border-radius: 2px;
+    min-height: 4px;
+    max-height: 4px;
+}
+QProgressBar::chunk {
+    background: #E6B965;
+    border-radius: 2px;
+}
