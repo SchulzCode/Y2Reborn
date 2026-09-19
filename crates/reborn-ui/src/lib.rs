@@ -18,7 +18,6 @@ pub use reborn_core::Effect;
 // border hierarchy and warm focus color are used by every route.
 const BG: u32 = 0x080b10ff;
 const HEADER: u32 = 0x0d1117f5;
-const SURFACE: u32 = 0x11171eff;
 const RAISED: u32 = 0x171e27ff;
 const CARD: u32 = 0x121920f2;
 const CARD_ALT: u32 = 0x161d25f2;
@@ -32,7 +31,6 @@ const SUCCESS: u32 = 0x9ac9b0ff;
 const DANGER: u32 = 0xdb7c70ff;
 const BORDER: u32 = 0x2a333eff;
 const BORDER_SOFT: u32 = 0x202932ff;
-const DIVIDER: u32 = 0x26303aff;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Item {
@@ -56,6 +54,16 @@ impl Item {
         self.secondary = secondary.into();
         self
     }
+}
+
+#[derive(Clone, Copy)]
+struct RowLayout {
+    x: f32,
+    y: f32,
+    width: f32,
+    visible: usize,
+    artwork: bool,
+    has_art: bool,
 }
 
 #[derive(Default, Clone)]
@@ -1387,12 +1395,14 @@ impl Ui {
                 d,
                 &rows,
                 m.navigation.focus,
-                130.,
-                76.,
-                338.,
-                5,
-                false,
-                has_art,
+                RowLayout {
+                    x: 130.,
+                    y: 76.,
+                    width: 338.,
+                    visible: 5,
+                    artwork: false,
+                    has_art,
+                },
             );
             return;
         }
@@ -1513,56 +1523,45 @@ impl Ui {
         text(d, 46., 268., "SD Card", 0.78, SECONDARY);
     }
 
-    fn draw_premium_rows(
-        &self,
-        d: &mut Vec<Quad>,
-        rows: &[Item],
-        focus: usize,
-        x: f32,
-        y: f32,
-        width: f32,
-        visible: usize,
-        artwork: bool,
-        has_art: bool,
-    ) {
+    fn draw_premium_rows(&self, d: &mut Vec<Quad>, rows: &[Item], focus: usize, layout: RowLayout) {
         if rows.is_empty() {
             self.draw_premium_empty(
                 d,
-                x,
-                y + 12.,
-                width,
+                layout.x,
+                layout.y + 12.,
+                layout.width,
                 "Nothing here yet",
                 "Scan your library or connect storage",
             );
             return;
         }
         let start = focus
-            .saturating_sub(visible.saturating_sub(2))
-            .min(rows.len().saturating_sub(visible));
-        for (position, row) in rows.iter().enumerate().skip(start).take(visible) {
-            let row_y = y + (position - start) as f32 * 36.;
+            .saturating_sub(layout.visible.saturating_sub(2))
+            .min(rows.len().saturating_sub(layout.visible));
+        for (position, row) in rows.iter().enumerate().skip(start).take(layout.visible) {
+            let row_y = layout.y + (position - start) as f32 * 36.;
             let selected = position == focus;
             panel(
                 d,
-                x,
+                layout.x,
                 row_y,
-                width,
+                layout.width,
                 32.,
                 if selected { FOCUS } else { CARD },
                 if selected { GOLD } else { BORDER_SOFT },
             );
-            if artwork {
+            if layout.artwork {
                 artwork_card(
                     d,
-                    x + 5.,
+                    layout.x + 5.,
                     row_y + 4.,
                     24.,
                     if selected { FOCUS } else { CARD },
-                    has_art && selected,
+                    layout.has_art && selected,
                 );
                 text(
                     d,
-                    x + 39.,
+                    layout.x + 39.,
                     row_y + 7.,
                     &fit_text(&row.label, 25),
                     0.9,
@@ -1572,14 +1571,14 @@ impl Ui {
                 icon(
                     d,
                     row_icon(&row.key),
-                    x + 10.,
+                    layout.x + 10.,
                     row_y + 8.,
                     15.,
                     if selected { GOLD } else { SECONDARY },
                 );
                 text(
                     d,
-                    x + 36.,
+                    layout.x + 36.,
                     row_y + 7.,
                     &fit_text(&row.label, 28),
                     0.9,
@@ -1589,7 +1588,7 @@ impl Ui {
             if !row.secondary.is_empty() {
                 text(
                     d,
-                    x + width - 111.,
+                    layout.x + layout.width - 111.,
                     row_y + 9.,
                     &fit_text(&row.secondary, 15),
                     0.7,
@@ -1598,7 +1597,7 @@ impl Ui {
             }
             text(
                 d,
-                x + width - 18.,
+                layout.x + layout.width - 18.,
                 row_y + 9.,
                 ">",
                 0.95,
@@ -1734,12 +1733,14 @@ impl Ui {
             d,
             &rows,
             m.navigation.focus,
-            12.,
-            126.,
-            456.,
-            4,
-            true,
-            has_art,
+            RowLayout {
+                x: 12.,
+                y: 126.,
+                width: 456.,
+                visible: 4,
+                artwork: true,
+                has_art,
+            },
         );
     }
 
@@ -1791,12 +1792,14 @@ impl Ui {
             d,
             &rows,
             m.navigation.focus,
-            136.,
-            101.,
-            322.,
-            5,
-            false,
-            false,
+            RowLayout {
+                x: 136.,
+                y: 101.,
+                width: 322.,
+                visible: 5,
+                artwork: false,
+                has_art: false,
+            },
         );
     }
 
@@ -1919,12 +1922,14 @@ impl Ui {
             d,
             &rows,
             m.navigation.focus,
-            12.,
-            101.,
-            456.,
-            5,
-            false,
-            false,
+            RowLayout {
+                x: 12.,
+                y: 101.,
+                width: 456.,
+                visible: 5,
+                artwork: false,
+                has_art: false,
+            },
         );
     }
 
@@ -1970,12 +1975,14 @@ impl Ui {
             d,
             &rows,
             m.navigation.focus,
-            12.,
-            137.,
-            456.,
-            4,
-            true,
-            has_art,
+            RowLayout {
+                x: 12.,
+                y: 137.,
+                width: 456.,
+                visible: 4,
+                artwork: true,
+                has_art,
+            },
         );
     }
 
@@ -2281,451 +2288,6 @@ impl Ui {
         let x = (480. - width) / 2.;
         panel(d, x, 304., width, 25., FOCUS, GOLD);
         centered_text(d, 240., 312., &fit_text(message, 48), 0.72, PRIMARY);
-    }
-
-    fn draw_status(&self, d: &mut Vec<Quad>, m: &AppModel) {
-        rect(d, 0., 0., 480., 34., SURFACE);
-        text(d, 12., 10., "Reborn", 1.6, PRIMARY);
-        text(d, 86., 10., "| Y2", 1.6, MUTED);
-        text(d, 198., 10., screen_title(m.screen), 1.6, GOLD);
-        if self.bluetooth.powered {
-            text(d, 278., 10., "BT", 0.9, SUCCESS);
-        }
-        if self.wifi.powered {
-            text(d, 306., 10., "WF", 0.9, SUCCESS);
-        }
-        text(d, 348., 10., output_short(&m.output), 1.0, SECONDARY);
-        text(
-            d,
-            414.,
-            10.,
-            &format!("V{}", m.settings.volume),
-            1.0,
-            PRIMARY,
-        );
-        rect(d, 0., 33., 480., 1., DIVIDER);
-    }
-
-    fn draw_list(&self, d: &mut Vec<Quad>, m: &AppModel, tracks: &[Track], has_art: bool) {
-        let rows = self.rows(m, tracks);
-        let collection_view = matches!(m.screen, Screen::Album | Screen::Artist);
-        if collection_view {
-            self.draw_collection_banner(d, m, tracks, has_art);
-        } else {
-            let title = screen_title(m.screen);
-            text(d, 14., 50., title, 2.0, PRIMARY);
-        }
-        if m.screen == Screen::Home {
-            text(d, 14., 72., "Listen deeper", 1.2, SECONDARY);
-        } else if m.screen == Screen::Bluetooth || m.screen == Screen::SettingsBluetooth {
-            text(d, 14., 72., &self.bluetooth.message(true), 1.0, SECONDARY);
-        } else if m.screen == Screen::Wifi || m.screen == Screen::SettingsWifi {
-            text(d, 14., 72., &self.wifi.message(false), 1.0, SECONDARY);
-        } else if m.screen == Screen::Music && tracks.is_empty() {
-            self.draw_empty(
-                d,
-                "No music found",
-                "Scan your library or insert an SD card",
-            );
-            return;
-        }
-        let list_top = if collection_view {
-            128.
-        } else if matches!(
-            m.screen,
-            Screen::Home
-                | Screen::Bluetooth
-                | Screen::SettingsBluetooth
-                | Screen::Wifi
-                | Screen::SettingsWifi
-        ) {
-            92.
-        } else {
-            72.
-        };
-        let bottom = if m.current().is_some() { 282. } else { 322. };
-        let visible = (((bottom - list_top) / 39.0_f32).max(1.0_f32)) as usize;
-        let start = m
-            .navigation
-            .focus
-            .saturating_sub(visible.saturating_sub(2))
-            .min(rows.len().saturating_sub(visible));
-        for (position, row) in rows.iter().enumerate().skip(start).take(visible) {
-            let y = list_top + ((position - start) as f32 * 39.);
-            if position == m.navigation.focus {
-                rect(d, 10., y, 460., 34., FOCUS);
-                rect(d, 10., y, 3., 34., GOLD);
-                rect(d, 13., y + 33., 457., 1., GOLD);
-            } else {
-                rect(d, 14., y + 33., 456., 1., DIVIDER);
-            }
-            let foreground = if position == m.navigation.focus {
-                PRIMARY
-            } else {
-                SECONDARY
-            };
-            text(d, 24., y + 6., &row.label, 1.35, foreground);
-            if !row.secondary.is_empty() {
-                text(
-                    d,
-                    24.,
-                    y + 22.,
-                    &row.secondary,
-                    0.9,
-                    if position == m.navigation.focus {
-                        GOLD
-                    } else {
-                        MUTED
-                    },
-                );
-            }
-            text(
-                d,
-                450.,
-                y + 10.,
-                ">",
-                1.2,
-                if position == m.navigation.focus {
-                    GOLD
-                } else {
-                    MUTED
-                },
-            );
-        }
-        if rows.is_empty() {
-            self.draw_empty(
-                d,
-                "Nothing here yet",
-                "Your library will appear after a scan",
-            );
-        }
-    }
-
-    fn draw_collection_banner(
-        &self,
-        d: &mut Vec<Quad>,
-        m: &AppModel,
-        tracks: &[Track],
-        has_art: bool,
-    ) {
-        let (kind, name, meta) = match m.screen {
-            Screen::Album => {
-                let name = m
-                    .navigation
-                    .filter
-                    .strip_prefix("album:")
-                    .unwrap_or("Album");
-                let artist = tracks
-                    .iter()
-                    .find(|track| track_matches(track, &m.navigation.filter))
-                    .map(|track| display_or_unknown(&track.artist))
-                    .unwrap_or("Unknown");
-                ("Album", name, artist.to_owned())
-            }
-            Screen::Artist => (
-                "Artist",
-                m.navigation
-                    .filter
-                    .strip_prefix("artist:")
-                    .unwrap_or("Artist"),
-                "Albums and tracks".into(),
-            ),
-            _ => return,
-        };
-        if has_art {
-            let mut art = Quad::rect(14., 48., 66., 66., PRIMARY);
-            art.artwork = true;
-            d.push(art);
-        } else {
-            rect(d, 14., 48., 66., 66., RAISED);
-            text(d, 38., 70., "♪", 2.4, GOLD);
-        }
-        text(d, 94., 54., name, 1.65, PRIMARY);
-        text(d, 94., 82., kind, 0.9, GOLD);
-        text(d, 94., 101., &meta, 1.0, SECONDARY);
-        rect(d, 14., 121., 452., 1., DIVIDER);
-    }
-
-    fn draw_mini_player(&self, d: &mut Vec<Quad>, m: &AppModel, has_art: bool) {
-        let Some(track) = m.current() else { return };
-        rect(d, 10., 282., 460., 38., RAISED);
-        rect(d, 10., 282., 460., 1., DIVIDER);
-        if has_art {
-            let mut art = Quad::rect(16., 287., 28., 28., PRIMARY);
-            art.artwork = true;
-            d.push(art);
-        } else {
-            rect(d, 16., 287., 28., 28., 0x25313cff);
-            text(d, 26., 296., "♪", 1.2, GOLD);
-        }
-        text(d, 54., 288., display_or_unknown(&track.title), 1.1, PRIMARY);
-        text(d, 54., 304., display_or_unknown(&track.artist), 0.95, MUTED);
-        text(d, 424., 295., playback_glyph(m.playback), 1.5, GOLD);
-    }
-
-    fn draw_now_playing(&self, d: &mut Vec<Quad>, m: &AppModel, has_art: bool) {
-        let Some(track) = m.current() else {
-            self.draw_empty(d, "Nothing is playing", "Choose music to begin listening");
-            return;
-        };
-        if has_art {
-            let mut art = Quad::rect(14., 51., 154., 154., PRIMARY);
-            art.artwork = true;
-            d.push(art);
-        } else {
-            rect(d, 14., 51., 154., 154., RAISED);
-            text(d, 76., 116., "♪", 5., GOLD);
-        }
-        text(d, 184., 58., display_or_unknown(&track.title), 1.7, PRIMARY);
-        text(
-            d,
-            184.,
-            92.,
-            display_or_unknown(&track.artist),
-            1.35,
-            SECONDARY,
-        );
-        text(d, 184., 121., display_or_unknown(&track.album), 1.2, MUTED);
-        text(
-            d,
-            184.,
-            154.,
-            &format!(
-                "{} · {}",
-                track.codec.to_uppercase(),
-                technical_format(track)
-            ),
-            0.95,
-            GOLD,
-        );
-        text(
-            d,
-            184.,
-            178.,
-            &format!("{} / {}", time(m.position_ms), time(track.duration_ms)),
-            1.0,
-            SECONDARY,
-        );
-        rect(d, 184., 204., 280., 5., DIVIDER);
-        rect(
-            d,
-            184.,
-            204.,
-            280. * progress(m.position_ms, track.duration_ms),
-            5.,
-            GOLD,
-        );
-        text(d, 42., 236., "‹", 2.0, SECONDARY);
-        text(d, 110., 236., playback_glyph(m.playback), 2.0, GOLD);
-        text(d, 176., 236., ">", 2.0, SECONDARY);
-        text(d, 256., 236., "Volume", 0.9, MUTED);
-        rect(d, 256., 252., 190., 5., DIVIDER);
-        rect(
-            d,
-            256.,
-            252.,
-            190. * (m.settings.volume as f32 / 100.),
-            5.,
-            GOLD,
-        );
-        text(
-            d,
-            256.,
-            266.,
-            &format!("{} / 100", m.settings.volume),
-            0.9,
-            SECONDARY,
-        );
-        text(
-            d,
-            14.,
-            296.,
-            &format!("{} · {}", output_label(&m.output), track.codec),
-            0.95,
-            MUTED,
-        );
-    }
-
-    fn draw_diagnostics(&self, d: &mut Vec<Quad>, m: &AppModel, tracks: &[Track], health: &str) {
-        if m.navigation.filter == "audio" {
-            self.draw_audio_information(d, m);
-            return;
-        }
-        text(d, 14., 50., "System status", 2.0, PRIMARY);
-        text(
-            d,
-            14.,
-            74.,
-            "Simple when you are listening. Detailed via SSH.",
-            0.95,
-            SECONDARY,
-        );
-        let rows = [
-            ("Audio", health_label(health)),
-            (
-                "Storage",
-                if m.sources.iter().any(|s| s.online) {
-                    "OK"
-                } else {
-                    "Unavailable"
-                },
-            ),
-            ("Library", if tracks.is_empty() { "Empty" } else { "OK" }),
-            ("Output", &output_label(&m.output)),
-            ("Reborn", "Running"),
-        ];
-        for (index, (label, value)) in rows.iter().enumerate() {
-            let y = 112. + index as f32 * 38.;
-            rect(d, 14., y + 30., 452., 1., DIVIDER);
-            text(d, 22., y + 7., label, 1.2, SECONDARY);
-            text(
-                d,
-                330.,
-                y + 7.,
-                value,
-                1.1,
-                if *value == "OK" { SUCCESS } else { PRIMARY },
-            );
-        }
-    }
-
-    fn draw_audio_information(&self, d: &mut Vec<Quad>, m: &AppModel) {
-        text(d, 14., 50., "Audio information", 2.0, PRIMARY);
-        let Some(track) = m.current() else {
-            self.draw_empty(d, "Nothing is playing", "Start a track to see its format");
-            return;
-        };
-        let rows = [
-            ("Codec", display_or_unknown(&track.codec).to_owned()),
-            ("Source", technical_format(track)),
-            ("Output", output_label(&m.output)),
-            (
-                "ReplayGain",
-                replay_gain_label(m.settings.replay_gain).to_owned(),
-            ),
-            (
-                "Equalizer",
-                if m.settings.eq_enabled { "On" } else { "Off" }.into(),
-            ),
-            ("Bluetooth", self.bluetooth.connection.clone()),
-        ];
-        for (index, (label, value)) in rows.iter().enumerate() {
-            let y = 88. + index as f32 * 36.;
-            rect(d, 14., y + 27., 452., 1., DIVIDER);
-            text(d, 22., y + 5., label, 1.1, SECONDARY);
-            text(
-                d,
-                220.,
-                y + 5.,
-                if value.is_empty() { "—" } else { value },
-                1.05,
-                PRIMARY,
-            );
-        }
-    }
-
-    fn draw_empty(&self, d: &mut Vec<Quad>, title: &str, detail: &str) {
-        rect(d, 24., 112., 432., 96., SURFACE);
-        text(d, 42., 136., title, 1.5, PRIMARY);
-        text(d, 42., 166., detail, 1.0, SECONDARY);
-    }
-
-    fn draw_pairing(&self, d: &mut Vec<Quad>, pair: &str) {
-        rect(d, 24., 72., 432., 190., SURFACE);
-        text(d, 42., 100., "Bluetooth pairing", 1.7, PRIMARY);
-        text(d, 42., 138., pair, 1.4, GOLD);
-        text(d, 42., 188., "Select  Allow", 1.0, SUCCESS);
-        text(d, 42., 212., "Back    Reject", 1.0, DANGER);
-    }
-
-    fn draw_text_entry(&self, d: &mut Vec<Quad>) {
-        text(d, 14., 52., "Join Wi-Fi", 2.0, PRIMARY);
-        text(d, 14., 82., &self.ssid, 1.2, SECONDARY);
-        rect(d, 14., 112., 452., 36., SURFACE);
-        text(
-            d,
-            26.,
-            125.,
-            &"•".repeat(self.password.len()),
-            1.25,
-            PRIMARY,
-        );
-        rect(d, 14., 174., 452., 54., FOCUS);
-        text(d, 38., 188., "Character", 0.9, MUTED);
-        text(
-            d,
-            198.,
-            184.,
-            &(LETTERS[self.letter] as char).to_string(),
-            3.0,
-            GOLD,
-        );
-        text(
-            d,
-            14.,
-            258.,
-            "Wheel choose · Select add · Previous delete",
-            0.9,
-            SECONDARY,
-        );
-        text(
-            d,
-            14.,
-            278.,
-            "Menu/hold Select connect · Back cancel",
-            0.9,
-            MUTED,
-        );
-    }
-
-    fn draw_modal(&self, d: &mut Vec<Quad>, m: &AppModel, tracks: &[Track]) {
-        rect(d, 0., 34., 480., 286., 0x070a0ee8);
-        let rows = self.modal_rows(m);
-        let title = match m.navigation.modal {
-            Some(Modal::ContextMenu) => "Track options",
-            Some(Modal::PowerMenu) => "Power",
-            Some(Modal::Confirm(_)) => "Are you sure?",
-            None => "",
-        };
-        rect(d, 34., 58., 412., 234., SURFACE);
-        text(d, 52., 78., title, 1.7, PRIMARY);
-        if let Some(Modal::Confirm(action)) = m.navigation.modal {
-            text(d, 52., 102., confirmation_copy(action), 0.9, SECONDARY);
-        }
-        for (index, row) in rows.iter().enumerate() {
-            let y = 126. + index as f32 * 31.;
-            if index == m.navigation.modal_focus {
-                rect(d, 48., y, 384., 27., FOCUS);
-                rect(d, 48., y, 3., 27., GOLD);
-            }
-            text(
-                d,
-                62.,
-                y + 8.,
-                &row.label,
-                1.1,
-                if index == m.navigation.modal_focus {
-                    PRIMARY
-                } else {
-                    SECONDARY
-                },
-            );
-        }
-        let _ = tracks;
-    }
-
-    fn draw_footer(&self, d: &mut Vec<Quad>, m: &AppModel) {
-        rect(d, 0., 332., 480., 28., SURFACE);
-        text(d, 12., 342., "Wheel navigate", 0.9, MUTED);
-        text(d, 170., 342., "Select open", 0.9, MUTED);
-        text(d, 304., 342., "Back return", 0.9, MUTED);
-        if !self.notice.is_empty() && self.notice_until.is_none_or(|until| Instant::now() < until) {
-            rect(d, 98., 300., 284., 25., FOCUS);
-            text(d, 108., 308., &self.notice, 0.85, GOLD);
-        }
-        if m.screen == Screen::NowPlaying {
-            text(d, 418., 342., "Vol", 0.9, GOLD);
-        }
     }
 }
 
