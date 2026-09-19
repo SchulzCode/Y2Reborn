@@ -20,11 +20,22 @@ pub enum PlaybackEvent {
     Core(Event),
     Artwork { generation: u64, bytes: Vec<u8> },
 }
+pub struct LoadRequest {
+    pub track: Track,
+    pub queue: Vec<Track>,
+    pub position: u64,
+    pub spec: SinkSpec,
+    pub generation: u64,
+    pub dsp: DspConfig,
+    pub gapless_enabled: bool,
+    pub id: u64,
+}
 struct Job {
     track: Track,
     queue: Vec<Track>,
     spec: SinkSpec,
     dsp: DspConfig,
+    gapless_enabled: bool,
     position: u64,
     generation: u64,
     id: u64,
@@ -292,7 +303,7 @@ fn update_media_state(
                 "output_rate":job.spec.rate
             },
             "final_format_conversion":decoder.metadata.format_conversion,
-            "gapless":{"enabled":true,"preopened":preopened},
+            "gapless":{"enabled":job.gapless_enabled,"preopened":preopened},
             "crossfade":{"enabled":job.dsp.crossfade_ms>0,"duration_ms":job.dsp.crossfade_ms}
         });
         if let Some(alsa) = alsa {
@@ -457,9 +468,9 @@ impl Playback {
                     let mut next_decoder = None;
                     let mut next_pending = VecDeque::new();
                     let open_next = |start: usize| -> Option<(usize, Decoder)> {
-                        for candidate in start..tracks.len() {
+                        for (candidate, track) in tracks.iter().enumerate().skip(start) {
                             match Decoder::open_with(
-                                &tracks[candidate].path,
+                                &track.path,
                                 output,
                                 job.dsp.clone(),
                                 job.cancel.clone(),
@@ -467,7 +478,7 @@ impl Playback {
                                 Ok(mut next) => {
                                     publish_artwork(
                                         &cache,
-                                        &tracks[candidate],
+                                        track,
                                         &mut next,
                                         job.generation,
                                         &det,
@@ -480,16 +491,18 @@ impl Playback {
                                     "next_track_open_failed",
                                     &e,
                                     Some(job.id),
-                                    json!({"track_id":tracks[candidate].id,"recovery":"skip_to_next_track"}),
+                                    json!({"track_id":track.id,"recovery":"skip_to_next_track"}),
                                 ),
                             }
                         }
                         None
                     };
                     let mut preopened_index = None;
-                    if let Some((candidate, next)) = open_next(1) {
-                        preopened_index = Some(candidate);
-                        next_decoder = Some(next);
+                    if job.gapless_enabled || crossfade_enabled {
+                        if let Some((candidate, next)) = open_next(1) {
+                            preopened_index = Some(candidate);
+                            next_decoder = Some(next);
+                        }
                     }
                     loop {
                         dl.heartbeat("playback", 20);
@@ -1048,6 +1061,8 @@ impl Playback {
             observer: state_observer,
         })
     }
+    #[cfg(test)]
+    #[allow(clippy::too_many_arguments)]
     pub fn load(
         &mut self,
         track: Track,
@@ -1058,6 +1073,28 @@ impl Playback {
         dsp: DspConfig,
         id: u64,
     ) -> Result<(), String> {
+        self.load_with_gapless(LoadRequest {
+            track,
+            queue,
+            position,
+            spec,
+            generation,
+            dsp,
+            gapless_enabled: true,
+            id,
+        })
+    }
+    pub fn load_with_gapless(&mut self, request: LoadRequest) -> Result<(), String> {
+        let LoadRequest {
+            track,
+            queue,
+            position,
+            spec,
+            generation,
+            dsp,
+            gapless_enabled,
+            id,
+        } = request;
         if !(8000..=384_000).contains(&spec.rate) {
             return Err("unsupported PCM rate".into());
         }
@@ -1077,6 +1114,7 @@ impl Playback {
                 queue,
                 spec,
                 dsp,
+                gapless_enabled,
                 position,
                 generation,
                 id,

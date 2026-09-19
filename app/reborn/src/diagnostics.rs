@@ -227,7 +227,7 @@ fn audio(output: AudioOutput, rate: u32, fixtures: &Path, log: &Observer) -> Res
     }
     let xruns = log.metrics()["audio_xruns"].as_f64().unwrap_or(0.) - before;
     Ok(
-        json!({"passed":xruns==0.,"planned":planned,"params":params,"frames_written":frames,"bytes_written":frames as usize*params.format.bytes_per_frame(),"xruns":xruns,"elapsed_ms":now.elapsed().as_millis()}),
+        json!({"passed":xruns==0.,"planned":planned,"params":params,"frames_written":frames,"bytes_written":frames*params.format.bytes_per_frame(),"xruns":xruns,"elapsed_ms":now.elapsed().as_millis()}),
     )
 }
 fn storage_test(sources: &[Source]) -> Value {

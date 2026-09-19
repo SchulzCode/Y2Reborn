@@ -6,7 +6,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-pub const VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), "-baseline.01");
+pub const VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), "-premium.01");
 pub const MAX_QUEUE: usize = 20_000;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(tag = "state", rename_all = "snake_case")]
@@ -128,41 +128,134 @@ pub struct Track {
     pub artwork: bool,
     pub online: bool,
 }
+/// Semantic actions are the only input vocabulary exposed to the product/UI
+/// layer. Linux event types and key codes stop at `reborn-platform::input`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Action {
-    Up,
-    Down,
-    Left,
-    Right,
+    NavigateUp,
+    NavigateDown,
+    NavigateLeft,
+    NavigateRight,
     Select,
     Back,
-    Menu,
+    Home,
+    ContextMenu,
     PlayPause,
-    Previous,
-    Next,
+    ShowNowPlaying,
+    PreviousTrack,
+    NextTrack,
+    SeekBackward,
+    SeekForward,
     VolumeUp,
     VolumeDown,
-    Wheel(i32),
-    ScreenToggle,
+    WheelClockwise(u8),
+    WheelCounterClockwise(u8),
+    ScreenWake,
+    ScreenSleep,
+    PowerMenu,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PhysicalControl {
+    Select,
+    Back,
+    Previous,
+    Next,
+    PlayPause,
+    Power,
+    VolumeUp,
+    VolumeDown,
+    WheelClockwise,
+    WheelCounterClockwise,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NormalizedInput {
+    Press(PhysicalControl),
+    Release(PhysicalControl),
+    LongPress(PhysicalControl),
+    Repeat(PhysicalControl),
+    WheelClockwise(u8),
+    WheelCounterClockwise(u8),
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum Screen {
     #[default]
-    Main,
+    #[serde(alias = "main")]
+    Home,
     Music,
     Artists,
     Albums,
     Tracks,
     Folders,
     NowPlaying,
+    Queue,
+    Connectivity,
     Bluetooth,
     Wifi,
-    Diagnostics,
     Settings,
+    SettingsAudio,
+    SettingsPlayback,
+    SettingsLibrary,
+    SettingsBluetooth,
+    SettingsWifi,
+    SettingsDisplay,
+    SettingsPower,
+    SettingsSystem,
+    Diagnostics,
+    Album,
+    Artist,
     TextEntry,
     Pairing,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct NavigationState {
+    /// Parent routes only. The current route is authoritative in AppModel::screen.
+    pub stack: Vec<Screen>,
+    pub focus: usize,
+    pub scroll: usize,
+    pub filter: String,
+    pub modal: Option<Modal>,
+    pub modal_focus: usize,
+    pub context_target: Option<usize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Modal {
+    ContextMenu,
+    PowerMenu,
+    Confirm(ConfirmAction),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConfirmAction {
+    ClearQueue,
+    RebuildLibrary,
+    ForgetBluetooth,
+    ForgetWifi,
+    PowerOff,
+    Reboot,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct LibraryState {
+    #[serde(skip)]
+    pub tracks: Vec<Track>,
+    pub scanning: bool,
+    pub last_scan: Option<ScanSummary>,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ScanSummary {
+    pub discovered: u64,
+    pub reused: u64,
+    pub elapsed_ms: u64,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Settings {
@@ -177,6 +270,24 @@ pub struct Settings {
     pub eq_bands: Vec<EqBand>,
     #[serde(default)]
     pub crossfade_ms: u32,
+    #[serde(default = "default_true")]
+    pub gapless_enabled: bool,
+    #[serde(default)]
+    pub shuffle: bool,
+    #[serde(default)]
+    pub repeat: RepeatMode,
+}
+fn default_true() -> bool {
+    true
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum RepeatMode {
+    #[default]
+    Off,
+    Track,
+    All,
 }
 impl Default for Settings {
     fn default() -> Self {
@@ -188,6 +299,9 @@ impl Default for Settings {
             eq_enabled: false,
             eq_bands: Vec::new(),
             crossfade_ms: 0,
+            gapless_enabled: true,
+            shuffle: false,
+            repeat: RepeatMode::Off,
         }
     }
 }
@@ -204,6 +318,53 @@ pub struct AppModel {
     pub sources: Vec<Source>,
     pub screen_off: bool,
     pub last_error: Option<String>,
+    #[serde(default)]
+    pub library: LibraryState,
+    #[serde(skip)]
+    pub navigation: NavigationState,
+}
+
+/// Effects are requests to the application/service boundary. They carry no
+/// platform handles and can be asserted in host tests without hardware.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Effect {
+    None,
+    Play(usize),
+    PlayShuffled(usize),
+    PlayNext(usize),
+    AddToQueue(usize),
+    TogglePlayback,
+    NextTrack,
+    PreviousTrack,
+    Seek(i64),
+    AdjustVolume(i8),
+    ScanLibrary,
+    WifiPower,
+    WifiScan,
+    WifiConnect { ssid: String, password: String },
+    WifiSaved(u32),
+    WifiForget(u32),
+    BluetoothPower,
+    BluetoothScan,
+    BluetoothDevice { path: String, operation: String },
+    Output(AudioOutput),
+    ConfirmPairing(bool),
+    ScreenSleep,
+    ScreenWake,
+    SetReplayGain(ReplayGainMode),
+    ToggleEq,
+    SetCrossfade(u32),
+    SetGapless(bool),
+    SetShuffle(bool),
+    SetRepeat(RepeatMode),
+    SetScreenTimeout(u32),
+    QueueRemove(usize),
+    QueueMove { index: usize, delta: i8 },
+    ClearQueue,
+    RebuildLibrary,
+    PowerOff,
+    Reboot,
+    Checkpoint,
 }
 #[derive(Debug, Clone)]
 pub enum PlaybackCommand {
@@ -250,6 +411,11 @@ pub enum Event {
     WifiConnected,
     WifiDisconnected,
     PowerChanged,
+    LibraryScanStarted,
+    LibraryScanFinished(ScanSummary),
+    LibraryScanFailed(String),
+    ScreenSleep,
+    ScreenWake,
 }
 impl AppModel {
     pub fn current(&self) -> Option<&Track> {
@@ -329,8 +495,24 @@ impl AppModel {
                 if self.output == AudioOutput::Bluetooth(id.clone()) =>
             {
                 self.playback = PlaybackState::Paused;
+                self.output = AudioOutput::Wired;
                 self.invalidate();
             }
+            Event::LibraryScanStarted => {
+                self.library.scanning = true;
+                self.library.error = None;
+            }
+            Event::LibraryScanFinished(summary) => {
+                self.library.scanning = false;
+                self.library.last_scan = Some(summary);
+                self.library.error = None;
+            }
+            Event::LibraryScanFailed(message) => {
+                self.library.scanning = false;
+                self.library.error = Some(message);
+            }
+            Event::ScreenSleep => self.screen_off = true,
+            Event::ScreenWake => self.screen_off = false,
             _ => {}
         }
     }
@@ -354,6 +536,7 @@ impl AppModel {
         };
         m.screen_off = false;
         m.generation = 0;
+        m.navigation = NavigationState::default();
         m.settings.volume = m.settings.volume.min(100);
         m.settings.crossfade_ms = m.settings.crossfade_ms.min(30_000);
         m.settings.eq_bands.truncate(8);
@@ -424,5 +607,23 @@ mod tests {
         m.apply(Event::SourceChanged(vec![]));
         assert!(m.generation > g);
         assert_eq!(m.playback, PlaybackState::Paused)
+    }
+
+    #[test]
+    fn background_scan_and_display_events_update_authoritative_state() {
+        let mut m = AppModel::default();
+        m.apply(Event::LibraryScanStarted);
+        assert!(m.library.scanning);
+        m.apply(Event::LibraryScanFinished(ScanSummary {
+            discovered: 12,
+            reused: 4,
+            elapsed_ms: 50,
+        }));
+        assert!(!m.library.scanning);
+        assert_eq!(m.library.last_scan.as_ref().map(|s| s.discovered), Some(12));
+        m.apply(Event::ScreenSleep);
+        assert!(m.screen_off);
+        m.apply(Event::ScreenWake);
+        assert!(!m.screen_off);
     }
 }

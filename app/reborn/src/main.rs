@@ -2,12 +2,12 @@
 mod diagnostics;
 mod playback;
 use reborn_control::{Command, PlaybackAction, Response};
-use reborn_core::{AppModel, AudioOutput, Event, PlaybackState, Screen, Source, Track};
+use reborn_core::{AppModel, AudioOutput, Effect, Event, PlaybackState, Screen, Source, Track};
 use reborn_graphics::Renderer;
 use reborn_library::{Database, Filter, Scanner};
 use reborn_observability::{HealthState, Level, Observer};
 use reborn_platform::{bluetooth, input, power, storage, wifi};
-use reborn_ui::{Effect, Item, Ui};
+use reborn_ui::{Item, Ui};
 use serde_json::{json, Value};
 use std::{
     fs,
@@ -23,7 +23,6 @@ use std::{
 struct Runtime {
     model: AppModel,
     ui: Ui,
-    tracks: Vec<Track>,
     playback: playback::Playback,
     log: Observer,
     db: Database,
@@ -34,7 +33,6 @@ struct Runtime {
     bt_state: bluetooth::Status,
     graphics: Option<Renderer>,
     power: Value,
-    scan_state: Value,
     art: bool,
     dirty: bool,
     root: PathBuf,
@@ -43,11 +41,46 @@ struct Runtime {
     query: Option<Receiver<Result<Vec<Track>, String>>>,
 }
 impl Runtime {
+    fn play_index(&mut self, index: usize, force_shuffle: bool) -> Result<(), String> {
+        let selected = self
+            .model
+            .library
+            .tracks
+            .get(index)
+            .cloned()
+            .ok_or("invalid selection")?;
+        if !selected.online {
+            return Err("media source offline".into());
+        }
+        let use_shuffle = force_shuffle || self.model.settings.shuffle;
+        if use_shuffle {
+            let mut queue = self.model.library.tracks.clone();
+            let selected = queue.remove(index);
+            let mut seed = selected.id.unsigned_abs().wrapping_add(index as u64 + 1);
+            for i in (1..queue.len()).rev() {
+                seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                let j = (seed as usize % (i + 1)).min(i);
+                queue.swap(i, j);
+            }
+            queue.insert(0, selected);
+            self.model.replace_queue(queue, 0)?;
+        } else {
+            self.model
+                .replace_queue(self.model.library.tracks.clone(), index)?;
+        }
+        self.load()
+    }
+
     fn fail(&mut self, sub: &str, error: String) {
+        let friendly = friendly_error(&error);
         match self.model.screen {
-            Screen::Wifi if sub == "ui" => self.ui.wifi.failed(error.clone()),
-            Screen::Bluetooth if sub == "ui" => self.ui.bluetooth.failed(error.clone()),
-            _ => self.ui.notice = error.clone(),
+            Screen::Wifi | Screen::SettingsWifi if sub == "ui" => {
+                self.ui.wifi.failed(friendly.clone())
+            }
+            Screen::Bluetooth | Screen::SettingsBluetooth if sub == "ui" => {
+                self.ui.bluetooth.failed(friendly.clone())
+            }
+            _ => self.ui.notice = friendly,
         }
         self.log.emit(
             Level::Error,
@@ -125,15 +158,16 @@ impl Runtime {
         self.model.playback = PlaybackState::Buffering;
         self.art = false;
         self.dirty = true;
-        self.playback.load(
+        self.playback.load_with_gapless(playback::LoadRequest {
             track,
             queue,
-            self.model.position_ms,
+            position: self.model.position_ms,
             spec,
-            self.model.generation,
+            generation: self.model.generation,
             dsp,
-            self.log.correlation(),
-        )
+            gapless_enabled: self.model.settings.gapless_enabled,
+            id: self.log.correlation(),
+        })
     }
     fn output_rate(&self) -> Result<u32, String> {
         match &self.model.output {
@@ -167,6 +201,36 @@ impl Runtime {
             self.load()
         }
     }
+
+    fn finish_track(&mut self) -> Result<(), String> {
+        match self.model.settings.repeat {
+            reborn_core::RepeatMode::Track => {
+                self.model.position_ms = 0;
+                self.load()
+            }
+            reborn_core::RepeatMode::All => {
+                if self.model.queue.is_empty() {
+                    return Ok(());
+                }
+                if self.model.queue_position + 1 < self.model.queue.len() {
+                    self.model.step(1);
+                } else {
+                    self.model.queue_position = 0;
+                    self.model.position_ms = 0;
+                    self.model.invalidate();
+                }
+                self.load()
+            }
+            reborn_core::RepeatMode::Off => {
+                if self.model.queue_position + 1 < self.model.queue.len() {
+                    self.model.step(1);
+                    self.load()
+                } else {
+                    Ok(())
+                }
+            }
+        }
+    }
     fn switch(&mut self, out: AudioOutput) -> Result<(), String> {
         if let AudioOutput::Bluetooth(address) = &out {
             self.bt_state.playback_rate(address)?;
@@ -195,17 +259,61 @@ impl Runtime {
         self.dirty = true;
         match e {
             Effect::None => {}
-            Effect::Play(index) => {
-                let t = self.tracks.get(index).ok_or("invalid selection")?;
-                if !t.online {
+            Effect::Play(index) => self.play_index(index, false)?,
+            Effect::PlayShuffled(index) => self.play_index(index, true)?,
+            Effect::PlayNext(index) => {
+                let track = self
+                    .model
+                    .library
+                    .tracks
+                    .get(index)
+                    .cloned()
+                    .ok_or("invalid selection")?;
+                if !track.online {
                     return Err("media source offline".into());
                 }
-                self.model.replace_queue(self.tracks.clone(), index)?;
-                self.load()?;
+                if self.model.queue.len() >= reborn_core::MAX_QUEUE {
+                    return Err("queue is full".into());
+                }
+                let was_empty = self.model.queue.is_empty();
+                let insert_at = if was_empty {
+                    0
+                } else {
+                    (self.model.queue_position + 1).min(self.model.queue.len())
+                };
+                self.model.queue.insert(insert_at, track);
+                if was_empty {
+                    self.model.queue_position = 0;
+                    self.load()?;
+                }
+                self.checkpoint();
             }
-            Effect::Toggle => self.toggle()?,
-            Effect::Next | Effect::Previous => {
-                let delta = if matches!(e, Effect::Next) { 1 } else { -1 };
+            Effect::AddToQueue(index) => {
+                let track = self
+                    .model
+                    .library
+                    .tracks
+                    .get(index)
+                    .cloned()
+                    .ok_or("invalid selection")?;
+                if self.model.queue.len() >= reborn_core::MAX_QUEUE {
+                    return Err("queue is full".into());
+                }
+                if self.model.queue.is_empty() {
+                    self.model.queue.push(track);
+                    self.model.queue_position = 0;
+                } else {
+                    self.model.queue.push(track);
+                }
+                self.checkpoint();
+            }
+            Effect::TogglePlayback => self.toggle()?,
+            Effect::NextTrack | Effect::PreviousTrack => {
+                let delta = if matches!(e, Effect::NextTrack) {
+                    1
+                } else {
+                    -1
+                };
                 if self.model.step(delta) {
                     self.load()?
                 } else {
@@ -224,7 +332,7 @@ impl Runtime {
                     self.load()?
                 }
             }
-            Effect::Volume(delta) => {
+            Effect::AdjustVolume(delta) => {
                 self.model.settings.volume =
                     (self.model.settings.volume as i16 + delta as i16).clamp(0, 100) as u8;
                 if matches!(
@@ -233,11 +341,16 @@ impl Runtime {
                 ) {
                     self.load()?;
                 }
-                self.ui.notice = format!("Volume {}", self.model.settings.volume);
+                self.ui
+                    .flash(format!("Volume {}", self.model.settings.volume));
+                self.checkpoint();
             }
-            Effect::Scan => {
-                self.scanner.scan(self.model.sources.clone())?;
-                self.scan_state = json!({"state":"scanning"});
+            Effect::ScanLibrary => {
+                self.model.apply(Event::LibraryScanStarted);
+                if let Err(error) = self.scanner.scan(self.model.sources.clone()) {
+                    self.model.apply(Event::LibraryScanFailed(error.clone()));
+                    return Err(error);
+                }
                 self.ui.notice = "Scanning music".into();
             }
             Effect::WifiPower => self
@@ -336,30 +449,142 @@ impl Runtime {
                 .commands
                 .try_send(bluetooth::Command::Confirm(ok))
                 .map_err(|_| "Bluetooth busy")?,
-            Effect::ScreenToggle => {
-                if !self.headless {
-                    power::blank(!self.model.screen_off)?;
+            Effect::ScreenSleep => {
+                if self.model.screen_off {
+                    return Ok(());
                 }
-                self.model.screen_off = !self.model.screen_off;
+                if !self.headless {
+                    power::blank(true)?;
+                }
+                self.model.apply(Event::ScreenSleep);
                 self.log.emit(
                     Level::Info,
                     "power",
-                    if self.model.screen_off {
-                        "screen_blank"
-                    } else {
-                        "screen_wake"
-                    },
-                    "Display power changed",
+                    "screen_blank",
+                    "Display put to sleep",
                     None,
                     json!({"playback":self.model.playback}),
                 );
+            }
+            Effect::ScreenWake => {
+                if !self.model.screen_off {
+                    return Ok(());
+                }
+                if !self.headless {
+                    power::blank(false)?;
+                }
+                self.model.apply(Event::ScreenWake);
+                self.last_activity = Instant::now();
+                self.log.emit(
+                    Level::Info,
+                    "power",
+                    "screen_wake",
+                    "Display woke",
+                    None,
+                    json!({"playback":self.model.playback}),
+                );
+            }
+            Effect::SetReplayGain(mode) => {
+                self.model.settings.replay_gain = mode;
+                if matches!(
+                    self.model.playback,
+                    PlaybackState::Playing | PlaybackState::Buffering
+                ) {
+                    self.load()?;
+                }
+                self.checkpoint();
+            }
+            Effect::ToggleEq => {
+                self.model.settings.eq_enabled = !self.model.settings.eq_enabled;
+                if matches!(
+                    self.model.playback,
+                    PlaybackState::Playing | PlaybackState::Buffering
+                ) {
+                    self.load()?;
+                }
+                self.checkpoint();
+            }
+            Effect::SetCrossfade(milliseconds) => {
+                self.model.settings.crossfade_ms = milliseconds.min(30_000);
+                if matches!(
+                    self.model.playback,
+                    PlaybackState::Playing | PlaybackState::Buffering
+                ) {
+                    self.load()?;
+                }
+                self.checkpoint();
+            }
+            Effect::SetGapless(enabled) => {
+                self.model.settings.gapless_enabled = enabled;
+                if matches!(
+                    self.model.playback,
+                    PlaybackState::Playing | PlaybackState::Buffering
+                ) {
+                    self.load()?;
+                }
+                self.checkpoint();
+            }
+            Effect::SetShuffle(enabled) => {
+                self.model.settings.shuffle = enabled;
+                self.checkpoint();
+            }
+            Effect::SetRepeat(mode) => {
+                self.model.settings.repeat = mode;
+                self.checkpoint();
+            }
+            Effect::SetScreenTimeout(seconds) => {
+                self.model.settings.screen_timeout_seconds = seconds;
+                self.checkpoint();
+            }
+            Effect::QueueRemove(index) => {
+                if index == self.model.queue_position {
+                    self.ui.notice = "The current track stays in the queue".into();
+                } else if index < self.model.queue.len() {
+                    self.model.queue.remove(index);
+                    if index < self.model.queue_position {
+                        self.model.queue_position = self.model.queue_position.saturating_sub(1);
+                    }
+                    self.checkpoint();
+                }
+            }
+            Effect::QueueMove { index, delta } => {
+                let Some(next) = index.checked_add_signed(delta as isize) else {
+                    return Ok(());
+                };
+                if index > self.model.queue_position
+                    && next > self.model.queue_position
+                    && next < self.model.queue.len()
+                {
+                    self.model.queue.swap(index, next);
+                    self.checkpoint();
+                }
+            }
+            Effect::ClearQueue => {
+                if self.model.queue.len() > self.model.queue_position + 1 {
+                    self.model.queue.truncate(self.model.queue_position + 1);
+                    self.checkpoint();
+                }
+            }
+            Effect::RebuildLibrary => {
+                self.model.apply(Event::LibraryScanStarted);
+                if let Err(error) = self.scanner.scan(self.model.sources.clone()) {
+                    self.model.apply(Event::LibraryScanFailed(error.clone()));
+                    return Err(error);
+                }
+                self.ui.notice = "Rebuilding library".into();
+            }
+            Effect::PowerOff => {
+                power::request_shutdown(false)?;
+            }
+            Effect::Reboot => {
+                power::request_shutdown(true)?;
             }
             Effect::Checkpoint => self.checkpoint(),
         };
         Ok(())
     }
     fn status(&self) -> Value {
-        json!({"version":reborn_core::VERSION,"build_id":option_env!("REBORN_BUILD_ID").unwrap_or("development"),"session":self.log.session(),"uptime_seconds":self.log.uptime(),"current_screen":self.model.screen,"screen_off":self.model.screen_off,"playback":{"state":self.model.playback,"track_id":self.model.current().map(|t|t.id),"position_ms":self.model.position_ms,"duration_ms":self.model.current().map(|t|t.duration_ms),"queue_length":self.model.queue.len(),"queue_position":self.model.queue_position,"generation":self.model.generation},"output":self.model.output,"audio":self.playback.audio_state(),"library":{"tracks_loaded":self.tracks.len(),"schema":reborn_library::SCHEMA_VERSION},"scanner":self.scan_state,"wifi":self.wifi_state,"bluetooth":self.bt_state,"storage":self.model.sources,"power":self.power,"graphics":{"available":self.graphics.is_some(),"renderer":self.graphics.as_ref().map(|g|&g.info),"headless":self.headless},"decoder":{"ffmpeg":reborn_media::version(),"runtime":reborn_media::runtime_components_if_loaded()},"buffers":{"frames":self.log.metrics()["audio_buffer_frames"],"milliseconds":self.log.metrics()["audio_buffer_ms"]}})
+        json!({"version":reborn_core::VERSION,"build_id":option_env!("REBORN_BUILD_ID").unwrap_or("development"),"session":self.log.session(),"uptime_seconds":self.log.uptime(),"current_screen":self.model.screen,"screen_off":self.model.screen_off,"playback":{"state":self.model.playback,"track_id":self.model.current().map(|t|t.id),"position_ms":self.model.position_ms,"duration_ms":self.model.current().map(|t|t.duration_ms),"queue_length":self.model.queue.len(),"queue_position":self.model.queue_position,"generation":self.model.generation},"output":self.model.output,"audio":self.playback.audio_state(),"library":{"tracks_loaded":self.model.library.tracks.len(),"schema":reborn_library::SCHEMA_VERSION,"scanning":self.model.library.scanning,"last_scan":self.model.library.last_scan,"error":self.model.library.error},"wifi":self.wifi_state,"bluetooth":self.bt_state,"storage":self.model.sources,"power":self.power,"graphics":{"available":self.graphics.is_some(),"renderer":self.graphics.as_ref().map(|g|&g.info),"headless":self.headless},"decoder":{"ffmpeg":reborn_media::version(),"runtime":reborn_media::runtime_components_if_loaded()},"buffers":{"frames":self.log.metrics()["audio_buffer_frames"],"milliseconds":self.log.metrics()["audio_buffer_ms"]}})
     }
     fn snapshot(&self) -> Value {
         json!({"status":self.status(),"health":self.log.health(),"metrics":self.log.metrics(),"recent_errors":self.log.events(20,None,Some(Level::Warn),None),"resource_usage":fs::read_to_string("/proc/self/status").unwrap_or_default(),"kernel_events":kernel_events()})
@@ -369,6 +594,8 @@ impl Runtime {
         match a {
             PlaybackAction::Play(id) => {
                 let index = self
+                    .model
+                    .library
                     .tracks
                     .iter()
                     .position(|t| t.id == id)
@@ -388,8 +615,8 @@ impl Runtime {
                 self.checkpoint();
                 Ok(())
             }
-            PlaybackAction::Next => self.effect(Effect::Next),
-            PlaybackAction::Previous => self.effect(Effect::Previous),
+            PlaybackAction::Next => self.effect(Effect::NextTrack),
+            PlaybackAction::Previous => self.effect(Effect::PreviousTrack),
             PlaybackAction::Seek(ms) => {
                 self.model.position_ms = ms.min(
                     self.model
@@ -450,6 +677,23 @@ fn kernel_events() -> Vec<String> {
         }
     }
     events.into()
+}
+
+fn friendly_error(error: &str) -> String {
+    let lower = error.to_ascii_lowercase();
+    if lower.contains("unavailable")
+        || lower.contains("not ready")
+        || lower.contains("not inserted")
+    {
+        return "That feature is not available right now.".into();
+    }
+    if lower.contains("busy") || lower.contains("timeout") {
+        return "That took too long. Please try again.".into();
+    }
+    if lower.contains("password") || lower.contains("ssid") {
+        return "The network details could not be accepted.".into();
+    }
+    "Could not complete that action. Please try again.".into()
 }
 fn secure_dir(path: &Path) -> Result<(), String> {
     use std::os::unix::fs::PermissionsExt;
@@ -596,7 +840,7 @@ fn run() -> Result<(), String> {
     let inputs = if headless {
         None
     } else {
-        Some(input::Input::open())
+        Some(input::InputManager::open())
     };
     log.health_set(
         "input",
@@ -645,7 +889,6 @@ fn run() -> Result<(), String> {
     let mut rt = Runtime {
         model,
         ui,
-        tracks: vec![],
         playback,
         log: log.clone(),
         db,
@@ -656,7 +899,6 @@ fn run() -> Result<(), String> {
         bt_state: Default::default(),
         graphics,
         power: power::status(),
-        scan_state: json!({"state":"scanning"}),
         art: false,
         dirty: true,
         root: root.clone(),
@@ -704,35 +946,47 @@ fn run() -> Result<(), String> {
         Instant::now() - Duration::from_secs(1),
     );
     let mut monitor: Option<(Instant, SyncSender<Response>, u64, Vec<Value>)> = None;
+    let mut action_router = input::ActionRouter::default();
     let mut last_sd = storage::sd_present();
     let mut xrun_bundle = 0.;
     while !reborn_platform::stop_requested() {
         log.heartbeat("ui", 10);
+        rt.ui.expire_notice();
         if let Some(input) = &mut inputs {
-            for (device, action) in input.poll() {
+            for event in input.poll() {
                 if let Some((_, _, _, events)) = &mut monitor {
                     if events.len() < 512 {
                         events.push(
-                            json!({"device":device,"action":action,"mono_ms":log.uptime()*1000}),
+                            json!({"device":event.device,"normalized":event.input,"mono_ms":log.uptime()*1000}),
                         );
                     }
                 }
                 log.emit(
                     Level::Debug,
                     "input",
-                    "action",
-                    "Input action",
+                    "normalized_event",
+                    "Normalized physical input",
                     None,
-                    json!({"device":device,"action":action}),
+                    json!({"device":event.device,"input":event.input}),
                 );
-                rt.last_activity = Instant::now();
-                if rt.model.screen_off {
-                    let _ = rt.effect(Effect::ScreenToggle);
-                    continue;
-                }
-                let effect = rt.ui.action(&mut rt.model, &rt.tracks, action);
-                if let Err(e) = rt.effect(effect) {
-                    rt.fail("ui", e)
+                let actions = action_router.route(&event, !rt.model.screen_off);
+                for action in actions {
+                    log.emit(
+                        Level::Debug,
+                        "input",
+                        "action",
+                        "Semantic application action",
+                        None,
+                        json!({"action":action}),
+                    );
+                    if !rt.model.screen_off || matches!(action, reborn_core::Action::ScreenWake) {
+                        rt.last_activity = Instant::now();
+                    }
+                    let library = rt.model.library.tracks.clone();
+                    let effect = rt.ui.action(&mut rt.model, &library, action);
+                    if let Err(e) = rt.effect(effect) {
+                        rt.fail("ui", e)
+                    }
                 }
             }
         }
@@ -766,6 +1020,10 @@ fn run() -> Result<(), String> {
                         continue;
                     }
                     let error = matches!(&event,Event::PlaybackError{generation,..}if *generation==rt.model.generation);
+                    let ended = matches!(
+                        &event,
+                        Event::TrackEnded { generation } if *generation == rt.model.generation
+                    );
                     rt.model.apply(event);
                     rt.dirty = true;
                     if error {
@@ -773,13 +1031,23 @@ fn run() -> Result<(), String> {
                         rt.playback.stop(rt.model.generation);
                         let _ = log.diagnostic(&root.join("diagnostics"), rt.snapshot(), true);
                     }
+                    if ended {
+                        if let Err(e) = rt.finish_track() {
+                            rt.fail("playback", e);
+                        }
+                    }
                 }
             }
         }
         if let Ok(result) = rt.scanner.results.try_recv() {
             match result {
                 Ok(stats) => {
-                    rt.scan_state = json!({"state":"idle","metrics":stats});
+                    rt.model
+                        .apply(Event::LibraryScanFinished(reborn_core::ScanSummary {
+                            discovered: stats.discovered,
+                            reused: stats.reused,
+                            elapsed_ms: stats.elapsed_ms,
+                        }));
                     rt.query = rt
                         .db
                         .list(Filter {
@@ -791,7 +1059,7 @@ fn run() -> Result<(), String> {
                         format!("Scan: {} tracks, {} reused", stats.discovered, stats.reused);
                 }
                 Err(e) => {
-                    rt.scan_state = json!({"state":"failed","error":e});
+                    rt.model.apply(Event::LibraryScanFailed(e.clone()));
                     log.health_set("scanner", HealthState::Failed, true, &e);
                     rt.fail("scanner", e);
                 }
@@ -801,7 +1069,7 @@ fn run() -> Result<(), String> {
         if let Some(rx) = &rt.query {
             if let Ok(value) = rx.try_recv() {
                 match value {
-                    Ok(t) => rt.tracks = t,
+                    Ok(t) => rt.model.library.tracks = t,
                     Err(e) => rt.fail("database", e),
                 }
                 rt.query = None;
@@ -827,26 +1095,31 @@ fn run() -> Result<(), String> {
                 rt.ui.networks = s
                     .networks
                     .iter()
-                    .map(|n| Item {
-                        label: format!(
-                            "{} {} dBm {}",
-                            n.ssid,
-                            n.signal,
-                            if n.security.contains("WPA") {
-                                "secure"
-                            } else {
-                                "open"
-                            }
-                        ),
-                        key: n.ssid.clone(),
+                    .map(|n| {
+                        Item::new(
+                            format!(
+                                "{} {} dBm {}",
+                                n.ssid,
+                                n.signal,
+                                if n.security.contains("WPA") {
+                                    "secure"
+                                } else {
+                                    "open"
+                                }
+                            ),
+                            n.ssid.clone(),
+                        )
                     })
                     .collect();
                 rt.ui.saved_networks = s
                     .saved
                     .iter()
-                    .map(|n| Item {
-                        label: format!("Saved: {} (Left: forget)", n.ssid),
-                        key: format!("saved:{}", n.saved_id.unwrap_or(0)),
+                    .map(|n| {
+                        Item::new(
+                            format!("Saved: {}", n.ssid),
+                            format!("saved:{}", n.saved_id.unwrap_or(0)),
+                        )
+                        .with_secondary("Left: forget")
                     })
                     .collect();
                 rt.wifi_state = s;
@@ -867,34 +1140,57 @@ fn run() -> Result<(), String> {
                             .iter()
                             .any(|d| &d.address == address && d.connected);
                 }
+                let connected = s.devices.iter().find(|device| device.connected);
+                let connection = if let Some(device) = connected {
+                    let connection = s
+                        .pcms
+                        .iter()
+                        .find(|pcm| {
+                            pcm["device"] == device.path
+                                && pcm["mode"] == "sink"
+                                && pcm["transport"] == "A2DP-source"
+                        })
+                        .and_then(|pcm| pcm["codec"].as_str())
+                        .filter(|codec| !codec.is_empty())
+                        .map(|codec| format!("Connected: {} · {}", device.name, codec))
+                        .unwrap_or_else(|| format!("Connected: {}", device.name));
+                    connection
+                } else if s.discovering {
+                    "Bluetooth discovery active".into()
+                } else {
+                    String::new()
+                };
                 rt.ui.bluetooth = reborn_ui::RadioView {
                     available: s.available,
                     powered: s.powered,
                     scan: s.scan.clone(),
                     error: s.error.clone(),
-                    connection: if s.discovering {
-                        "Bluetooth discovery active".into()
-                    } else {
-                        String::new()
-                    },
+                    connection,
                     count: s.devices.len(),
                 };
                 rt.ui.bluetooth_devices = s
                     .devices
                     .iter()
-                    .map(|d| Item {
-                        label: format!(
-                            "{} {}",
-                            d.name,
-                            if d.connected {
-                                "connected"
-                            } else if d.paired {
-                                "paired"
-                            } else {
-                                "available"
-                            }
-                        ),
-                        key: d.path.clone(),
+                    .map(|d| {
+                        Item::new(
+                            format!(
+                                "{} {}",
+                                d.name,
+                                if d.connected {
+                                    "connected"
+                                } else if d.paired {
+                                    "paired"
+                                } else {
+                                    "available"
+                                }
+                            ),
+                            d.path.clone(),
+                        )
+                        .with_secondary(if d.audio {
+                            "Audio device"
+                        } else {
+                            "Device"
+                        })
                     })
                     .collect();
                 rt.ui.pairing = s.pending.as_ref().map(|p| p.display.clone());
@@ -903,7 +1199,11 @@ fn run() -> Result<(), String> {
             }
         }
         if bt_lost {
+            if let AudioOutput::Bluetooth(address) = rt.model.output.clone() {
+                rt.model.apply(Event::BluetoothDisconnected(address));
+            }
             rt.pause();
+            rt.checkpoint();
             rt.ui.notice = "Bluetooth disconnected; playback paused".into();
             log.emit(
                 Level::Warn,
@@ -942,7 +1242,9 @@ fn run() -> Result<(), String> {
                 Command::Tests => Ok(
                     json!({"tests":reborn_control::TESTS.iter().map(|(n,a)|json!({"name":n,"audible":a,"bounded":true})).collect::<Vec<_>>()}),
                 ),
-                Command::Scan => rt.effect(Effect::Scan).map(|_| json!({"accepted":true})),
+                Command::Scan => rt
+                    .effect(Effect::ScanLibrary)
+                    .map(|_| json!({"accepted":true})),
                 Command::Radio { radio, action } => {
                     use reborn_control::{Radio, RadioAction};
                     // Scan uses exactly the button/UI path, not an independent
@@ -1096,16 +1398,21 @@ fn run() -> Result<(), String> {
                         rt.playback.stop(rt.model.generation)
                     }
                     let _ = rt.db.sources(sources);
-                    let _ = rt.scanner.scan(rt.model.sources.clone());
+                    rt.model.apply(Event::LibraryScanStarted);
+                    if let Err(error) = rt.scanner.scan(rt.model.sources.clone()) {
+                        rt.model.apply(Event::LibraryScanFailed(error.clone()));
+                        rt.fail("scanner", error);
+                    }
                     rt.dirty = true;
                 }
             }
             if !headless
                 && !rt.model.screen_off
+                && rt.model.settings.screen_timeout_seconds != 0
                 && rt.last_activity.elapsed().as_secs()
-                    > rt.model.settings.screen_timeout_seconds as u64
+                    >= rt.model.settings.screen_timeout_seconds as u64
             {
-                let _ = rt.effect(Effect::ScreenToggle);
+                let _ = rt.effect(Effect::ScreenSleep);
             }
             if let Ok(mut s) = last_snapshot.lock() {
                 *s = rt.snapshot();
@@ -1124,7 +1431,7 @@ fn run() -> Result<(), String> {
         if rt.dirty && !rt.model.screen_off && render_time.elapsed() > Duration::from_millis(34) {
             let draw = rt.ui.draw(
                 &rt.model,
-                &rt.tracks,
+                &rt.model.library.tracks,
                 log.health()["overall"].as_str().unwrap_or("unknown"),
                 rt.art,
             );

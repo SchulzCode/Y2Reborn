@@ -1,6 +1,6 @@
 #![forbid(unsafe_code)]
 use serde_json::{json, Value};
-use std::{fs, path::PathBuf};
+use std::{fs, path::PathBuf, process::Command};
 pub fn status() -> Value {
     let mut supplies = vec![];
     for entry in fs::read_dir("/sys/class/power_supply")
@@ -37,4 +37,22 @@ fn backlight() -> Option<PathBuf> {
 pub fn blank(off: bool) -> Result<(), String> {
     let path = backlight().ok_or("backlight unavailable")?;
     fs::write(path.join("bl_power"), if off { "4\n" } else { "0\n" }).map_err(|e| e.to_string())
+}
+
+/// Request a platform power transition through the initramfs-provided command.
+/// UI code never shells out directly; this is the platform service boundary.
+pub fn request_shutdown(reboot: bool) -> Result<(), String> {
+    let program = if reboot {
+        "/sbin/reboot"
+    } else {
+        "/sbin/poweroff"
+    };
+    let status = Command::new(program)
+        .status()
+        .map_err(|e| format!("{} unavailable: {}", program, e))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("{} returned {}", program, status))
+    }
 }
