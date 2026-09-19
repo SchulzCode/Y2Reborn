@@ -15,7 +15,9 @@ pub mod color {
     pub const SURFACE_BORDER: u32 = 0x2A3037FF;
     pub const TEXT_PRIMARY: u32 = 0xF2F1EDFF;
     pub const TEXT_SECONDARY: u32 = 0xAAAEB5FF;
-    pub const TEXT_MUTED: u32 = 0x747A83FF;
+    // Lifted slightly for native 480x360 readability. Operational secondary
+    // text uses TEXT_SECONDARY; this tier remains for quiet labels.
+    pub const TEXT_MUTED: u32 = 0x858B93FF;
     pub const ACCENT_GOLD: u32 = 0xE6B965FF;
     pub const ACCENT_GOLD_BRIGHT: u32 = 0xFFD17BFF;
     pub const ACCENT_GOLD_DIM: u32 = 0x7D6337FF;
@@ -55,28 +57,30 @@ pub mod stroke {
 
 pub mod type_scale {
     // The renderer's 16 px glyph cells are displayed at these scales.
-    pub const HERO: f32 = 3.0;
-    pub const SCREEN_TITLE: f32 = 2.25;
-    pub const SECTION: f32 = 2.0;
-    pub const ROW: f32 = 1.75;
-    pub const BODY: f32 = 1.5;
-    pub const SECONDARY: f32 = 1.25;
-    pub const MICRO: f32 = 1.0;
-    pub const ICON_LABEL: f32 = 1.15;
+    // Functional text bottoms out at 12 px on the physical panel.
+    pub const HERO: f32 = 3.25; // 26 px
+    pub const SCREEN_TITLE: f32 = 2.75; // 22 px
+    pub const SECTION: f32 = 2.25; // 18 px
+    pub const ROW: f32 = 2.0; // 16 px
+    pub const BODY: f32 = 1.75; // 14 px
+    pub const SECONDARY: f32 = 1.5; // 12 px
+    pub const MICRO: f32 = 1.5; // 12 px, compact functional text
+    pub const DECORATIVE: f32 = 1.25; // 10 px, labels only
+    pub const ICON_LABEL: f32 = 1.5; // 12 px
 }
 
 pub mod layout {
-    pub const STATUS_H: f32 = 30.0;
-    pub const CONTENT_TOP: f32 = 36.0;
-    pub const FOOTER_TOP: f32 = 318.0;
-    pub const BOTTOM_H: f32 = 42.0;
-    pub const MIN_ROW_H: f32 = 44.0;
-    pub const ROW_H: f32 = 44.0;
+    pub const STATUS_H: f32 = 32.0;
+    pub const CONTENT_TOP: f32 = 40.0;
+    pub const FOOTER_TOP: f32 = 306.0;
+    pub const BOTTOM_H: f32 = 54.0;
+    pub const MIN_ROW_H: f32 = 54.0;
+    pub const ROW_H: f32 = 54.0;
     pub const ART_NOW: f32 = 168.0;
-    pub const ART_LIST: f32 = 42.0;
-    pub const LIST_VISIBLE: usize = 5;
-    pub const SIDEBAR_W: f32 = 132.0;
-    pub const CONTENT_X: f32 = 148.0;
+    pub const ART_LIST: f32 = 48.0;
+    pub const LIST_VISIBLE: usize = 4;
+    pub const SIDEBAR_W: f32 = 136.0;
+    pub const CONTENT_X: f32 = 156.0;
 }
 
 pub const UI_FONT: &str = "DejaVu Sans";

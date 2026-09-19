@@ -16,6 +16,13 @@ use std::{
 pub use reborn_core::Effect;
 pub use screens::PreviewScreen;
 
+/// Count the semantic focus markers emitted by the presentation layer. The
+/// marker is metadata only; the native renderer ignores it, while preview and
+/// state tests use it to enforce the one-focus invariant.
+pub fn focus_target_count(quads: &[Quad]) -> usize {
+    quads.iter().filter(|quad| quad.focus_target).count()
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Item {
     pub label: String,
@@ -233,23 +240,25 @@ impl Ui {
             Screen::Bluetooth | Screen::SettingsBluetooth => self.bluetooth_rows(),
             Screen::Wifi | Screen::SettingsWifi => self.wifi_rows(),
             Screen::Settings => vec![
-                Item::new("Audio", "audio").with_secondary("Output · ReplayGain · EQ"),
-                Item::new("Playback", "playback").with_secondary("Gapless · Shuffle · Repeat"),
-                Item::new("Library", "library").with_secondary("Storage · Scan"),
-                Item::new("Bluetooth", "bluetooth"),
-                Item::new("Wi-Fi", "wifi"),
+                Item::new("Audio", "audio").with_secondary("Audio controls"),
+                Item::new("Playback", "playback").with_secondary("Gapless + repeat"),
+                Item::new("Library", "library").with_secondary("Storage + scan"),
+                Item::new("Bluetooth", "bluetooth").with_secondary("Wireless audio"),
+                Item::new("Wi-Fi", "wifi").with_secondary("Saved networks"),
                 Item::new("Display", "display").with_secondary("Screen timeout"),
-                Item::new("Power", "power"),
-                Item::new("System", "system").with_secondary("About · Diagnostics"),
+                Item::new("Power", "power").with_secondary("Power options"),
+                Item::new("System", "system").with_secondary("About + health"),
             ],
             Screen::SettingsAudio => vec![
                 Item::new("Output", "output").with_secondary(components::output_label(&m.output)),
                 Item::new("ReplayGain", "replay_gain")
                     .with_secondary(replay_gain_label(m.settings.replay_gain)),
-                Item::new("Equalizer / Tone Control", "equalizer")
-                    .with_secondary(if m.settings.eq_enabled { "On" } else { "Off" }),
-                Item::new("Audio Information", "audio_info")
-                    .with_secondary("Codec · sample rate · output"),
+                Item::new("Equalizer", "equalizer").with_secondary(if m.settings.eq_enabled {
+                    "On"
+                } else {
+                    "Off"
+                }),
+                Item::new("Audio Info", "audio_info").with_secondary("Codec + output"),
             ],
             Screen::SettingsPlayback => vec![
                 Item::new("Shuffle", "shuffle").with_secondary(if m.settings.shuffle {
@@ -286,11 +295,11 @@ impl Ui {
             Screen::SettingsDisplay => vec![Item::new("Screen Timeout", "timeout")
                 .with_secondary(timeout_label(m.settings.screen_timeout_seconds))],
             Screen::SettingsPower => {
-                vec![Item::new("Power Menu", "power_menu").with_secondary("Shut down or reboot")]
+                vec![Item::new("Power Menu", "power_menu").with_secondary("Power actions")]
             }
             Screen::SettingsSystem => vec![
                 Item::new("About Reborn", "about").with_secondary(reborn_core::VERSION),
-                Item::new("Diagnostics", "diagnostics").with_secondary("Health · metrics · logs"),
+                Item::new("Diagnostics", "diagnostics").with_secondary("Health + logs"),
                 Item::new("Reboot", "reboot"),
                 Item::new("Power Off", "power_off"),
             ],
@@ -1213,10 +1222,29 @@ pub(crate) fn timeout_label(seconds: u32) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
+
     fn model(screen: Screen) -> AppModel {
         AppModel {
             screen,
             navigation: reborn_core::NavigationState::default(),
+            ..Default::default()
+        }
+    }
+
+    fn preview_track() -> Track {
+        Track {
+            id: 1,
+            path: PathBuf::from("/data/music/example.flac"),
+            filename: "example.flac".into(),
+            title: "A Brighter Silence".into(),
+            artist: "Northark".into(),
+            album: "Echoes of a Higher Place".into(),
+            codec: "FLAC".into(),
+            sample_rate: 96_000,
+            channels: 2,
+            duration_ms: 318_000,
+            online: true,
             ..Default::default()
         }
     }
@@ -1239,6 +1267,43 @@ mod tests {
             Effect::None
         );
         assert_eq!(app.playback, reborn_core::PlaybackState::Stopped);
+    }
+
+    #[test]
+    fn interactive_previews_have_one_visible_focus_target() {
+        let track = preview_track();
+        let mut next = preview_track();
+        next.id = 2;
+        next.title = "The Still Procession".into();
+        let tracks = vec![track.clone(), next.clone()];
+        let ui = Ui::default();
+        let cases = [
+            (PreviewScreen::NowPlaying, 1),
+            (PreviewScreen::Library, 0),
+            (PreviewScreen::Artist, 1),
+            (PreviewScreen::Queue, 1),
+            (PreviewScreen::Settings, 0),
+            (PreviewScreen::QuickSettings, 0),
+        ];
+        for (screen, focus) in cases {
+            let mut app = model(Screen::Home);
+            app.queue = vec![track.clone(), next.clone()];
+            app.queue_position = 0;
+            app.playback = reborn_core::PlaybackState::Playing;
+            app.navigation.focus = focus;
+            let draw = ui.draw_preview(app, &tracks, PowerView::default(), screen);
+            assert_eq!(focus_target_count(&draw), 1, "{screen:?}");
+        }
+    }
+
+    #[test]
+    fn settings_labels_use_physical_device_names() {
+        let ui = Ui::default();
+        let app = model(Screen::SettingsAudio);
+        let labels = ui.rows(&app, &[]);
+        assert!(labels.iter().any(|row| row.label == "Equalizer"));
+        assert!(labels.iter().any(|row| row.label == "Audio Info"));
+        assert!(!labels.iter().any(|row| row.label.contains("/ Tone")));
     }
     #[test]
     fn back_at_home_is_a_safe_noop() {

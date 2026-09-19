@@ -6,21 +6,34 @@ use reborn_graphics::Quad;
 
 use crate::theme::{color, layout, radius, space, stroke, type_scale};
 
-const FONT_ADVANCE_RATIO: f32 = 0.64;
+const FONT_ADVANCE_RATIO: f32 = 0.52;
 
 pub struct Canvas {
     pub draw: Vec<Quad>,
+    focus_targets: usize,
 }
 
 impl Canvas {
     pub fn new() -> Self {
         Self {
             draw: Vec::with_capacity(4096),
+            focus_targets: 0,
         }
     }
 
     pub fn finish(self) -> Vec<Quad> {
+        debug_assert!(
+            self.focus_targets <= 1,
+            "more than one visible focus target"
+        );
         self.draw
+    }
+
+    pub fn clear_focus_marks(&mut self) {
+        for quad in &mut self.draw {
+            quad.focus_target = false;
+        }
+        self.focus_targets = 0;
     }
 
     pub fn rect(&mut self, x: f32, y: f32, w: f32, h: f32, fill: u32) {
@@ -41,6 +54,7 @@ impl Canvas {
     }
 
     pub fn focus_panel(&mut self, x: f32, y: f32, w: f32, h: f32, focused: bool) {
+        let start = self.draw.len();
         self.panel(
             x,
             y,
@@ -57,6 +71,38 @@ impl Canvas {
                 color::SURFACE_BORDER
             },
         );
+        if focused {
+            self.focus_targets += 1;
+            if let Some(quad) = self.draw.get_mut(start) {
+                quad.focus_target = true;
+            }
+        }
+    }
+
+    /// Current/selected is deliberately quieter than focus. It uses a marker
+    /// instead of the full warm focus outline.
+    pub fn active_panel(&mut self, x: f32, y: f32, w: f32, h: f32, active: bool) {
+        self.panel(
+            x,
+            y,
+            w,
+            h,
+            if active {
+                color::SURFACE_HOVER
+            } else {
+                color::SURFACE
+            },
+            color::SURFACE_BORDER,
+        );
+        if active {
+            self.rect(
+                x,
+                y + radius::SMALL,
+                3.0,
+                (h - radius::SMALL * 2.0).max(1.0),
+                color::ACCENT_GOLD,
+            );
+        }
     }
 
     pub fn text(&mut self, x: f32, y: f32, value: &str, scale: f32, tint: u32) {
@@ -71,8 +117,8 @@ impl Canvas {
         let mut cursor = x;
         for ch in value.chars().take(48) {
             let upper = ch.to_ascii_uppercase().to_string();
-            self.text(cursor, y, &upper, type_scale::MICRO, tint);
-            cursor += 8.0 * type_scale::MICRO * FONT_ADVANCE_RATIO;
+            self.text(cursor, y, &upper, type_scale::DECORATIVE, tint);
+            cursor += 8.0 * type_scale::DECORATIVE * FONT_ADVANCE_RATIO;
         }
     }
 
@@ -112,28 +158,6 @@ impl Canvas {
                 color::ACCENT_GOLD_DIM,
             );
         }
-    }
-
-    pub fn badge(&mut self, x: f32, y: f32, width: f32, label: &str, tint: u32) {
-        rounded_rect(
-            &mut self.draw,
-            x,
-            y,
-            width,
-            20.0,
-            radius::SMALL,
-            color::SURFACE_HOVER,
-        );
-        rounded_rect(
-            &mut self.draw,
-            x,
-            y,
-            width,
-            stroke::HAIRLINE,
-            radius::SMALL,
-            tint,
-        );
-        self.centered(x + width / 2.0, y + 5.0, label, type_scale::MICRO, tint);
     }
 
     pub fn toggle(&mut self, x: f32, y: f32, on: bool) {
@@ -222,25 +246,25 @@ pub fn status_bar(
         color::ACCENT_GOLD,
     );
 
-    c.icon("headphones", 316.0, 7.0, 15.0, color::TEXT_PRIMARY);
+    c.icon("headphones", 314.0, 7.0, 18.0, color::TEXT_PRIMARY);
     c.text(
-        336.0,
-        8.0,
+        337.0,
+        7.0,
         output_short(&m.output),
-        type_scale::MICRO,
+        type_scale::SECONDARY,
         color::TEXT_SECONDARY,
     );
     if bt.powered {
-        c.icon("bluetooth", 375.0, 7.0, 15.0, color::ACCENT_GOLD);
+        c.icon("bluetooth", 373.0, 7.0, 18.0, color::ACCENT_GOLD);
     }
     if wifi.powered {
-        c.icon("wifi", 396.0, 7.0, 15.0, color::SUCCESS);
+        c.icon("wifi", 395.0, 7.0, 18.0, color::SUCCESS);
     }
     c.icon(
         "battery",
-        420.0,
+        417.0,
         7.0,
-        15.0,
+        18.0,
         if power.charging {
             color::ACCENT_GOLD
         } else {
@@ -249,12 +273,12 @@ pub fn status_bar(
     );
     c.text(
         440.0,
-        8.0,
+        7.0,
         &power
             .battery_percent
             .map(|value| format!("{value}%"))
             .unwrap_or_else(|| "--%".into()),
-        type_scale::MICRO,
+        type_scale::SECONDARY,
         color::TEXT_SECONDARY,
     );
     c.rect(
@@ -267,66 +291,77 @@ pub fn status_bar(
 }
 
 pub fn bottom_info(c: &mut Canvas, m: &AppModel, has_art: bool) {
-    c.rect(0.0, 300.0, 480.0, 60.0, color::BG_RAISED);
-    c.rect(space::LG, 300.0, 448.0, 1.0, color::SURFACE_BORDER);
+    c.rect(
+        0.0,
+        layout::FOOTER_TOP,
+        480.0,
+        layout::BOTTOM_H,
+        color::BG_RAISED,
+    );
+    c.rect(
+        space::LG,
+        layout::FOOTER_TOP,
+        448.0,
+        1.0,
+        color::SURFACE_BORDER,
+    );
     if let Some(track) = m.current() {
-        c.artwork(space::LG, 308.0, 38.0, has_art);
+        c.artwork(space::LG, 312.0, 42.0, has_art);
         c.text(
-            64.0,
-            308.0,
+            68.0,
+            310.0,
             &fit(&track.title, 24),
+            type_scale::ROW,
+            color::TEXT_PRIMARY,
+        );
+        c.text(
+            68.0,
+            331.0,
+            &fit(&track.artist, 24),
+            type_scale::SECONDARY,
+            color::TEXT_SECONDARY,
+        );
+        c.rect(224.0, 312.0, 1.0, 40.0, color::SURFACE_BORDER);
+        c.icon("headphones", 238.0, 318.0, 18.0, color::TEXT_PRIMARY);
+        c.text(
+            264.0,
+            311.0,
+            output_short(&m.output),
             type_scale::SECONDARY,
             color::TEXT_PRIMARY,
         );
         c.text(
-            64.0,
-            326.0,
-            &fit(&track.artist, 24),
-            type_scale::MICRO,
+            264.0,
+            331.0,
+            "Output",
+            type_scale::DECORATIVE,
             color::TEXT_MUTED,
         );
-        c.rect(190.0, 306.0, 1.0, 37.0, color::SURFACE_BORDER);
-        c.icon("headphones", 206.0, 310.0, 15.0, color::TEXT_PRIMARY);
+        c.rect(368.0, 312.0, 1.0, 40.0, color::SURFACE_BORDER);
+        c.icon("gain", 382.0, 318.0, 18.0, color::TEXT_PRIMARY);
         c.text(
-            228.0,
-            308.0,
-            &output_label(&m.output),
-            type_scale::MICRO,
-            color::TEXT_SECONDARY,
-        );
-        c.text(228.0, 327.0, "4.4 mm", type_scale::MICRO, color::TEXT_MUTED);
-        c.rect(340.0, 306.0, 1.0, 37.0, color::SURFACE_BORDER);
-        c.icon("gain", 357.0, 311.0, 15.0, color::TEXT_PRIMARY);
-        c.text(
-            378.0,
-            308.0,
-            "High Gain",
-            type_scale::MICRO,
-            color::TEXT_SECONDARY,
+            408.0,
+            311.0,
+            "High",
+            type_scale::SECONDARY,
+            color::TEXT_PRIMARY,
         );
         c.text(
-            378.0,
-            327.0,
-            "Class AB",
-            type_scale::MICRO,
+            408.0,
+            331.0,
+            "Gain",
+            type_scale::DECORATIVE,
             color::TEXT_MUTED,
         );
     } else {
         c.centered(
             240.0,
-            319.0,
+            322.0,
             "Choose music to begin",
             type_scale::SECONDARY,
             color::TEXT_MUTED,
         );
     }
-    c.centered(
-        240.0,
-        349.0,
-        "LISTEN DEEPER / REBORN",
-        type_scale::MICRO,
-        color::TEXT_MUTED,
-    );
 }
 
 pub fn list_row(
@@ -342,8 +377,8 @@ pub fn list_row(
     c.icon(
         icon_name,
         x + space::MD,
-        y + 13.0,
-        18.0,
+        y + 16.0,
+        22.0,
         if focused {
             color::ACCENT_GOLD
         } else {
@@ -351,8 +386,8 @@ pub fn list_row(
         },
     );
     c.text(
-        x + 42.0,
-        y + 9.0,
+        x + 48.0,
+        y + if row.secondary.is_empty() { 18.0 } else { 9.0 },
         &fit(&row.label, 24),
         type_scale::ROW,
         if focused {
@@ -363,10 +398,10 @@ pub fn list_row(
     );
     if !row.secondary.is_empty() {
         c.text(
-            x + 42.0,
-            y + 27.0,
+            x + 48.0,
+            y + 31.0,
             &fit(&row.secondary, 25),
-            type_scale::MICRO,
+            type_scale::SECONDARY,
             if focused {
                 color::ACCENT_GOLD
             } else {
@@ -376,9 +411,9 @@ pub fn list_row(
     }
     c.icon(
         "chevron_right",
-        x + width - 27.0,
-        y + 13.0,
-        18.0,
+        x + width - 28.0,
+        y + 16.0,
+        20.0,
         if focused {
             color::ACCENT_GOLD_BRIGHT
         } else {
@@ -392,8 +427,8 @@ pub fn setting_row(c: &mut Canvas, row: &Item, x: f32, y: f32, width: f32, focus
     c.icon(
         row_icon(&row.key),
         x + space::MD,
-        y + 13.0,
-        18.0,
+        y + 16.0,
+        22.0,
         if focused {
             color::ACCENT_GOLD
         } else {
@@ -402,9 +437,9 @@ pub fn setting_row(c: &mut Canvas, row: &Item, x: f32, y: f32, width: f32, focus
     );
     let is_toggle = matches!(row.secondary.as_str(), "On" | "Off");
     c.text(
-        x + 42.0,
-        y + 9.0,
-        &fit(&row.label, if is_toggle { 18 } else { 12 }),
+        x + 48.0,
+        y + 17.0,
+        &fit(&row.label, if is_toggle { 20 } else { 22 }),
         type_scale::ROW,
         if focused {
             color::TEXT_PRIMARY
@@ -413,12 +448,12 @@ pub fn setting_row(c: &mut Canvas, row: &Item, x: f32, y: f32, width: f32, focus
         },
     );
     if is_toggle {
-        c.toggle(x + width - 55.0, y + 13.0, row.secondary == "On");
+        c.toggle(x + width - 58.0, y + 18.0, row.secondary == "On");
     } else if !row.secondary.is_empty() {
         c.text(
-            x + width - 126.0,
-            y + 15.0,
-            &fit(&row.secondary, 13),
+            x + width - 132.0,
+            y + 19.0,
+            &fit(&row.secondary, 16),
             type_scale::MICRO,
             if focused {
                 color::ACCENT_GOLD
@@ -429,9 +464,9 @@ pub fn setting_row(c: &mut Canvas, row: &Item, x: f32, y: f32, width: f32, focus
     }
     c.icon(
         "chevron_right",
-        x + width - 27.0,
-        y + 13.0,
-        18.0,
+        x + width - 28.0,
+        y + 16.0,
+        20.0,
         if focused {
             color::ACCENT_GOLD_BRIGHT
         } else {
@@ -441,18 +476,18 @@ pub fn setting_row(c: &mut Canvas, row: &Item, x: f32, y: f32, width: f32, focus
 }
 
 pub fn empty_state(c: &mut Canvas, x: f32, y: f32, width: f32, title: &str, message: &str) {
-    c.panel(x, y, width, 112.0, color::BG_RAISED, color::SURFACE_BORDER);
-    c.icon("albums", x + 20.0, y + 29.0, 28.0, color::ACCENT_GOLD_DIM);
+    c.panel(x, y, width, 130.0, color::BG_RAISED, color::SURFACE_BORDER);
+    c.icon("albums", x + 20.0, y + 34.0, 32.0, color::ACCENT_GOLD_DIM);
     c.text(
         x + 62.0,
-        y + 28.0,
+        y + 31.0,
         title,
         type_scale::SECTION,
         color::TEXT_PRIMARY,
     );
     c.text(
         x + 62.0,
-        y + 58.0,
+        y + 68.0,
         &fit(message, 34),
         type_scale::SECONDARY,
         color::TEXT_SECONDARY,
@@ -462,33 +497,33 @@ pub fn empty_state(c: &mut Canvas, x: f32, y: f32, width: f32, title: &str, mess
 pub fn dialog(c: &mut Canvas, title: &str, body: &str, rows: &[Item], focus: usize) {
     c.rect(0.0, 0.0, 480.0, 360.0, color::SCRIM_STRONG);
     c.panel(
-        76.0,
-        91.0,
-        328.0,
-        178.0,
+        56.0,
+        58.0,
+        368.0,
+        254.0,
         color::BG_RAISED,
         color::ACCENT_GOLD,
     );
     c.display(
-        100.0,
-        111.0,
+        80.0,
+        78.0,
         title,
-        type_scale::SECTION,
+        type_scale::SCREEN_TITLE,
         color::TEXT_PRIMARY,
     );
     c.text(
-        100.0,
-        144.0,
+        80.0,
+        115.0,
         &fit(body, 38),
-        type_scale::SECONDARY,
+        type_scale::BODY,
         color::TEXT_SECONDARY,
     );
     for (index, row) in rows.iter().enumerate() {
-        let y = 178.0 + index as f32 * 37.0;
-        c.focus_panel(100.0, y, 280.0, 32.0, index == focus);
+        let y = 156.0 + index as f32 * 48.0;
+        c.focus_panel(80.0, y, 320.0, 40.0, index == focus);
         c.text(
-            118.0,
-            y + 8.0,
+            100.0,
+            y + 11.0,
             &row.label,
             type_scale::ROW,
             if index == focus {
@@ -523,52 +558,86 @@ pub fn volume_overlay(c: &mut Canvas, volume: u8) {
         146.0,
         246.0,
         188.0,
-        55.0,
+        64.0,
         color::BG_RAISED,
         color::ACCENT_GOLD,
     );
-    c.icon("volume", 162.0, 263.0, 18.0, color::ACCENT_GOLD);
-    c.text(190.0, 258.0, "Volume", type_scale::MICRO, color::TEXT_MUTED);
+    c.icon("volume", 162.0, 260.0, 22.0, color::ACCENT_GOLD);
     c.text(
-        190.0,
-        274.0,
+        194.0,
+        256.0,
+        "Volume",
+        type_scale::SECONDARY,
+        color::TEXT_MUTED,
+    );
+    c.text(
+        194.0,
+        276.0,
         &format!("{volume}%"),
         type_scale::ROW,
         color::TEXT_PRIMARY,
     );
-    c.progress(244.0, 271.0, 70.0, volume as f32 / 100.0);
+    c.progress(252.0, 278.0, 66.0, volume as f32 / 100.0);
 }
 
 pub fn now_playing_controls(c: &mut Canvas, m: &AppModel) {
+    now_playing_controls_at(c, m, 268.0);
+}
+
+pub fn now_playing_controls_at(c: &mut Canvas, m: &AppModel, center_y: f32) {
     let active = matches!(
         m.playback,
         PlaybackState::Playing | PlaybackState::Buffering
     );
-    c.icon("shuffle", 74.0, 256.0, 25.0, color::TEXT_SECONDARY);
-    c.icon("previous", 148.0, 254.0, 28.0, color::TEXT_PRIMARY);
-    circle(&mut c.draw, 240.0, 268.0, 31.0, color::ACCENT_GOLD_BRIGHT);
-    circle(&mut c.draw, 240.0, 268.0, 29.0, color::BG);
+    c.icon(
+        "shuffle",
+        74.0,
+        center_y - 12.0,
+        25.0,
+        color::TEXT_SECONDARY,
+    );
+    c.icon(
+        "previous",
+        148.0,
+        center_y - 14.0,
+        28.0,
+        color::TEXT_PRIMARY,
+    );
+    circle(
+        &mut c.draw,
+        240.0,
+        center_y,
+        31.0,
+        color::ACCENT_GOLD_BRIGHT,
+    );
+    circle(&mut c.draw, 240.0, center_y, 29.0, color::BG);
     c.icon(
         if active { "pause" } else { "play" },
         228.0,
-        256.0,
+        center_y - 12.0,
         24.0,
         color::TEXT_PRIMARY,
     );
-    c.icon("next", 304.0, 254.0, 28.0, color::TEXT_PRIMARY);
-    c.icon("repeat", 378.0, 256.0, 25.0, color::TEXT_SECONDARY);
+    c.icon("next", 304.0, center_y - 14.0, 28.0, color::TEXT_PRIMARY);
+    c.icon(
+        "repeat",
+        378.0,
+        center_y - 12.0,
+        25.0,
+        color::TEXT_SECONDARY,
+    );
 }
 
 pub fn output_label(output: &AudioOutput) -> String {
     match output {
-        AudioOutput::Wired => "Balanced Output".into(),
-        AudioOutput::Bluetooth(_) => "Bluetooth Output".into(),
+        AudioOutput::Wired => "Wired".into(),
+        AudioOutput::Bluetooth(_) => "Bluetooth".into(),
     }
 }
 
 pub fn output_short(output: &AudioOutput) -> &'static str {
     match output {
-        AudioOutput::Wired => "BAL",
+        AudioOutput::Wired => "Wired",
         AudioOutput::Bluetooth(_) => "BT",
     }
 }

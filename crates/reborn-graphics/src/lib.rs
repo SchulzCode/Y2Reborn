@@ -12,6 +12,9 @@ pub struct Quad {
     pub icon: Option<u8>,
     pub display_font: bool,
     pub artwork: bool,
+    /// Presentation metadata used by deterministic UI validation. Native
+    /// rendering intentionally ignores this field.
+    pub focus_target: bool,
 }
 impl Quad {
     pub fn rect(x: f32, y: f32, w: f32, h: f32, color: u32) -> Self {
@@ -25,6 +28,7 @@ impl Quad {
             icon: None,
             display_font: false,
             artwork: false,
+            focus_target: false,
         }
     }
 }

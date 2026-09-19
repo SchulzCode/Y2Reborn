@@ -70,12 +70,10 @@ pub fn draw(
         Screen::TextEntry | Screen::Pairing => {}
     }
     if m.navigation.modal.is_some() {
+        c.clear_focus_marks();
         draw_modal(&mut c, ui, m);
     }
-    if !matches!(
-        m.screen,
-        Screen::NowPlaying | Screen::Queue | Screen::Home | Screen::Connectivity
-    ) {
+    if shows_mini_player(m.screen) {
         components::bottom_info(&mut c, m, has_art);
     }
     if !ui.notice.is_empty()
@@ -126,6 +124,32 @@ fn finish(ui: &Ui, m: &AppModel, c: Canvas) -> Vec<Quad> {
         // introduced for static screens.
     }
     c.finish()
+}
+
+fn shows_mini_player(screen: Screen) -> bool {
+    matches!(
+        screen,
+        Screen::Albums
+            | Screen::Music
+            | Screen::Artists
+            | Screen::Tracks
+            | Screen::Folders
+            | Screen::Album
+            | Screen::Artist
+            | Screen::Settings
+            | Screen::SettingsAudio
+            | Screen::SettingsPlayback
+            | Screen::SettingsLibrary
+            | Screen::SettingsBluetooth
+            | Screen::SettingsWifi
+            | Screen::SettingsDisplay
+            | Screen::SettingsPower
+            | Screen::SettingsSystem
+            | Screen::Connectivity
+            | Screen::Bluetooth
+            | Screen::Wifi
+            | Screen::Diagnostics
+    )
 }
 
 fn draw_home(c: &mut Canvas, ui: &Ui, m: &AppModel, has_art: bool) {
@@ -191,11 +215,12 @@ fn draw_home(c: &mut Canvas, ui: &Ui, m: &AppModel, has_art: bool) {
             "Choose an album or track to begin listening.",
         );
     }
-    c.micro(16.0, 252.0, "REACH", theme::color::TEXT_MUTED);
+    c.micro(16.0, 239.0, "REACH", theme::color::TEXT_MUTED);
     let rows = ui.rows(m, &m.library.tracks);
-    for (index, row) in rows.iter().take(5).enumerate() {
-        let x = 16.0 + (index % 2) as f32 * 226.0;
-        let y = 266.0 + (index / 2) as f32 * 42.0;
+    for (position, row) in visible_rows(&rows, m.navigation.focus, 4) {
+        let index = position + list_start(&rows, m.navigation.focus, 4);
+        let x = 16.0 + (position % 2) as f32 * 226.0;
+        let y = 250.0 + (position / 2) as f32 * theme::layout::ROW_H;
         components::list_row(
             c,
             row,
@@ -222,14 +247,14 @@ fn draw_library(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], has_art
     };
     c.display(
         x,
-        45.0,
+        43.0,
         title,
         theme::type_scale::SCREEN_TITLE,
         theme::color::TEXT_PRIMARY,
     );
     c.text(
-        404.0,
-        51.0,
+        432.0,
+        48.0,
         &format!("{}", rows.len()),
         theme::type_scale::MICRO,
         theme::color::TEXT_MUTED,
@@ -239,50 +264,68 @@ fn draw_library(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], has_art
         components::empty_state(
             c,
             x,
-            82.0,
-            316.0,
+            78.0,
+            308.0,
             "No music found",
             "Insert an SD card or scan your library.",
         );
         return;
     }
     if m.screen == Screen::Albums {
-        let columns = 3;
-        let tile_w = 100.0;
+        // Two clear cards per row are easier to identify than six tiny tiles.
+        let columns = 2;
+        let tile_w = 148.0;
         let start = m
             .navigation
             .focus
-            .saturating_sub(2)
-            .min(rows.len().saturating_sub(6));
-        for (position, row) in rows.iter().enumerate().skip(start).take(6) {
+            .saturating_sub(1)
+            .min(rows.len().saturating_sub(4));
+        for (position, row) in rows.iter().enumerate().skip(start).take(4) {
             let tile = position - start;
-            let tx = x + (tile % columns) as f32 * 108.0;
-            let ty = 76.0 + (tile / columns) as f32 * 112.0;
+            let tx = x + (tile % columns) as f32 * 160.0;
+            let ty = 76.0 + (tile / columns) as f32 * 114.0;
             let focused = position == m.navigation.focus;
-            c.focus_panel(tx, ty, tile_w, 104.0, focused);
-            c.artwork(tx + 6.0, ty + 6.0, 88.0, has_art);
+            c.focus_panel(tx, ty, tile_w, 108.0, focused);
+            c.artwork(tx + 6.0, ty + 5.0, 72.0, has_art);
             c.text(
                 tx + 6.0,
-                ty + 96.0,
-                &fit(&row.label, 14),
-                theme::type_scale::MICRO,
+                ty + 78.0,
+                &fit(&row.label, 19),
+                theme::type_scale::BODY,
                 if focused {
                     theme::color::TEXT_PRIMARY
                 } else {
                     theme::color::TEXT_SECONDARY
                 },
             );
+            let artist = tracks
+                .iter()
+                .find(|track| track.album == row.label)
+                .map(|track| track.artist.as_str())
+                .unwrap_or("Unknown artist");
+            c.text(
+                tx + 6.0,
+                ty + 94.0,
+                &fit(artist, 20),
+                theme::type_scale::SECONDARY,
+                if focused {
+                    theme::color::ACCENT_GOLD
+                } else {
+                    theme::color::TEXT_MUTED
+                },
+            );
         }
         return;
     }
-    for (position, row) in visible_rows(&rows, m.navigation.focus, 5) {
+    for (position, row) in visible_rows(&rows, m.navigation.focus, theme::layout::LIST_VISIBLE) {
         components::list_row(
             c,
             row,
             x,
-            76.0 + position as f32 * 46.0,
-            316.0,
-            position + list_start(&rows, m.navigation.focus, 5) == m.navigation.focus,
+            76.0 + position as f32 * theme::layout::ROW_H,
+            308.0,
+            position + list_start(&rows, m.navigation.focus, theme::layout::LIST_VISIBLE)
+                == m.navigation.focus,
             components::row_icon(&row.key),
         );
     }
@@ -292,8 +335,8 @@ fn library_rail(c: &mut Canvas, m: &AppModel) {
     c.panel(
         8.0,
         42.0,
-        104.0,
-        252.0,
+        136.0,
+        256.0,
         theme::color::SURFACE,
         theme::color::SURFACE_BORDER,
     );
@@ -305,7 +348,7 @@ fn library_rail(c: &mut Canvas, m: &AppModel) {
         ("Folders", "storage"),
     ];
     for (index, (label, icon)) in entries.iter().enumerate() {
-        let y = 72.0 + index as f32 * 42.0;
+        let y = 68.0 + index as f32 * 43.0;
         let active = matches!(
             (m.screen, index),
             (Screen::Albums, 0)
@@ -314,23 +357,12 @@ fn library_rail(c: &mut Canvas, m: &AppModel) {
                 | (Screen::Folders, 3)
                 | (Screen::Music, 0)
         );
-        c.panel(
-            14.0,
-            y - 4.0,
-            92.0,
-            34.0,
-            theme::color::SURFACE,
-            if active {
-                theme::color::ACCENT_GOLD_DIM
-            } else {
-                theme::color::SURFACE_BORDER
-            },
-        );
+        c.active_panel(14.0, y, 124.0, 38.0, active);
         c.icon(
             icon,
             24.0,
-            y + 4.0,
-            18.0,
+            y + 8.0,
+            22.0,
             if active {
                 theme::color::ACCENT_GOLD
             } else {
@@ -338,8 +370,8 @@ fn library_rail(c: &mut Canvas, m: &AppModel) {
             },
         );
         c.text(
-            50.0,
-            y + 5.0,
+            54.0,
+            y + 9.0,
             label,
             theme::type_scale::SECONDARY,
             if active {
@@ -349,28 +381,28 @@ fn library_rail(c: &mut Canvas, m: &AppModel) {
             },
         );
     }
-    c.rect(22.0, 238.0, 76.0, 1.0, theme::color::SURFACE_BORDER);
-    c.icon("storage", 24.0, 250.0, 18.0, theme::color::TEXT_SECONDARY);
+    c.rect(22.0, 248.0, 108.0, 1.0, theme::color::SURFACE_BORDER);
+    c.icon("storage", 24.0, 254.0, 22.0, theme::color::TEXT_SECONDARY);
     c.text(
-        50.0,
-        250.0,
+        54.0,
+        254.0,
         "Internal",
-        theme::type_scale::MICRO,
+        theme::type_scale::SECONDARY,
         theme::color::TEXT_SECONDARY,
     );
     c.text(
-        50.0,
-        265.0,
+        54.0,
+        271.0,
         "128 GB",
-        theme::type_scale::MICRO,
+        theme::type_scale::DECORATIVE,
         theme::color::TEXT_MUTED,
     );
-    c.icon("sd_card", 24.0, 276.0, 18.0, theme::color::TEXT_SECONDARY);
+    c.icon("sd_card", 24.0, 278.0, 22.0, theme::color::TEXT_SECONDARY);
     c.text(
-        50.0,
-        276.0,
+        54.0,
+        280.0,
         "SD Card",
-        theme::type_scale::MICRO,
+        theme::type_scale::SECONDARY,
         theme::color::TEXT_SECONDARY,
     );
 }
@@ -390,49 +422,40 @@ fn draw_now_playing(c: &mut Canvas, m: &AppModel, has_art: bool) {
     c.artwork(16.0, 44.0, theme::layout::ART_NOW, has_art);
     c.display(
         202.0,
-        47.0,
-        &fit(&track.title, 29),
+        45.0,
+        &fit(&track.title, 17),
         theme::type_scale::HERO,
         theme::color::TEXT_PRIMARY,
     );
     c.display(
         202.0,
         82.0,
-        &fit(&track.artist, 30),
+        &fit(&track.artist, 20),
         theme::type_scale::SECTION,
         theme::color::TEXT_SECONDARY,
     );
     c.text(
         202.0,
-        108.0,
-        &fit(&track.album, 30),
+        109.0,
+        &fit(&track.album, 20),
         theme::type_scale::BODY,
-        theme::color::TEXT_MUTED,
-    );
-    c.badge(
-        202.0,
-        130.0,
-        46.0,
-        &fit(&track.codec.to_uppercase(), 7),
-        theme::color::ACCENT_GOLD,
-    );
-    c.badge(
-        254.0,
-        130.0,
-        82.0,
-        &technical_format(track),
         theme::color::TEXT_SECONDARY,
     );
-    c.badge(
-        344.0,
-        130.0,
-        70.0,
-        &format!("{} ch", track.channels),
-        theme::color::TEXT_MUTED,
+    let technical = format!(
+        "{} · {}",
+        track.codec.to_uppercase(),
+        technical_format(track)
+    );
+    c.text(
+        202.0,
+        137.0,
+        &fit(&technical, 24),
+        theme::type_scale::SECONDARY,
+        theme::color::ACCENT_GOLD,
     );
     c.progress(
         202.0,
-        178.0,
+        177.0,
         262.0,
         progress(m.position_ms, track.duration_ms),
     );
@@ -451,44 +474,62 @@ fn draw_now_playing(c: &mut Canvas, m: &AppModel, has_art: bool) {
         theme::color::TEXT_MUTED,
     );
     components::now_playing_controls(c, m);
-    c.rect(16.0, 299.0, 448.0, 1.0, theme::color::SURFACE_BORDER);
-    c.icon("volume", 21.0, 309.0, 18.0, theme::color::TEXT_PRIMARY);
+    // The wheel changes volume on this screen, so volume is the one visible
+    // focus target even though the playback glyphs remain state indicators.
+    c.focus_panel(16.0, 306.0, 164.0, 48.0, true);
+    c.icon("volume", 28.0, 319.0, 22.0, theme::color::ACCENT_GOLD);
     c.text(
-        46.0,
-        312.0,
+        60.0,
+        311.0,
         &format!("{}", m.settings.volume),
-        theme::type_scale::MICRO,
-        theme::color::TEXT_SECONDARY,
+        theme::type_scale::ROW,
+        theme::color::TEXT_PRIMARY,
     );
-    c.progress(64.0, 317.0, 90.0, m.settings.volume as f32 / 100.0);
-    c.icon("headphones", 194.0, 308.0, 18.0, theme::color::TEXT_PRIMARY);
+    c.progress(60.0, 335.0, 98.0, m.settings.volume as f32 / 100.0);
+    c.panel(
+        196.0,
+        306.0,
+        132.0,
+        48.0,
+        theme::color::SURFACE,
+        theme::color::SURFACE_BORDER,
+    );
+    c.icon("headphones", 210.0, 319.0, 22.0, theme::color::TEXT_PRIMARY);
     c.text(
-        221.0,
-        309.0,
+        244.0,
+        311.0,
         &components::output_label(&m.output),
-        theme::type_scale::MICRO,
-        theme::color::TEXT_SECONDARY,
+        theme::type_scale::SECONDARY,
+        theme::color::TEXT_PRIMARY,
     );
     c.text(
-        221.0,
-        326.0,
-        "4.4 mm",
-        theme::type_scale::MICRO,
+        244.0,
+        331.0,
+        "Output",
+        theme::type_scale::DECORATIVE,
         theme::color::TEXT_MUTED,
     );
-    c.icon("gain", 330.0, 309.0, 18.0, theme::color::TEXT_PRIMARY);
+    c.panel(
+        344.0,
+        306.0,
+        120.0,
+        48.0,
+        theme::color::SURFACE,
+        theme::color::SURFACE_BORDER,
+    );
+    c.icon("gain", 358.0, 319.0, 22.0, theme::color::TEXT_PRIMARY);
     c.text(
-        357.0,
-        309.0,
-        "High Gain",
-        theme::type_scale::MICRO,
-        theme::color::TEXT_SECONDARY,
+        390.0,
+        311.0,
+        "High",
+        theme::type_scale::SECONDARY,
+        theme::color::TEXT_PRIMARY,
     );
     c.text(
-        357.0,
-        326.0,
-        "Class AB",
-        theme::type_scale::MICRO,
+        390.0,
+        331.0,
+        "Gain",
+        theme::type_scale::DECORATIVE,
         theme::color::TEXT_MUTED,
     );
 }
@@ -507,41 +548,35 @@ fn draw_artist(c: &mut Canvas, _ui: &Ui, m: &AppModel, tracks: &[Track], has_art
         16.0,
         42.0,
         448.0,
-        108.0,
+        104.0,
         theme::color::BG_RAISED,
         theme::color::SURFACE_BORDER,
     );
-    c.artwork(28.0, 54.0, 84.0, has_art);
+    c.artwork(28.0, 54.0, 76.0, has_art);
     c.display(
-        132.0,
-        55.0,
-        &fit(name, 24),
+        120.0,
+        56.0,
+        &fit(name, 21),
         theme::type_scale::HERO,
         theme::color::TEXT_PRIMARY,
     );
-    c.micro(
-        132.0,
-        91.0,
-        "ALTERNATIVE · POST-ROCK",
-        theme::color::TEXT_MUTED,
-    );
     c.text(
-        132.0,
-        109.0,
+        120.0,
+        94.0,
         &format!(
             "{} tracks · {} albums",
             artist_tracks.len(),
             album_count(&artist_tracks)
         ),
-        theme::type_scale::SECONDARY,
+        theme::type_scale::BODY,
         theme::color::TEXT_SECONDARY,
     );
-    c.focus_panel(352.0, 111.0, 96.0, 28.0, m.navigation.focus == 0);
+    c.focus_panel(338.0, 102.0, 110.0, 36.0, m.navigation.focus == 0);
     c.text(
-        366.0,
-        119.0,
+        352.0,
+        112.0,
         "Play Artist",
-        theme::type_scale::MICRO,
+        theme::type_scale::BODY,
         if m.navigation.focus == 0 {
             theme::color::TEXT_PRIMARY
         } else {
@@ -551,41 +586,34 @@ fn draw_artist(c: &mut Canvas, _ui: &Ui, m: &AppModel, tracks: &[Track], has_art
 
     c.display(
         16.0,
-        166.0,
+        160.0,
         "Top Tracks",
         theme::type_scale::SECTION,
         theme::color::TEXT_PRIMARY,
     );
     c.text(
-        202.0,
-        171.0,
-        "See All",
-        theme::type_scale::MICRO,
-        theme::color::TEXT_MUTED,
+        284.0,
+        165.0,
+        "Albums",
+        theme::type_scale::SECTION,
+        theme::color::TEXT_PRIMARY,
     );
-    c.icon(
-        "chevron_right",
-        238.0,
-        169.0,
-        12.0,
-        theme::color::TEXT_MUTED,
-    );
-    for (index, track) in artist_tracks.iter().take(4).enumerate() {
-        let y = 190.0 + index as f32 * 31.0;
+    for (index, track) in artist_tracks.iter().take(2).enumerate() {
+        let y = 190.0 + index as f32 * 54.0;
         let focused = index + 1 == m.navigation.focus;
-        c.focus_panel(16.0, y, 218.0, 27.0, focused);
+        c.focus_panel(16.0, y, 252.0, 50.0, focused);
         c.text(
-            27.0,
-            y + 7.0,
+            28.0,
+            y + 16.0,
             &format!("{}", index + 1),
-            theme::type_scale::MICRO,
+            theme::type_scale::SECONDARY,
             theme::color::TEXT_MUTED,
         );
         c.text(
-            48.0,
-            y + 7.0,
-            &fit(&track.title, 19),
-            theme::type_scale::MICRO,
+            58.0,
+            y + 10.0,
+            &fit(&track.title, 21),
+            theme::type_scale::ROW,
             if focused {
                 theme::color::TEXT_PRIMARY
             } else {
@@ -593,10 +621,10 @@ fn draw_artist(c: &mut Canvas, _ui: &Ui, m: &AppModel, tracks: &[Track], has_art
             },
         );
         c.text(
-            187.0,
-            y + 7.0,
+            58.0,
+            y + 31.0,
             &time(track.duration_ms),
-            theme::type_scale::MICRO,
+            theme::type_scale::SECONDARY,
             if focused {
                 theme::color::ACCENT_GOLD
             } else {
@@ -604,35 +632,33 @@ fn draw_artist(c: &mut Canvas, _ui: &Ui, m: &AppModel, tracks: &[Track], has_art
             },
         );
     }
-    c.display(
-        252.0,
-        166.0,
-        "Albums",
-        theme::type_scale::SECTION,
-        theme::color::TEXT_PRIMARY,
-    );
-    c.text(
-        426.0,
-        171.0,
-        "See All",
-        theme::type_scale::MICRO,
-        theme::color::TEXT_MUTED,
-    );
-    for index in 0..3 {
-        let x = 252.0 + index as f32 * 70.0;
-        c.artwork(x, 188.0, 60.0, has_art);
+    let mut artist_albums = Vec::new();
+    for track in &artist_tracks {
+        if !artist_albums.iter().any(|album| album == &track.album) {
+            artist_albums.push(track.album.clone());
+        }
+    }
+    for (index, album) in artist_albums.iter().take(2).enumerate() {
+        let x = 284.0 + index as f32 * 90.0;
+        c.artwork(x, 190.0, 78.0, has_art);
         c.text(
             x,
-            253.0,
-            &fit(&format!("Album {}", index + 1), 10),
-            theme::type_scale::MICRO,
+            276.0,
+            &fit(album, 12),
+            theme::type_scale::SECONDARY,
             theme::color::TEXT_SECONDARY,
         );
         c.text(
             x,
-            268.0,
-            "2021",
-            theme::type_scale::MICRO,
+            292.0,
+            &format!(
+                "{} tracks",
+                artist_tracks
+                    .iter()
+                    .filter(|track| &track.album == album)
+                    .count()
+            ),
+            theme::type_scale::DECORATIVE,
             theme::color::TEXT_MUTED,
         );
     }
@@ -690,13 +716,12 @@ fn draw_album(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], has_art: 
         },
     );
     let rows = ui.rows(m, tracks);
-    for (index, row) in rows.iter().enumerate().skip(4).take(5) {
-        let position = index - 4;
+    for (position, (index, row)) in rows.iter().enumerate().skip(4).take(2).enumerate() {
         components::list_row(
             c,
             row,
             16.0,
-            154.0 + position as f32 * 44.0,
+            154.0 + position as f32 * theme::layout::ROW_H,
             448.0,
             index == m.navigation.focus,
             "songs",
@@ -713,77 +738,98 @@ fn draw_queue(c: &mut Canvas, ui: &Ui, m: &AppModel, has_art: bool) {
         theme::color::BG_RAISED,
         theme::color::SURFACE_BORDER,
     );
+    c.rect(12.0, 48.0, 3.0, 50.0, theme::color::ACCENT_GOLD);
     if let Some(track) = m.current() {
-        c.artwork(22.0, 52.0, 42.0, has_art);
-        c.micro(78.0, 51.0, "NOW PLAYING", theme::color::ACCENT_GOLD);
+        c.artwork(24.0, 52.0, 42.0, has_art);
+        c.micro(82.0, 50.0, "NOW PLAYING", theme::color::ACCENT_GOLD);
         c.display(
-            78.0,
-            66.0,
+            82.0,
+            64.0,
             &fit(&track.title, 26),
             theme::type_scale::SECTION,
             theme::color::TEXT_PRIMARY,
         );
         c.text(
-            78.0,
+            82.0,
             88.0,
             &fit(&track.artist, 24),
             theme::type_scale::SECONDARY,
             theme::color::TEXT_SECONDARY,
         );
         c.text(
-            399.0,
-            54.0,
-            &fit(&technical_format(track), 11),
-            theme::type_scale::MICRO,
+            368.0,
+            53.0,
+            &fit(&technical_format(track), 14),
+            theme::type_scale::SECONDARY,
             theme::color::ACCENT_GOLD,
         );
         c.text(
-            426.0,
-            86.0,
+            402.0,
+            84.0,
             &format!("-{}", time(track.duration_ms.saturating_sub(m.position_ms))),
-            theme::type_scale::MICRO,
+            theme::type_scale::SECONDARY,
             theme::color::TEXT_MUTED,
         );
     }
     c.display(
         14.0,
-        123.0,
+        116.0,
         "Up Next",
         theme::type_scale::SECTION,
         theme::color::TEXT_PRIMARY,
     );
     c.text(
-        91.0,
-        128.0,
+        96.0,
+        122.0,
         &format!(
             "{} tracks remaining",
             m.queue.len().saturating_sub(m.queue_position + 1)
         ),
-        theme::type_scale::MICRO,
+        theme::type_scale::SECONDARY,
         theme::color::TEXT_MUTED,
     );
-    c.icon("shuffle", 322.0, 119.0, 23.0, theme::color::ACCENT_GOLD);
-    c.icon("repeat", 374.0, 119.0, 23.0, theme::color::TEXT_SECONDARY);
-    c.icon("menu", 425.0, 119.0, 23.0, theme::color::TEXT_SECONDARY);
+    c.icon(
+        "shuffle",
+        350.0,
+        114.0,
+        22.0,
+        if m.settings.shuffle {
+            theme::color::ACCENT_GOLD
+        } else {
+            theme::color::TEXT_MUTED
+        },
+    );
+    c.icon(
+        "repeat",
+        388.0,
+        114.0,
+        22.0,
+        if !matches!(m.settings.repeat, reborn_core::RepeatMode::Off) {
+            theme::color::ACCENT_GOLD
+        } else {
+            theme::color::TEXT_MUTED
+        },
+    );
+    c.micro(426.0, 121.0, "MENU", theme::color::TEXT_MUTED);
     let rows = ui.rows(m, &[]);
     for (position, row) in rows.iter().enumerate().skip(1).take(4) {
         let visual = position - 1;
         let focused = position == m.navigation.focus;
-        let y = 154.0 + visual as f32 * 38.0;
-        c.focus_panel(12.0, y, 456.0, 34.0, focused);
+        let y = 146.0 + visual as f32 * 52.0;
+        c.focus_panel(12.0, y, 456.0, 48.0, focused);
         c.text(
-            20.0,
-            y + 9.0,
+            22.0,
+            y + 15.0,
             &format!("{}", position),
-            theme::type_scale::MICRO,
+            theme::type_scale::SECONDARY,
             theme::color::TEXT_MUTED,
         );
-        c.artwork(44.0, y + 3.0, 28.0, has_art);
+        c.artwork(50.0, y + 6.0, 36.0, has_art);
         c.display(
-            84.0,
-            y + 5.0,
+            102.0,
+            y + 8.0,
             &fit(&row.label, 27),
-            theme::type_scale::SECONDARY,
+            theme::type_scale::ROW,
             if focused {
                 theme::color::TEXT_PRIMARY
             } else {
@@ -791,10 +837,10 @@ fn draw_queue(c: &mut Canvas, ui: &Ui, m: &AppModel, has_art: bool) {
             },
         );
         c.text(
-            84.0,
-            y + 22.0,
+            102.0,
+            y + 30.0,
             &fit(&row.secondary, 24),
-            theme::type_scale::MICRO,
+            theme::type_scale::SECONDARY,
             if focused {
                 theme::color::ACCENT_GOLD
             } else {
@@ -802,34 +848,17 @@ fn draw_queue(c: &mut Canvas, ui: &Ui, m: &AppModel, has_art: bool) {
             },
         );
         c.text(
-            398.0,
-            y + 9.0,
+            406.0,
+            y + 16.0,
             &queue_duration(row),
-            theme::type_scale::MICRO,
+            theme::type_scale::SECONDARY,
             if focused {
                 theme::color::ACCENT_GOLD
             } else {
                 theme::color::TEXT_SECONDARY
             },
         );
-        c.icon("menu", 445.0, y + 9.0, 14.0, theme::color::TEXT_MUTED);
     }
-    c.rect(0.0, 318.0, 480.0, 42.0, theme::color::BG_RAISED);
-    c.icon("menu", 16.0, 333.0, 14.0, theme::color::TEXT_MUTED);
-    c.text(
-        38.0,
-        334.0,
-        "Press MENU for options",
-        theme::type_scale::MICRO,
-        theme::color::TEXT_MUTED,
-    );
-    c.centered(
-        240.0,
-        348.0,
-        "LISTEN DEEPER / REBORN",
-        theme::type_scale::MICRO,
-        theme::color::TEXT_MUTED,
-    );
 }
 
 fn draw_settings(c: &mut Canvas, ui: &Ui, m: &AppModel) {
@@ -846,33 +875,22 @@ fn draw_settings(c: &mut Canvas, ui: &Ui, m: &AppModel) {
     c.panel(
         10.0,
         42.0,
-        142.0,
-        252.0,
+        140.0,
+        256.0,
         theme::color::SURFACE,
         theme::color::SURFACE_BORDER,
     );
     c.micro(22.0, 53.0, "SETTINGS", theme::color::TEXT_MUTED);
     let category = settings_category(m.screen, m.navigation.focus);
     for (index, label) in categories.iter().enumerate() {
-        let y = 70.0 + index as f32 * 27.0;
+        let y = 67.0 + index as f32 * 29.0;
         let active = index == category;
-        c.panel(
-            16.0,
-            y,
-            130.0,
-            24.0,
-            theme::color::SURFACE,
-            if active {
-                theme::color::ACCENT_GOLD_DIM
-            } else {
-                theme::color::SURFACE_BORDER
-            },
-        );
+        c.active_panel(16.0, y, 128.0, 26.0, active);
         c.icon(
             components::row_icon(&label.to_ascii_lowercase()),
             24.0,
-            y + 4.0,
-            15.0,
+            y + 3.0,
+            20.0,
             if active {
                 theme::color::ACCENT_GOLD
             } else {
@@ -880,10 +898,10 @@ fn draw_settings(c: &mut Canvas, ui: &Ui, m: &AppModel) {
             },
         );
         c.text(
-            47.0,
+            50.0,
             y + 4.0,
             label,
-            theme::type_scale::MICRO,
+            theme::type_scale::BODY,
             if active {
                 theme::color::TEXT_PRIMARY
             } else {
@@ -892,32 +910,26 @@ fn draw_settings(c: &mut Canvas, ui: &Ui, m: &AppModel) {
         );
     }
     c.panel(
-        160.0,
+        156.0,
         42.0,
         308.0,
-        252.0,
+        256.0,
         theme::color::BG_RAISED,
         theme::color::SURFACE_BORDER,
     );
     c.display(
-        176.0,
-        52.0,
+        172.0,
+        48.0,
         settings_title(m.screen),
         theme::type_scale::SCREEN_TITLE,
         theme::color::TEXT_PRIMARY,
     );
-    c.text(
-        176.0,
-        80.0,
-        settings_description(m.screen),
-        theme::type_scale::MICRO,
-        theme::color::TEXT_SECONDARY,
-    );
     let rows = ui.rows(m, &[]);
     let focus = m.navigation.focus;
-    for (index, row) in rows.iter().enumerate().take(5) {
-        let y = 96.0 + index as f32 * 39.0;
-        components::setting_row(c, row, 168.0, y, 292.0, index == focus);
+    for (position, row) in visible_rows(&rows, focus, 3) {
+        let index = position + list_start(&rows, focus, 3);
+        let y = 94.0 + position as f32 * theme::layout::ROW_H;
+        components::setting_row(c, row, 164.0, y, 284.0, index == focus);
     }
 }
 
@@ -925,17 +937,10 @@ fn draw_connectivity(c: &mut Canvas, ui: &Ui, m: &AppModel) {
     if m.screen == Screen::Connectivity {
         c.display(
             16.0,
-            45.0,
+            43.0,
             "Quick Settings",
             theme::type_scale::SCREEN_TITLE,
             theme::color::TEXT_PRIMARY,
-        );
-        c.text(
-            16.0,
-            76.0,
-            "Connectivity and device shortcuts",
-            theme::type_scale::SECONDARY,
-            theme::color::TEXT_SECONDARY,
         );
         let cards = [
             (16.0, "Wi-Fi", "wifi", ui.wifi.powered, ui.wifi_summary()),
@@ -949,12 +954,12 @@ fn draw_connectivity(c: &mut Canvas, ui: &Ui, m: &AppModel) {
         ];
         for (index, (x, label, icon, active, summary)) in cards.iter().enumerate() {
             let focused = m.navigation.focus == index;
-            c.focus_panel(*x, 98.0, 220.0, 78.0, focused);
+            c.focus_panel(*x, 78.0, 220.0, 84.0, focused);
             c.icon(
                 icon,
-                x + 16.0,
-                119.0,
-                28.0,
+                x + 18.0,
+                101.0,
+                30.0,
                 if focused {
                     theme::color::ACCENT_GOLD
                 } else {
@@ -962,8 +967,8 @@ fn draw_connectivity(c: &mut Canvas, ui: &Ui, m: &AppModel) {
                 },
             );
             c.text(
-                x + 58.0,
-                113.0,
+                x + 66.0,
+                91.0,
                 label,
                 theme::type_scale::SECTION,
                 if focused {
@@ -973,10 +978,10 @@ fn draw_connectivity(c: &mut Canvas, ui: &Ui, m: &AppModel) {
                 },
             );
             c.text(
-                x + 58.0,
-                139.0,
+                x + 66.0,
+                124.0,
                 &fit(summary, 19),
-                theme::type_scale::MICRO,
+                theme::type_scale::SECONDARY,
                 if *active {
                     theme::color::SUCCESS
                 } else {
@@ -985,9 +990,9 @@ fn draw_connectivity(c: &mut Canvas, ui: &Ui, m: &AppModel) {
             );
             c.icon(
                 "chevron_right",
-                x + 190.0,
-                125.0,
-                18.0,
+                x + 188.0,
+                110.0,
+                20.0,
                 if focused {
                     theme::color::ACCENT_GOLD
                 } else {
@@ -995,130 +1000,113 @@ fn draw_connectivity(c: &mut Canvas, ui: &Ui, m: &AppModel) {
                 },
             );
         }
+        let saved = if ui.saved_networks.is_empty() {
+            "None".to_owned()
+        } else {
+            format!("{} saved", ui.saved_networks.len())
+        };
+        let paired = if ui.bluetooth_devices.is_empty() {
+            "None".to_owned()
+        } else {
+            format!("{} devices", ui.bluetooth_devices.len())
+        };
         c.panel(
             16.0,
-            188.0,
+            176.0,
             220.0,
-            84.0,
+            58.0,
             theme::color::SURFACE,
             theme::color::SURFACE_BORDER,
         );
+        c.icon("bluetooth", 30.0, 190.0, 22.0, theme::color::TEXT_SECONDARY);
         c.display(
-            30.0,
-            201.0,
+            64.0,
+            184.0,
             "Paired Devices",
-            theme::type_scale::SECONDARY,
+            theme::type_scale::BODY,
             theme::color::TEXT_PRIMARY,
         );
         c.text(
-            30.0,
-            229.0,
-            &fit(&ui.bluetooth_summary(), 25),
-            theme::type_scale::MICRO,
+            64.0,
+            209.0,
+            &paired,
+            theme::type_scale::SECONDARY,
             theme::color::TEXT_SECONDARY,
         );
-        c.text(
-            30.0,
-            248.0,
-            "View All",
-            theme::type_scale::MICRO,
-            theme::color::TEXT_MUTED,
-        );
-        c.icon("chevron_right", 83.0, 246.0, 14.0, theme::color::TEXT_MUTED);
         c.panel(
             244.0,
-            188.0,
+            176.0,
             220.0,
-            84.0,
+            58.0,
             theme::color::SURFACE,
             theme::color::SURFACE_BORDER,
         );
+        c.icon("wifi", 258.0, 190.0, 22.0, theme::color::TEXT_SECONDARY);
         c.display(
-            258.0,
-            201.0,
-            "Network & Sync",
-            theme::type_scale::SECONDARY,
+            292.0,
+            184.0,
+            "Saved Networks",
+            theme::type_scale::BODY,
             theme::color::TEXT_PRIMARY,
         );
         c.text(
-            258.0,
-            229.0,
-            &fit(&ui.wifi_summary(), 25),
-            theme::type_scale::MICRO,
+            292.0,
+            209.0,
+            &saved,
+            theme::type_scale::SECONDARY,
             theme::color::TEXT_SECONDARY,
-        );
-        c.text(
-            258.0,
-            248.0,
-            "Manage networks",
-            theme::type_scale::MICRO,
-            theme::color::TEXT_MUTED,
-        );
-        c.icon(
-            "chevron_right",
-            425.0,
-            246.0,
-            14.0,
-            theme::color::TEXT_MUTED,
         );
         c.panel(
             16.0,
-            280.0,
+            248.0,
             220.0,
-            34.0,
+            48.0,
             theme::color::SURFACE,
             theme::color::SURFACE_BORDER,
         );
         c.icon(
             "headphones",
-            28.0,
-            289.0,
-            15.0,
+            30.0,
+            261.0,
+            22.0,
             theme::color::TEXT_SECONDARY,
         );
         c.text(
-            52.0,
-            286.0,
+            64.0,
+            256.0,
             "Output",
-            theme::type_scale::MICRO,
-            theme::color::TEXT_MUTED,
+            theme::type_scale::BODY,
+            theme::color::TEXT_PRIMARY,
         );
         c.text(
-            52.0,
-            299.0,
-            &fit(&components::output_label(&m.output), 20),
-            theme::type_scale::MICRO,
+            64.0,
+            278.0,
+            &components::output_label(&m.output),
+            theme::type_scale::SECONDARY,
             theme::color::TEXT_SECONDARY,
         );
         c.panel(
             244.0,
-            280.0,
+            248.0,
             220.0,
-            34.0,
+            48.0,
             theme::color::SURFACE,
             theme::color::SURFACE_BORDER,
         );
-        c.icon("display", 256.0, 289.0, 15.0, theme::color::TEXT_SECONDARY);
+        c.icon("display", 258.0, 261.0, 22.0, theme::color::TEXT_SECONDARY);
         c.text(
-            280.0,
-            286.0,
-            "Screen timeout",
-            theme::type_scale::MICRO,
-            theme::color::TEXT_MUTED,
+            292.0,
+            256.0,
+            "Screen Timeout",
+            theme::type_scale::BODY,
+            theme::color::TEXT_PRIMARY,
         );
         c.text(
-            280.0,
-            299.0,
+            292.0,
+            278.0,
             &timeout_label(m.settings.screen_timeout_seconds),
-            theme::type_scale::MICRO,
+            theme::type_scale::SECONDARY,
             theme::color::TEXT_SECONDARY,
-        );
-        c.centered(
-            240.0,
-            348.0,
-            "LISTEN DEEPER / REBORN",
-            theme::type_scale::MICRO,
-            theme::color::TEXT_MUTED,
         );
         return;
     }
@@ -1126,7 +1114,7 @@ fn draw_connectivity(c: &mut Canvas, ui: &Ui, m: &AppModel) {
         16.0,
         42.0,
         448.0,
-        52.0,
+        68.0,
         theme::color::BG_RAISED,
         theme::color::SURFACE_BORDER,
     );
@@ -1140,9 +1128,9 @@ fn draw_connectivity(c: &mut Canvas, ui: &Ui, m: &AppModel) {
     );
     c.display(
         64.0,
-        50.0,
-        section(m.screen),
-        theme::type_scale::SECTION,
+        48.0,
+        if bluetooth { "Bluetooth" } else { "Wi-Fi" },
+        theme::type_scale::SCREEN_TITLE,
         theme::color::TEXT_PRIMARY,
     );
     let connection_message = if bluetooth {
@@ -1152,18 +1140,19 @@ fn draw_connectivity(c: &mut Canvas, ui: &Ui, m: &AppModel) {
     };
     c.text(
         64.0,
-        75.0,
+        78.0,
         &fit(&connection_message, 45),
-        theme::type_scale::MICRO,
+        theme::type_scale::SECONDARY,
         theme::color::TEXT_SECONDARY,
     );
     let rows = ui.rows(m, &[]);
-    for (index, row) in rows.iter().enumerate().take(5) {
+    for (position, row) in visible_rows(&rows, m.navigation.focus, 3) {
+        let index = position + list_start(&rows, m.navigation.focus, 3);
         components::list_row(
             c,
             row,
             16.0,
-            108.0 + index as f32 * 44.0,
+            122.0 + position as f32 * theme::layout::ROW_H,
             448.0,
             index == m.navigation.focus,
             components::row_icon(&row.key),
@@ -1181,46 +1170,51 @@ fn draw_diagnostics(c: &mut Canvas, m: &AppModel, health: &str) {
     );
     c.text(
         16.0,
-        77.0,
-        "System health at a glance",
-        theme::type_scale::SECONDARY,
+        75.0,
+        "System health",
+        theme::type_scale::BODY,
         theme::color::TEXT_SECONDARY,
     );
-    for (index, (label, state)) in [
+    let values = [
         ("Audio", health),
         ("Storage", "OK"),
         ("Bluetooth", "OK"),
         ("Wi-Fi", "OK"),
         ("System", "OK"),
-    ]
-    .iter()
-    .enumerate()
+    ];
+    let start = m
+        .navigation
+        .focus
+        .saturating_sub(2)
+        .min(values.len().saturating_sub(4));
+    for (position, (index, (label, state))) in
+        values.iter().enumerate().skip(start).take(4).enumerate()
     {
-        let y = 105.0 + index as f32 * 39.0;
-        c.focus_panel(16.0, y, 448.0, 32.0, index == m.navigation.focus);
+        let y = 96.0 + position as f32 * 52.0;
+        c.focus_panel(16.0, y, 448.0, 48.0, index + start == m.navigation.focus);
         c.icon(
             "info",
-            28.0,
-            y + 7.0,
-            17.0,
-            if index == m.navigation.focus {
+            30.0,
+            y + 13.0,
+            22.0,
+            if index + start == m.navigation.focus {
                 theme::color::ACCENT_GOLD
             } else {
                 theme::color::TEXT_SECONDARY
             },
         );
         c.text(
-            62.0,
-            y + 8.0,
+            68.0,
+            y + 12.0,
             label,
             theme::type_scale::ROW,
             theme::color::TEXT_PRIMARY,
         );
         c.text(
-            388.0,
-            y + 9.0,
+            394.0,
+            y + 14.0,
             if state.is_empty() { "OK" } else { state },
-            theme::type_scale::MICRO,
+            theme::type_scale::SECONDARY,
             theme::color::SUCCESS,
         );
     }
@@ -1237,55 +1231,52 @@ fn draw_audio_information(c: &mut Canvas, m: &AppModel) {
     c.text(
         16.0,
         77.0,
-        "Current source and output path",
-        theme::type_scale::SECONDARY,
+        "Source and output",
+        theme::type_scale::BODY,
         theme::color::TEXT_SECONDARY,
     );
     let values = if let Some(track) = m.current() {
         vec![
             ("Codec", track.codec.to_uppercase()),
             ("Sample rate", format!("{} kHz", track.sample_rate / 1000)),
-            ("Channels", format!("{} ch", track.channels)),
-            ("Processing", "32-bit float".into()),
             ("Output", components::output_label(&m.output)),
         ]
     } else {
         vec![
             ("Source", "No track selected".into()),
-            ("Processing", "32-bit float".into()),
             ("Output", components::output_label(&m.output)),
         ]
     };
-    for (index, (label, value)) in values.iter().enumerate() {
-        let y = 105.0 + index as f32 * 31.0;
+    for (index, (label, value)) in values.iter().take(3).enumerate() {
+        let y = 94.0 + index as f32 * 52.0;
         c.panel(
             16.0,
             y,
             448.0,
-            29.0,
+            44.0,
             theme::color::SURFACE,
             theme::color::SURFACE_BORDER,
         );
         c.text(
             30.0,
-            y + 8.0,
+            y + 12.0,
             label,
             theme::type_scale::ROW,
             theme::color::TEXT_PRIMARY,
         );
         c.text(
             294.0,
-            y + 9.0,
-            &fit(value, 19),
-            theme::type_scale::MICRO,
+            y + 14.0,
+            &fit(value, 22),
+            theme::type_scale::SECONDARY,
             theme::color::TEXT_SECONDARY,
         );
     }
-    let y = 105.0 + values.len() as f32 * 31.0;
-    c.focus_panel(16.0, y, 448.0, 29.0, m.navigation.focus == 0);
+    let y = 94.0 + values.len().min(3) as f32 * 52.0;
+    c.focus_panel(16.0, y, 448.0, 44.0, m.navigation.focus == 0);
     c.text(
         30.0,
-        y + 8.0,
+        y + 12.0,
         "Back to Diagnostics",
         theme::type_scale::ROW,
         theme::color::TEXT_PRIMARY,
@@ -1299,20 +1290,13 @@ fn draw_modal(c: &mut Canvas, ui: &Ui, m: &AppModel) {
 }
 
 fn draw_pairing(c: &mut Canvas, device: &str) {
-    c.panel(
-        54.0,
-        80.0,
-        372.0,
-        190.0,
-        theme::color::BG_RAISED,
-        theme::color::ACCENT_GOLD,
-    );
+    c.focus_panel(54.0, 80.0, 372.0, 190.0, true);
     c.icon("bluetooth", 214.0, 100.0, 48.0, theme::color::ACCENT_GOLD);
     c.display(
         132.0,
         160.0,
         "Pair device?",
-        theme::type_scale::SECTION,
+        theme::type_scale::SCREEN_TITLE,
         theme::color::TEXT_PRIMARY,
     );
     c.text(
@@ -1326,7 +1310,7 @@ fn draw_pairing(c: &mut Canvas, device: &str) {
         240.0,
         228.0,
         "SELECT to confirm · BACK to cancel",
-        theme::type_scale::MICRO,
+        theme::type_scale::SECONDARY,
         theme::color::TEXT_MUTED,
     );
 }
@@ -1354,17 +1338,10 @@ fn draw_text_entry(c: &mut Canvas, notice: &str) {
         theme::type_scale::SECONDARY,
         theme::color::TEXT_SECONDARY,
     );
-    c.panel(
-        58.0,
-        146.0,
-        364.0,
-        42.0,
-        theme::color::SURFACE,
-        theme::color::SURFACE_BORDER,
-    );
+    c.focus_panel(58.0, 146.0, 364.0, 48.0, true);
     c.text(
         74.0,
-        158.0,
+        161.0,
         "********",
         theme::type_scale::ROW,
         theme::color::TEXT_PRIMARY,
@@ -1373,7 +1350,7 @@ fn draw_text_entry(c: &mut Canvas, notice: &str) {
         240.0,
         210.0,
         "SELECT add · LEFT delete · MENU submit",
-        theme::type_scale::MICRO,
+        theme::type_scale::SECONDARY,
         theme::color::TEXT_MUTED,
     );
     if !notice.is_empty() {
@@ -1399,74 +1376,60 @@ fn draw_lock(m: &AppModel, power: PowerView) -> Vec<Quad> {
         &RadioView::default(),
     );
     if let Some(track) = m.current() {
-        c.artwork(156.0, 35.0, 168.0, true);
+        c.artwork(176.0, 40.0, 128.0, true);
         c.display(
             240.0,
-            205.0,
-            &fit(&track.title, 25),
+            178.0,
+            &fit(&track.title, 22),
             theme::type_scale::SECTION,
             theme::color::TEXT_PRIMARY,
         );
         c.centered(
             240.0,
-            230.0,
-            &fit(&track.artist, 25),
+            202.0,
+            &fit(&track.artist, 26),
             theme::type_scale::BODY,
             theme::color::TEXT_SECONDARY,
         );
         c.centered(
             240.0,
-            249.0,
-            &fit(&track.album, 25),
+            224.0,
+            &fit(&track.album, 26),
             theme::type_scale::SECONDARY,
-            theme::color::TEXT_MUTED,
+            theme::color::TEXT_SECONDARY,
         );
         c.progress(
             104.0,
-            263.0,
+            248.0,
             272.0,
             progress(m.position_ms, track.duration_ms),
         );
         c.text(
             104.0,
-            276.0,
+            258.0,
             &time(m.position_ms),
-            theme::type_scale::MICRO,
+            theme::type_scale::SECONDARY,
             theme::color::TEXT_SECONDARY,
         );
         c.text(
             378.0,
-            276.0,
+            258.0,
             &format!("-{}", time(track.duration_ms.saturating_sub(m.position_ms))),
-            theme::type_scale::MICRO,
+            theme::type_scale::SECONDARY,
             theme::color::TEXT_MUTED,
         );
-        c.icon("volume", 42.0, 302.0, 18.0, theme::color::TEXT_PRIMARY);
-        c.progress(84.0, 311.0, 60.0, m.settings.volume as f32 / 100.0);
-        c.icon("headphones", 338.0, 302.0, 18.0, theme::color::TEXT_PRIMARY);
+        components::now_playing_controls_at(&mut c, m, 298.0);
+        c.icon("volume", 42.0, 329.0, 18.0, theme::color::TEXT_PRIMARY);
+        c.progress(78.0, 338.0, 66.0, m.settings.volume as f32 / 100.0);
+        c.icon("headphones", 338.0, 329.0, 18.0, theme::color::TEXT_PRIMARY);
         c.text(
             366.0,
-            304.0,
+            327.0,
             &components::output_label(&m.output),
-            theme::type_scale::MICRO,
+            theme::type_scale::SECONDARY,
             theme::color::TEXT_SECONDARY,
         );
-        c.text(
-            366.0,
-            320.0,
-            "4.4 mm",
-            theme::type_scale::MICRO,
-            theme::color::TEXT_MUTED,
-        );
-        components::now_playing_controls(&mut c, m);
     }
-    c.centered(
-        240.0,
-        347.0,
-        "LISTEN DEEPER / REBORN",
-        theme::type_scale::MICRO,
-        theme::color::TEXT_MUTED,
-    );
     c.finish()
 }
 
@@ -1500,11 +1463,13 @@ fn draw_boot() -> Vec<Quad> {
         theme::color::TEXT_MUTED,
     );
     c.rect(140.0, 240.0, 200.0, 4.0, theme::color::TRACK);
-    c.rect(140.0, 240.0, 94.0, 4.0, theme::color::ACCENT_GOLD_BRIGHT);
+    // The boot indicator is intentionally indeterminate until real startup
+    // stages are available from the platform startup service.
+    c.rect(208.0, 240.0, 64.0, 4.0, theme::color::ACCENT_GOLD_BRIGHT);
     c.centered(
         240.0,
         253.0,
-        "INITIALIZING MUSIC EXPERIENCE",
+        "STARTING REBORN",
         theme::type_scale::MICRO,
         theme::color::TEXT_MUTED,
     );
@@ -1564,7 +1529,7 @@ fn section(screen: Screen) -> &'static str {
 fn settings_title(screen: Screen) -> &'static str {
     match screen {
         Screen::Settings => "Settings",
-        Screen::SettingsAudio => "Playback Settings",
+        Screen::SettingsAudio => "Audio",
         Screen::SettingsPlayback => "Playback Settings",
         Screen::SettingsLibrary => "Library Settings",
         Screen::SettingsBluetooth => "Bluetooth",
@@ -1573,20 +1538,6 @@ fn settings_title(screen: Screen) -> &'static str {
         Screen::SettingsPower => "Power",
         Screen::SettingsSystem => "System",
         _ => "Settings",
-    }
-}
-
-fn settings_description(screen: Screen) -> &'static str {
-    match screen {
-        Screen::SettingsAudio => "Audio settings for a purer listening experience.",
-        Screen::SettingsPlayback => "How music moves between tracks.",
-        Screen::SettingsLibrary => "Sources and library maintenance.",
-        Screen::SettingsBluetooth => "Pair and manage wireless headphones.",
-        Screen::SettingsWifi => "Connect to networks and saved Wi-Fi.",
-        Screen::SettingsDisplay => "Screen timeout and wake behavior.",
-        Screen::SettingsPower => "Safe power controls.",
-        Screen::SettingsSystem => "About, diagnostics and safe actions.",
-        _ => "Choose a category.",
     }
 }
 
