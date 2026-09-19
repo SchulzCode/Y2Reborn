@@ -7,7 +7,7 @@ not modified.
 
 ## Source and artifacts
 
-- implementation commit: `bd28e10c17bd37b29da318cabb5d07193da5051a`
+- implementation commits: `bd28e10` (reset), `c2ab6cb` (final wired-control audit)
 - recoverable pre-reset checkpoint: `0a104dd`
 - ARM target: `armv7-unknown-linux-gnueabihf`, Cortex-A7 hard-float
 - production SDK used: `/home/luca/Dokumente/Code/Y2Linux/out/y2linux-reborn-audio-final/buildroot`
@@ -18,7 +18,7 @@ The stripped ARM candidate binaries are:
 
 | File | Bytes | SHA-256 |
 | --- | ---: | --- |
-| `armv7/release/reborn` | 2,448,588 | `609329f4a932b5c6ee360392756a93de7e5cf0f82b396c8fb65cecd42314d6cc` |
+| `armv7/release/reborn` | 2,448,588 | `2b71f4418edf65233a87fb51628446ae54f8d3618c13364ef6fd86431acdf168` |
 | `armv7/release/rebornctl` | 445,532 | `77d5e93e53d89fe46f000c3b1f54eb09f445db0bcd516cc908de9753926b6f18` |
 
 Rollback binaries were built from checkpoint `0a104dd`:
