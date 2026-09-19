@@ -774,7 +774,12 @@ fn run() -> Result<(), String> {
         );
         None
     } else {
-        match Renderer::open(&reborn_ui::font_atlas(), log.clone()) {
+        match Renderer::open(
+            &reborn_ui::font_atlas(),
+            &reborn_ui::display_font_atlas(),
+            &reborn_ui::icons_atlas(),
+            log.clone(),
+        ) {
             Ok(g) => Some(g),
             Err(e) => {
                 log.health_set("graphics", HealthState::Failed, true, &e);
@@ -1441,7 +1446,12 @@ fn run() -> Result<(), String> {
                     rt.fail("graphics", e);
                     rt.graphics = None;
                     // One bounded recreation attempt. Further attempts wait for an explicit wake.
-                    if let Ok(g) = Renderer::open(&reborn_ui::font_atlas(), log.clone()) {
+                    if let Ok(g) = Renderer::open(
+                        &reborn_ui::font_atlas(),
+                        &reborn_ui::display_font_atlas(),
+                        &reborn_ui::icons_atlas(),
+                        log.clone(),
+                    ) {
                         rt.graphics = Some(g);
                     }
                     let _ = log.diagnostic(&root.join("diagnostics"), rt.snapshot(), true);

@@ -8,7 +8,12 @@ use std::{
 };
 unsafe extern "C" {
     fn rb_graphics_error() -> *const c_char;
-    fn rb_graphics_open(out: *mut *mut c_void, font: *const u8) -> c_int;
+    fn rb_graphics_open(
+        out: *mut *mut c_void,
+        ui_font: *const u8,
+        display_font: *const u8,
+        icons: *const u8,
+    ) -> c_int;
     fn rb_graphics_close(p: *mut c_void);
     fn rb_graphics_info(p: *mut c_void) -> *const c_char;
     fn rb_graphics_width(p: *mut c_void) -> c_int;
@@ -22,6 +27,8 @@ unsafe extern "C" {
         h: f32,
         color: u32,
         glyph: c_int,
+        icon: c_int,
+        display_font: c_int,
         art: c_int,
     );
     fn rb_graphics_art(p: *mut c_void, b: *const u8) -> c_int;
@@ -36,13 +43,28 @@ pub struct Renderer {
     log: Observer,
 }
 impl Renderer {
-    pub fn open(font: &[u8], log: Observer) -> Result<Self, String> {
-        if font.len() != 256 * 128 * 4 {
+    pub fn open(
+        ui_font: &[u8],
+        display_font: &[u8],
+        icons: &[u8],
+        log: Observer,
+    ) -> Result<Self, String> {
+        if ui_font.len() != 256 * 128 * 4 || display_font.len() != 256 * 128 * 4 {
             return Err("font atlas dimensions".into());
+        }
+        if icons.len() != 192 * 160 * 4 {
+            return Err("icon atlas dimensions".into());
         }
         let mut p = std::ptr::null_mut();
         // SAFETY: font has exactly the checked RGBA length; constructor copies it into GL and returns uniquely owned handles.
-        let r = unsafe { rb_graphics_open(&mut p, font.as_ptr()) };
+        let r = unsafe {
+            rb_graphics_open(
+                &mut p,
+                ui_font.as_ptr(),
+                display_font.as_ptr(),
+                icons.as_ptr(),
+            )
+        };
         if r < 0 {
             // SAFETY: thread-local C diagnostic string has static storage on this UI thread.
             let detail = unsafe { CStr::from_ptr(rb_graphics_error()) }.to_string_lossy();
@@ -93,6 +115,8 @@ impl Renderer {
                     q.h,
                     q.color,
                     q.glyph.map(i32::from).unwrap_or(-1),
+                    q.icon.map(i32::from).unwrap_or(-1),
+                    i32::from(q.display_font),
                     i32::from(q.artwork),
                 );
             }

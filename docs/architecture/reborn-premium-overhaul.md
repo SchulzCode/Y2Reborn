@@ -1,8 +1,9 @@
-# Reborn premium DAP overhaul
+# Reborn UI reset architecture
 
 This document records the product and architecture target for the Reborn
-overhaul. It is intentionally grounded in the current native Rust code and in
-the captured Y2 input evidence; it is not a port of the Android Y2Player UI.
+overhaul. It is grounded in the current native Rust code, the captured Y2
+input evidence, and the supplied Reborn UI Implementation Pack. It is not
+derived from any older player UI.
 
 ## Audit result
 
@@ -17,16 +18,10 @@ The visual references share a small, readable premium language:
   indicators;
 - a compact 480x360 layout with no touch affordances.
 
-The old Reborn UI instead had a flat text list, developer labels, a global
-notice string, raw screen-local selection, and an action path that could call a
-service directly from a screen callback. Now Playing also treated wheel input
-as navigation/transport input, which made rotation capable of changing
-playback.
-
-The Y2Player reference contributes three useful lessons only: an explicit
-navigation stack, a pure-ish action/reduction boundary, and a queue controller
-whose visible order is the playback order. Android key-gate and layout
-workarounds are not carried over.
+The superseded Reborn presentation layer had a flat text list, developer
+labels, a global notice string, and screen-local selection. This reset retires
+that presentation layer while keeping the working runtime, service, and audio
+systems underneath it.
 
 ## Hardware input contract
 
@@ -50,12 +45,11 @@ are intentionally not part of the contract.
 The 2026-09-18 capture contained no events from the APT32F node, while the
 keypad node emitted Up/Down detents. The implementation therefore supports the
 APT32F axis without depending on it and uses the proven keypad detent path.
-The direction names follow the existing Y2Player convention (`Down` is the
+The direction names follow the captured keypad semantics (`Down` is the
 forward/clockwise direction); physical acceptance remains an owner test.
 
-The current Reborn mapping was incorrect in two important ways: it matched
-wheel input by event type/code without the device identity, and it treated
-every received action as a wake/toggle while the display was off.
+The mapping is kept behind the platform input boundary and is validated by
+the input tests; screen code never sees Linux event codes or device names.
 
 ## Target interaction model
 
@@ -129,22 +123,29 @@ cache, focus animation, radio notices, and open dialogs are not serialized.
 The renderer uses central tokens rather than screen-local literals:
 
 ```text
-background       #090D12
-surface          #111820
-raised surface   #18222C
-focus surface    #29251D
-primary text     #F5F2EB
-secondary text   #AEB7C3
-muted text       #707A87
-accent gold      #E9BC68
-success          #86C39F
-danger           #DB7C70
-divider          #2B3440
-outer margin     12 px
-header           38 px
-row              36 px
-focus inset      2 px gold edge + raised fill
-corner radii     6 px cards / 4 px rows
+background       #090B0D
+raised surface   #101317
+surface          #15191E
+surface hover    #1B2026
+surface border   #2A3037
+primary text     #F2F1ED
+secondary text   #AAAEB5
+muted text       #747A83
+accent gold      #E6B965
+bright gold      #FFD17B
+dim gold         #7D6337
+focus glow       #F5C973
+focus fill       #211B12
+success          #74B68B
+danger           #D46B65
+track            #444A51
+screen margin    16 px
+status bar       30 px
+row              44 px
+now-playing art  168 px
+list art         42 px
+focus border     2 px warm gold
+corner radii     6 / 10 / 14 px
 ```
 
 Static screens render once after state change. Time/progress and temporary

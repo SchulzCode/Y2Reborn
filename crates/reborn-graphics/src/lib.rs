@@ -1,6 +1,7 @@
 mod native;
 pub use native::Renderer;
-#[derive(Clone, Debug)]
+use serde::{Deserialize, Serialize};
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Quad {
     pub x: f32,
     pub y: f32,
@@ -8,6 +9,8 @@ pub struct Quad {
     pub h: f32,
     pub color: u32,
     pub glyph: Option<u8>,
+    pub icon: Option<u8>,
+    pub display_font: bool,
     pub artwork: bool,
 }
 impl Quad {
@@ -19,6 +22,8 @@ impl Quad {
             h,
             color,
             glyph: None,
+            icon: None,
+            display_font: false,
             artwork: false,
         }
     }

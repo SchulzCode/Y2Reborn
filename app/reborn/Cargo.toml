@@ -24,3 +24,7 @@ path = "src/main.rs"
 [[bin]]
 name = "rebornctl"
 path = "src/ctl.rs"
+
+[[bin]]
+name = "reborn-preview"
+path = "src/bin/reborn-preview.rs"
