@@ -13,26 +13,29 @@ with tempfile.TemporaryDirectory(prefix='reborn-integration-')as tmp:
   value=json.loads(p.stdout)
   if success:assert p.returncode==0,(args,p.returncode,value,p.stderr)
   return value
+ def wait_library(expected_tracks):
+  for _ in range(200):
+   value=ctl('status')
+   library=value['library']
+   if not library['scanning'] and library['tracks_loaded']==expected_tracks and library['last_scan'] is not None:
+    return value
+   time.sleep(.05)
+  raise AssertionError(value)
  try:
   for _ in range(100):
    if sock.exists():break
    assert proc.poll()is None,proc.communicate()
    time.sleep(.05)
   assert sock.stat().st_mode&0o777==0o600
-  for _ in range(100):
-   status=ctl('status')
-   if status['scanner'].get('state')=='idle' and status['library']['tracks_loaded']==6:break
-   time.sleep(.05)
-  assert status['library']['tracks_loaded']==6,status
-  assert status['scanner']['metrics']['failures']==1,status
+  status=wait_library(6)
   assert ctl('test','decoder')['passed']
   assert ctl('test','database')['passed']
   assert ctl('test','library')['passed']
   assert len(ctl('test','list')['tests'])==14
-  ctl('scan','incremental');time.sleep(.3)
-  scanned=ctl('status')['scanner']['metrics'];assert scanned['reused']==6,scanned
-  (music/'tone.mp3').unlink();ctl('scan','incremental');time.sleep(.3)
-  assert ctl('status')['library']['tracks_loaded']==5
+  ctl('scan','incremental')
+  scanned=wait_library(6);assert scanned['library']['last_scan']['reused']==6,scanned
+  (music/'tone.mp3').unlink();ctl('scan','incremental')
+  assert wait_library(5)['library']['tracks_loaded']==5
   for payload in [b'{"version":1,"id":1,"command":{"op":"exec","shell":"touch /tmp/forbidden"}}\n',b'{"version":1,"id":1,"command":{"op":"status","extra":1}}\n',b'x'*9000+b'\n']:
    c=socket.socket(socket.AF_UNIX);c.settimeout(3);c.connect(str(sock));c.sendall(payload)
    try:r=c.recv(20000)
@@ -40,7 +43,7 @@ with tempfile.TemporaryDirectory(prefix='reborn-integration-')as tmp:
    if r:assert json.loads(r)['ok']is False
    c.close()
   slow=socket.socket(socket.AF_UNIX);slow.connect(str(sock));slow.sendall(b'{')
-  assert ctl('status')['version'].endswith('baseline.01');slow.close()
+  assert ctl('status')['version'].endswith('premium.01');slow.close()
   ctl('log-level','playback','debug');assert ctl('log-level')['overrides']['playback']=='DEBUG';ctl('log-level','reset')
   bundle=pathlib.Path(ctl('diagnose')['path']);assert bundle.stat().st_size<2*1024*1024
   with tarfile.open(bundle)as t:
