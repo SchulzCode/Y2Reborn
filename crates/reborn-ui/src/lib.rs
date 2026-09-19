@@ -599,12 +599,14 @@ impl Ui {
             Action::ContextMenu => {
                 if m.navigation.modal.is_none() {
                     let rows = self.rows(m, tracks);
-                    if rows.get(m.navigation.focus).is_some_and(|row| row.enabled)
-                        && !self.context_rows(m).is_empty()
-                    {
-                        m.navigation.modal = Some(Modal::ContextMenu);
-                        m.navigation.modal_focus = 0;
+                    if rows.get(m.navigation.focus).is_some_and(|row| row.enabled) {
                         m.navigation.context_target = Some(m.navigation.focus);
+                        if !self.context_rows(m).is_empty() {
+                            m.navigation.modal = Some(Modal::ContextMenu);
+                            m.navigation.modal_focus = 0;
+                        } else {
+                            m.navigation.context_target = None;
+                        }
                     }
                 }
                 return Effect::None;
@@ -958,15 +960,34 @@ impl Ui {
                     m.navigation.context_target = None;
                     return Effect::None;
                 }
-                m.navigation.modal = None;
-                m.navigation.context_target = None;
-                match confirm {
+                let effect = match confirm {
+                    ConfirmAction::ForgetBluetooth => m
+                        .navigation
+                        .context_target
+                        .and_then(|target| target.checked_sub(3))
+                        .and_then(|index| self.bluetooth_devices.get(index))
+                        .map(|device| Effect::BluetoothDevice {
+                            path: device.key.clone(),
+                            operation: "forget".into(),
+                        })
+                        .unwrap_or(Effect::None),
+                    ConfirmAction::ForgetWifi => m
+                        .navigation
+                        .context_target
+                        .and_then(|target| target.checked_sub(2))
+                        .and_then(|index| self.saved_networks.get(index))
+                        .and_then(|network| network.key.strip_prefix("saved:"))
+                        .and_then(|id| id.parse().ok())
+                        .map(Effect::WifiForget)
+                        .unwrap_or(Effect::None),
                     ConfirmAction::ClearQueue => Effect::ClearQueue,
                     ConfirmAction::RebuildLibrary => Effect::RebuildLibrary,
                     ConfirmAction::PowerOff => Effect::PowerOff,
                     ConfirmAction::Reboot => Effect::Reboot,
-                    ConfirmAction::ForgetBluetooth | ConfirmAction::ForgetWifi => Effect::None,
-                }
+                };
+                m.navigation.modal = None;
+                m.navigation.context_target = None;
+                effect
             }
             Some(Modal::ContextMenu) => {
                 let Some(target) = m.navigation.context_target else {
@@ -986,9 +1007,20 @@ impl Ui {
                         .strip_prefix("track:")
                         .and_then(|value| value.parse().ok())
                 };
+                let menu_key = row.key.clone();
+                if menu_key == "bt_forget" {
+                    m.navigation.modal = Some(Modal::Confirm(ConfirmAction::ForgetBluetooth));
+                    m.navigation.modal_focus = 0;
+                    return Effect::None;
+                }
+                if menu_key == "wifi_forget" {
+                    m.navigation.modal = Some(Modal::Confirm(ConfirmAction::ForgetWifi));
+                    m.navigation.modal_focus = 0;
+                    return Effect::None;
+                }
                 m.navigation.modal = None;
                 m.navigation.context_target = None;
-                match row.key.as_str() {
+                match menu_key.as_str() {
                     "play" => track_index.map(Effect::Play).unwrap_or(Effect::None),
                     "play_next" => track_index.map(Effect::PlayNext).unwrap_or(Effect::None),
                     "add_queue" => track_index.map(Effect::AddToQueue).unwrap_or(Effect::None),
@@ -1243,6 +1275,26 @@ mod tests {
             Some(Modal::Confirm(ConfirmAction::RebuildLibrary))
         );
         assert_eq!(app.navigation.modal_focus, 0);
+    }
+    #[test]
+    fn forgetting_radio_entries_requires_confirmation_and_emits_service_effect() {
+        let mut ui = Ui::default();
+        ui.saved_networks = vec![Item::new("Saved: Studio", "saved:7")];
+        let mut app = model(Screen::Wifi);
+        app.navigation.focus = 2;
+        ui.action(&mut app, &[], Action::ContextMenu);
+        assert_eq!(app.navigation.modal, Some(Modal::ContextMenu));
+        app.navigation.modal_focus = 1;
+        ui.action(&mut app, &[], Action::Select);
+        assert_eq!(
+            app.navigation.modal,
+            Some(Modal::Confirm(ConfirmAction::ForgetWifi))
+        );
+        app.navigation.modal_focus = 1;
+        assert_eq!(
+            ui.action(&mut app, &[], Action::Select),
+            Effect::WifiForget(7)
+        );
     }
     #[test]
     fn password_is_never_drawn() {
