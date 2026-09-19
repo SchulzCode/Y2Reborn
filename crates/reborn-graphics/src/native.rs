@@ -37,7 +37,7 @@ pub struct Renderer {
 }
 impl Renderer {
     pub fn open(font: &[u8], log: Observer) -> Result<Self, String> {
-        if font.len() != 128 * 64 * 4 {
+        if font.len() != 256 * 128 * 4 {
             return Err("font atlas dimensions".into());
         }
         let mut p = std::ptr::null_mut();

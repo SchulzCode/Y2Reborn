@@ -1,6 +1,5 @@
 #![forbid(unsafe_code)]
 
-use font8x8::UnicodeFonts;
 use reborn_core::{
     Action, AppModel, AudioOutput, ConfirmAction, Modal, RadioScan, RepeatMode, ReplayGainMode,
     Screen, Track,
@@ -74,6 +73,14 @@ pub struct RadioView {
     pub error: Option<String>,
     pub connection: String,
     pub count: usize,
+}
+
+/// Small, already-sanitized power data supplied by the platform boundary.
+/// The renderer never reads sysfs or invents a battery percentage.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PowerView {
+    pub battery_percent: Option<u8>,
+    pub charging: bool,
 }
 
 impl RadioView {
@@ -1164,10 +1171,17 @@ impl Ui {
         Effect::None
     }
 
-    pub fn draw(&self, m: &AppModel, tracks: &[Track], health: &str, has_art: bool) -> Vec<Quad> {
+    pub fn draw(
+        &self,
+        m: &AppModel,
+        tracks: &[Track],
+        health: &str,
+        has_art: bool,
+        power: PowerView,
+    ) -> Vec<Quad> {
         let mut draw = Vec::with_capacity(4096);
-        rect(&mut draw, 0., 0., 480., 360., BG);
-        self.draw_premium_status(&mut draw, m);
+        self.draw_reference_backdrop(&mut draw, m, has_art);
+        self.draw_premium_status(&mut draw, m, power);
         if let Some(pair) = &self.pairing {
             self.draw_premium_pairing(&mut draw, pair);
             self.draw_brand_footer(&mut draw);
@@ -1207,7 +1221,7 @@ impl Ui {
         if m.navigation.modal.is_some() {
             self.draw_premium_modal(&mut draw, m);
         }
-        if m.screen != Screen::NowPlaying {
+        if !matches!(m.screen, Screen::NowPlaying | Screen::Home) {
             self.draw_premium_mini_player(&mut draw, m, has_art);
         }
         self.draw_brand_footer(&mut draw);
@@ -1217,7 +1231,27 @@ impl Ui {
         draw
     }
 
-    fn draw_premium_status(&self, d: &mut Vec<Quad>, m: &AppModel) {
+    fn draw_reference_backdrop(&self, d: &mut Vec<Quad>, m: &AppModel, has_art: bool) {
+        let artwork_led = has_art
+            && matches!(
+                m.screen,
+                Screen::Home | Screen::NowPlaying | Screen::Queue | Screen::Album
+            );
+        if artwork_led {
+            let mut backdrop = Quad::rect(0., 31., 480., 299., 0x7d8792a0);
+            backdrop.artwork = true;
+            d.push(backdrop);
+            // A dark veil keeps text legible while retaining the editorial,
+            // artwork-led atmosphere of the reference design.
+            rect(d, 0., 31., 480., 299., 0x080b10c8);
+            rect(d, 0., 31., 480., 90., 0x080b10b0);
+            rect(d, 0., 218., 480., 112., 0x080b10dd);
+        } else {
+            rect(d, 0., 0., 480., 360., BG);
+        }
+    }
+
+    fn draw_premium_status(&self, d: &mut Vec<Quad>, m: &AppModel, power: PowerView) {
         rect(d, 0., 0., 480., 31., HEADER);
         text(d, 12., 7., "Reborn", 1.35, PRIMARY);
         rect(d, 69., 7., 1., 16., BORDER);
@@ -1236,52 +1270,79 @@ impl Ui {
         if self.wifi.powered {
             circle(d, 404., 14., 2., SUCCESS);
         }
-        text(
-            d,
-            418.,
-            9.,
-            &format!("V{}", m.settings.volume),
-            0.82,
-            PRIMARY,
-        );
+        if let Some(percent) = power.battery_percent {
+            icon(
+                d,
+                "battery",
+                420.,
+                8.,
+                13.,
+                if power.charging { GOLD } else { PRIMARY },
+            );
+            text(d, 438., 9., &format!("{percent}%"), 0.72, PRIMARY);
+        } else {
+            text(d, 420., 9., "--%", 0.72, MUTED);
+        }
         rect(d, 0., 30., 480., 1., BORDER_SOFT);
     }
 
     fn draw_premium_home(&self, d: &mut Vec<Quad>, m: &AppModel, _tracks: &[Track], has_art: bool) {
-        panel(d, 12., 42., 456., 94., CARD, BORDER);
+        // Home is a calm dashboard, not a developer-style root list. The
+        // reference product leads with the current record and makes the
+        // destinations secondary, card-like actions.
+        panel(d, 12., 42., 456., 137., 0x10141bdc, BORDER_SOFT);
         if let Some(track) = m.current() {
-            artwork_card(d, 20., 50., 78., CARD, has_art);
-            micro(d, 112., 52., "NOW PLAYING", GOLD_SOFT);
-            text(d, 112., 68., &fit_text(&track.title, 22), 1.22, PRIMARY);
-            text(d, 112., 88., &fit_text(&track.artist, 25), 0.94, SECONDARY);
-            text(
+            artwork_card(d, 21., 51., 119., CARD_ALT, has_art);
+            micro(d, 157., 53., "NOW PLAYING", GOLD_SOFT);
+            text(d, 157., 68., &fit_text(&track.title, 30), 1.32, PRIMARY);
+            text(d, 157., 91., &fit_text(&track.artist, 31), 0.92, SECONDARY);
+            text(d, 157., 108., &fit_text(&track.album, 31), 0.78, MUTED);
+            rect(d, 157., 129., 268., 3., BORDER);
+            rect(
                 d,
-                112.,
-                108.,
-                &format!("{}  ·  {}", time(m.position_ms), time(track.duration_ms)),
-                0.78,
-                MUTED,
+                157.,
+                129.,
+                268. * progress(m.position_ms, track.duration_ms),
+                3.,
+                GOLD,
             );
-            text(d, 401., 74., ">", 1.35, GOLD);
-            micro(d, 370., 101., "OPEN", MUTED);
+            text(d, 157., 140., &time(m.position_ms), 0.68, SECONDARY);
+            text(d, 395., 140., &time(track.duration_ms), 0.68, MUTED);
+            circle_outline(d, 434., 82., 17., GOLD);
+            icon(
+                d,
+                if matches!(
+                    m.playback,
+                    reborn_core::PlaybackState::Playing | reborn_core::PlaybackState::Buffering
+                ) {
+                    "pause"
+                } else {
+                    "play"
+                },
+                427.,
+                74.,
+                15.,
+                PRIMARY,
+            );
         } else {
-            icon(d, "music", 28., 65., 25., GOLD);
-            micro(d, 76., 56., "REBORN AUDIO", GOLD_SOFT);
-            text(d, 76., 72., "Listen deeper", 1.7, PRIMARY);
-            text(d, 76., 98., "Your music, simply present.", 0.9, SECONDARY);
+            icon(d, "music", 28., 74., 27., GOLD);
+            micro(d, 72., 58., "REBORN AUDIO", GOLD_SOFT);
+            text(d, 72., 73., "Listen deeper", 1.7, PRIMARY);
+            text(d, 72., 99., "Choose music to begin.", 0.9, SECONDARY);
             micro(d, 365., 78., "READY", SUCCESS);
         }
 
-        micro(d, 14., 151., "LIBRARY", MUTED);
+        micro(d, 14., 193., "EXPLORE", MUTED);
         let rows = self.rows(m, &m.library.tracks);
         for (index, row) in rows.iter().enumerate() {
-            let (x, y, w) = if index == 4 {
-                (12., 238., 456.)
+            let (x, y, w, h) = if index == 4 {
+                (12., 276., 456., 34.)
             } else {
                 (
                     12. + (index % 2) as f32 * 228.,
-                    162. + (index / 2) as f32 * 39.,
+                    204. + (index / 2) as f32 * 36.,
                     216.,
+                    31.,
                 )
             };
             let selected = index == m.navigation.focus;
@@ -1290,7 +1351,7 @@ impl Ui {
                 x,
                 y,
                 w,
-                34.,
+                h,
                 if selected { FOCUS } else { CARD },
                 if selected { GOLD } else { BORDER_SOFT },
             );
@@ -1299,33 +1360,33 @@ impl Ui {
                 home_icon(&row.key),
                 x + 12.,
                 y + 8.,
-                15.,
+                14.,
                 if selected { GOLD } else { SECONDARY },
             );
             text(
                 d,
-                x + 39.,
+                x + 38.,
                 y + 6.,
                 &fit_text(&row.label, if w > 300. { 31 } else { 20 }),
-                0.85,
+                0.82,
                 if selected { PRIMARY } else { SECONDARY },
             );
-            if !row.secondary.is_empty() {
+            if !row.secondary.is_empty() && h > 32. {
                 text(
                     d,
-                    x + 39.,
-                    y + 20.,
-                    &fit_text(&row.secondary, if w > 300. { 45 } else { 26 }),
-                    0.62,
+                    x + 38.,
+                    y + 19.,
+                    &fit_text(&row.secondary, if w > 300. { 45 } else { 25 }),
+                    0.58,
                     if selected { GOLD_SOFT } else { MUTED },
                 );
             }
             text(
                 d,
                 x + w - 19.,
-                y + 10.,
+                y + 9.,
                 ">",
-                0.95,
+                0.92,
                 if selected { GOLD } else { MUTED },
             );
         }
@@ -1619,7 +1680,10 @@ impl Ui {
             return;
         };
 
-        panel(d, 12., 42., 456., 244., CARD, BORDER);
+        // The reference player is an editorial canvas rather than a stack of
+        // generic buttons: large artwork, quiet metadata, one clear
+        // transport row, then a separate output strip.
+        panel(d, 12., 42., 456., 246., 0x10141bd0, BORDER_SOFT);
         artwork_card(d, 21., 51., 146., CARD_ALT, has_art);
         micro(d, 184., 53., "NOW PLAYING", GOLD_SOFT);
         text(
@@ -1649,32 +1713,40 @@ impl Ui {
 
         let codec = fit_text(&track.codec.to_uppercase(), 8);
         let format = fit_text(&technical_format(track), 9);
-        badge(d, 184., 133., 58., &codec, GOLD);
-        badge(d, 248., 133., 72., &format, SECONDARY);
-        badge(d, 326., 133., 72., output_short(&m.output), SUCCESS);
+        badge(d, 184., 132., 58., &codec, GOLD);
+        badge(d, 248., 132., 72., &format, SECONDARY);
+        badge(d, 326., 132., 72., output_short(&m.output), SUCCESS);
+        text(
+            d,
+            184.,
+            160.,
+            "Music for a calmer tomorrow.",
+            0.72,
+            SECONDARY,
+        );
 
-        rect(d, 184., 166., 264., 4., BORDER);
+        rect(d, 184., 177., 264., 3., BORDER);
         rect(
             d,
             184.,
-            166.,
+            177.,
             264. * progress(m.position_ms, track.duration_ms),
-            4.,
+            3.,
             GOLD,
         );
         circle(
             d,
             184. + 264. * progress(m.position_ms, track.duration_ms),
-            168.,
-            4.,
+            178.,
+            3.,
             GOLD,
         );
-        text(d, 184., 178., &time(m.position_ms), 0.72, SECONDARY);
-        text(d, 412., 178., &time(track.duration_ms), 0.72, MUTED);
+        text(d, 184., 188., &time(m.position_ms), 0.72, SECONDARY);
+        text(d, 412., 188., &time(track.duration_ms), 0.72, MUTED);
 
-        circle_outline(d, 239., 232., 19., BORDER);
-        icon(d, "previous", 231., 224., 16., SECONDARY);
-        circle_outline(d, 315., 232., 25., GOLD);
+        circle_outline(d, 239., 237., 18., BORDER);
+        icon(d, "previous", 232., 230., 15., SECONDARY);
+        circle_outline(d, 315., 237., 24., GOLD);
         icon(
             d,
             if matches!(
@@ -1685,13 +1757,13 @@ impl Ui {
             } else {
                 "play"
             },
-            304.,
-            221.,
-            22.,
+            305.,
+            226.,
+            20.,
             PRIMARY,
         );
-        circle_outline(d, 391., 232., 19., BORDER);
-        icon(d, "next", 383., 224., 16., SECONDARY);
+        circle_outline(d, 391., 237., 18., BORDER);
+        icon(d, "next", 384., 230., 15., SECONDARY);
 
         self.draw_output_strip(d, m, track);
     }
@@ -1788,25 +1860,63 @@ impl Ui {
         let description = settings_description(m.screen);
         text(d, 140., 84., description, 0.68, SECONDARY);
         let rows = self.rows(m, &[]);
-        self.draw_premium_rows(
-            d,
-            &rows,
-            m.navigation.focus,
-            RowLayout {
-                x: 136.,
-                y: 101.,
-                width: 322.,
-                visible: 5,
-                artwork: false,
-                has_art: false,
-            },
-        );
+        let focus = if m.screen == Screen::Settings {
+            category
+        } else {
+            m.navigation.focus
+        };
+        let start = focus.saturating_sub(3).min(rows.len().saturating_sub(5));
+        for (position, row) in rows.iter().enumerate().skip(start).take(5) {
+            let y = 101. + (position - start) as f32 * 36.;
+            let selected = position == focus;
+            if selected {
+                panel(d, 132., y, 328., 32., FOCUS, GOLD);
+            } else {
+                rect(d, 140., y + 31., 312., 1., BORDER_SOFT);
+            }
+            icon(
+                d,
+                row_icon(&row.key),
+                143.,
+                y + 8.,
+                14.,
+                if selected { GOLD } else { SECONDARY },
+            );
+            text(
+                d,
+                168.,
+                y + 7.,
+                &fit_text(&row.label, 25),
+                0.82,
+                if selected { PRIMARY } else { SECONDARY },
+            );
+            if row.secondary == "On" || row.secondary == "Off" {
+                toggle(d, 416., y + 8., row.secondary == "On", selected);
+            } else {
+                text(
+                    d,
+                    330.,
+                    y + 8.,
+                    &fit_text(&row.secondary, 14),
+                    0.66,
+                    if selected { GOLD_SOFT } else { MUTED },
+                );
+            }
+            text(
+                d,
+                445.,
+                y + 8.,
+                ">",
+                0.9,
+                if selected { GOLD } else { MUTED },
+            );
+        }
     }
 
     fn draw_premium_connectivity(&self, d: &mut Vec<Quad>, m: &AppModel) {
         if m.screen == Screen::Connectivity {
             micro(d, 14., 46., "CONNECTIONS", MUTED);
-            text(d, 14., 57., "Stay connected", 1.55, PRIMARY);
+            text(d, 14., 57., "Quick settings", 1.55, PRIMARY);
             let cards = [
                 (
                     12.,
@@ -1829,9 +1939,9 @@ impl Ui {
                 panel(
                     d,
                     x,
-                    88.,
+                    82.,
                     224.,
-                    108.,
+                    68.,
                     if selected { FOCUS } else { CARD },
                     if selected { GOLD } else { BORDER },
                 );
@@ -1839,54 +1949,77 @@ impl Ui {
                     d,
                     key,
                     x + 16.,
-                    105.,
-                    22.,
+                    97.,
+                    19.,
                     if selected { GOLD } else { SECONDARY },
                 );
                 text(
                     d,
                     x + 50.,
-                    106.,
+                    95.,
                     label,
-                    1.05,
+                    0.96,
                     if selected { PRIMARY } else { SECONDARY },
                 );
                 text(
                     d,
                     x + 50.,
-                    127.,
+                    115.,
                     &fit_text(&summary, 20),
-                    0.75,
+                    0.68,
                     if active { SUCCESS } else { MUTED },
                 );
                 micro(
                     d,
                     x + 16.,
-                    171.,
-                    if active { "AVAILABLE" } else { "OFFLINE" },
+                    135.,
+                    if active { "CONNECTED" } else { "OFF" },
                     if active { SUCCESS } else { MUTED },
                 );
                 text(
                     d,
                     x + 194.,
-                    166.,
+                    119.,
                     ">",
-                    1.1,
+                    1.0,
                     if selected { GOLD } else { MUTED },
                 );
             }
-            panel(d, 12., 210., 456., 68., CARD_ALT, BORDER_SOFT);
-            micro(d, 26., 222., "OUTPUT", MUTED);
-            icon(d, "headphones", 26., 239., 16., GOLD);
-            text(d, 51., 239., &output_label(&m.output), 0.9, PRIMARY);
+            panel(d, 12., 160., 224., 55., CARD, BORDER_SOFT);
+            icon(d, "headphones", 26., 177., 17., GOLD);
+            micro(d, 54., 171., "PAIRED DEVICES", MUTED);
             text(
                 d,
-                51.,
-                256.,
-                "Audio follows the selected output automatically",
-                0.68,
-                SECONDARY,
+                54.,
+                185.,
+                &fit_text(&self.bluetooth_summary(), 24),
+                0.78,
+                PRIMARY,
             );
+            text(d, 218., 180., ">", 0.9, MUTED);
+            panel(d, 244., 160., 224., 55., CARD, BORDER_SOFT);
+            icon(d, "wifi", 258., 177., 17., GOLD);
+            micro(d, 286., 171., "NETWORK & SYNC", MUTED);
+            text(
+                d,
+                286.,
+                185.,
+                &fit_text(&self.wifi_summary(), 22),
+                0.78,
+                PRIMARY,
+            );
+            text(d, 450., 180., ">", 0.9, MUTED);
+            let tiles = [
+                (12., "Airplane mode", "Off", "power"),
+                (168., "Do not disturb", "Off", "display"),
+                (324., "Output", output_short(&m.output), "headphones"),
+            ];
+            for (x, label, value, key) in tiles {
+                panel(d, x, 231., 144., 48., CARD_ALT, BORDER_SOFT);
+                icon(d, key, x + 13., 243., 14., SECONDARY);
+                text(d, x + 36., 240., label, 0.66, SECONDARY);
+                text(d, x + 36., 256., value, 0.7, MUTED);
+            }
             return;
         }
 
@@ -1940,6 +2073,136 @@ impl Ui {
         tracks: &[Track],
         has_art: bool,
     ) {
+        if m.screen == Screen::Artist {
+            let name = m
+                .navigation
+                .filter
+                .strip_prefix("artist:")
+                .unwrap_or("Artist");
+            let artist_tracks = tracks
+                .iter()
+                .filter(|track| track_matches(track, &m.navigation.filter))
+                .collect::<Vec<_>>();
+            let mut albums = Vec::new();
+            for track in &artist_tracks {
+                if !track.album.is_empty() && !albums.iter().any(|album| album == &track.album) {
+                    albums.push(track.album.clone());
+                }
+            }
+
+            panel(d, 12., 42., 456., 84., 0x10141bdc, BORDER_SOFT);
+            artwork_card(d, 20., 50., 68., CARD_ALT, has_art);
+            micro(d, 104., 53., "ARTIST", GOLD_SOFT);
+            text(d, 104., 67., &fit_text(name, 31), 1.35, PRIMARY);
+            text(
+                d,
+                104.,
+                91.,
+                &format!("{} tracks  ·  {} albums", artist_tracks.len(), albums.len()),
+                0.78,
+                SECONDARY,
+            );
+            text(d, 104., 107., "Select for artist options", 0.68, MUTED);
+            panel(
+                d,
+                365.,
+                67.,
+                88.,
+                24.,
+                if m.navigation.focus == 0 {
+                    FOCUS
+                } else {
+                    CARD_ALT
+                },
+                if m.navigation.focus == 0 {
+                    GOLD
+                } else {
+                    BORDER_SOFT
+                },
+            );
+            text(
+                d,
+                376.,
+                75.,
+                "Play Artist",
+                0.68,
+                if m.navigation.focus == 0 {
+                    PRIMARY
+                } else {
+                    SECONDARY
+                },
+            );
+
+            micro(d, 14., 139., "TOP TRACKS", MUTED);
+            if m.navigation.focus == 1 {
+                panel(d, 216., 134., 41., 18., FOCUS, GOLD);
+            }
+            text(
+                d,
+                220.,
+                139.,
+                "SEE ALL  >",
+                0.58,
+                if m.navigation.focus == 1 {
+                    GOLD_SOFT
+                } else {
+                    MUTED
+                },
+            );
+            let start = m
+                .navigation
+                .focus
+                .saturating_sub(2)
+                .min(artist_tracks.len().saturating_sub(4));
+            for (position, track) in artist_tracks.iter().enumerate().skip(start).take(4) {
+                let row_y = 151. + (position - start) as f32 * 31.;
+                let selected = position + 2 == m.navigation.focus;
+                panel(
+                    d,
+                    12.,
+                    row_y,
+                    246.,
+                    27.,
+                    if selected { FOCUS } else { CARD },
+                    if selected { GOLD } else { BORDER_SOFT },
+                );
+                text(
+                    d,
+                    21.,
+                    row_y + 8.,
+                    &format!("{}", position + 1),
+                    0.68,
+                    MUTED,
+                );
+                text(
+                    d,
+                    39.,
+                    row_y + 7.,
+                    &fit_text(display_or_unknown(&track.title), 25),
+                    0.78,
+                    if selected { PRIMARY } else { SECONDARY },
+                );
+                text(
+                    d,
+                    225.,
+                    row_y + 7.,
+                    &time(track.duration_ms),
+                    0.66,
+                    if selected { GOLD_SOFT } else { MUTED },
+                );
+            }
+
+            micro(d, 276., 139., "ALBUMS", MUTED);
+            text(d, 427., 139., ">", 0.8, MUTED);
+            for (index, album) in albums.iter().take(4).enumerate() {
+                let x = 276. + (index % 2) as f32 * 96.;
+                let y = 151. + (index / 2) as f32 * 78.;
+                artwork_card(d, x, y, 63., CARD_ALT, has_art && index == 0);
+                text(d, x, y + 66., &fit_text(album, 12), 0.62, SECONDARY);
+            }
+            return;
+        }
+
         let (kind, name, detail) = match m.screen {
             Screen::Album => {
                 let name = m
@@ -1964,12 +2227,12 @@ impl Ui {
             }
             _ => ("COLLECTION", "Collection".into(), String::new()),
         };
-        panel(d, 12., 42., 456., 84., CARD, BORDER);
+        panel(d, 12., 42., 456., 84., 0x10141bdc, BORDER_SOFT);
         artwork_card(d, 20., 50., 68., CARD_ALT, has_art);
         micro(d, 104., 53., kind, GOLD_SOFT);
         text(d, 104., 67., &fit_text(&name, 32), 1.35, PRIMARY);
         text(d, 104., 91., &fit_text(&detail, 36), 0.82, SECONDARY);
-        text(d, 104., 107., "Select for options", 0.68, MUTED);
+        text(d, 104., 107., "Select for album options", 0.68, MUTED);
         let rows = self.rows(m, tracks);
         self.draw_premium_rows(
             d,
@@ -2279,8 +2542,9 @@ impl Ui {
     fn draw_brand_footer(&self, d: &mut Vec<Quad>) {
         rect(d, 0., 331., 480., 29., HEADER);
         rect(d, 0., 330., 480., 1., BORDER_SOFT);
-        micro(d, 14., 340., "REborn  ·  Y2 AUDIO SYSTEMS", MUTED);
-        text(d, 381., 340., "BACK", 0.66, GOLD_SOFT);
+        micro(d, 14., 340., "WHEEL  ·  SELECT", MUTED);
+        centered_text(d, 240., 340., "LISTEN DEEPER  /  REBORN", 0.58, MUTED);
+        text(d, 436., 340., "BACK", 0.66, GOLD_SOFT);
     }
 
     fn draw_toast(&self, d: &mut Vec<Quad>, message: &str) {
@@ -2590,6 +2854,19 @@ fn icon(d: &mut Vec<Quad>, kind: &str, x: f32, y: f32, size: f32, color: u32) {
             );
             rect(d, x + s * 0.08, y + s * 0.58, s * 0.20, s * 0.28, color);
             rect(d, x + s * 0.72, y + s * 0.58, s * 0.20, s * 0.28, color);
+        }
+        "battery" => {
+            rounded_rect(
+                d,
+                x + s * 0.05,
+                y + s * 0.20,
+                s * 0.76,
+                s * 0.60,
+                s * 0.10,
+                color,
+            );
+            rect(d, x + s * 0.82, y + s * 0.38, s * 0.13, s * 0.24, color);
+            rect(d, x + s * 0.15, y + s * 0.31, s * 0.50, s * 0.38, HEADER);
         }
         "bluetooth" => {
             line(
@@ -2980,6 +3257,18 @@ fn badge(d: &mut Vec<Quad>, x: f32, y: f32, width: f32, label: &str, color: u32)
     centered_text(d, x + width / 2., y + 5., label, 0.62, color);
 }
 
+fn toggle(d: &mut Vec<Quad>, x: f32, y: f32, on: bool, focused: bool) {
+    let track = if on { GOLD } else { BORDER };
+    rounded_rect(d, x, y, 31., 15., 7., track);
+    circle(
+        d,
+        if on { x + 23. } else { x + 8. },
+        y + 7.5,
+        5.,
+        if on || focused { PRIMARY } else { MUTED },
+    );
+}
+
 fn centered_text(d: &mut Vec<Quad>, center_x: f32, y: f32, value: &str, scale: f32, color: u32) {
     let width = value.chars().count() as f32 * 8. * scale;
     text(d, center_x - width / 2., y, value, scale, color);
@@ -3118,26 +3407,13 @@ fn text(d: &mut Vec<Quad>, x: f32, y: f32, value: &str, scale: f32, color: u32) 
 }
 
 pub fn font_atlas() -> Vec<u8> {
-    let mut out = vec![0u8; 128 * 64 * 4];
-    for character in 0..128 {
-        if let Some(rows) = font8x8::BASIC_FONTS.get(char::from(character)) {
-            for (y, bits) in rows.into_iter().enumerate() {
-                for x in 0..8 {
-                    let index = (((character as usize / 16) * 8 + y) * 128
-                        + (character as usize % 16) * 8
-                        + x)
-                        * 4;
-                    out[index..index + 4].copy_from_slice(&[
-                        255,
-                        255,
-                        255,
-                        if bits & (1 << x) != 0 { 255 } else { 0 },
-                    ]);
-                }
-            }
-        }
-    }
-    out
+    // 16x16 cells give the reference typography enough antialiasing to stay
+    // legible at 480x360 while remaining a single static texture upload.
+    include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../assets/fonts/reborn-font.rgba"
+    ))
+    .to_vec()
 }
 
 #[cfg(test)]
@@ -3217,7 +3493,7 @@ mod tests {
             password: "secretpass".into(),
             ..Default::default()
         };
-        let draw = ui.draw(&AppModel::default(), &[], "ok", false);
+        let draw = ui.draw(&AppModel::default(), &[], "ok", false, PowerView::default());
         let glyphs = draw
             .iter()
             .filter_map(|q| q.glyph.map(char::from))
@@ -3227,6 +3503,6 @@ mod tests {
 
     #[test]
     fn font_dimensions_remain_fixed_for_native_renderer() {
-        assert_eq!(font_atlas().len(), 128 * 64 * 4);
+        assert_eq!(font_atlas().len(), 256 * 128 * 4);
     }
 }

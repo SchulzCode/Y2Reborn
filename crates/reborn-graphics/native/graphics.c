@@ -353,8 +353,14 @@ int rb_graphics_open(RbGraphics **out, const uint8_t *font) {
   glViewport(0, 0, g->width, g->height);
   uint8_t white[] = {255, 255, 255, 255};
   g->white = texture(1, 1, white);
-  g->font = texture(128, 64, font);
+  g->font = texture(256, 128, font);
   g->art = texture(1, 1, white);
+  /* Album art is also used as a full-screen backdrop by the product UI.
+   * Linear filtering keeps that treatment photographic instead of blocky;
+   * the bitmap font intentionally remains nearest-filtered. */
+  glBindTexture(GL_TEXTURE_2D, g->art);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
   if (glGetError() != GL_NO_ERROR)
     goto fail;
   *out = g;

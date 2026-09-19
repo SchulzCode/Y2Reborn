@@ -7,7 +7,7 @@ use reborn_graphics::Renderer;
 use reborn_library::{Database, Filter, Scanner};
 use reborn_observability::{HealthState, Level, Observer};
 use reborn_platform::{bluetooth, input, power, storage, wifi};
-use reborn_ui::{Item, Ui};
+use reborn_ui::{Item, PowerView, Ui};
 use serde_json::{json, Value};
 use std::{
     fs,
@@ -797,7 +797,7 @@ fn run() -> Result<(), String> {
         // Hand scanout to Reborn as soon as the renderer exists. The model is
         // already restored, so this bounded initial frame gives the user the
         // real UI while storage, library and radio workers start below it.
-        let draw = ui.draw(&model, &[], "starting", false);
+        let draw = ui.draw(&model, &[], "starting", false, power_view(&power::status()));
         if g.render(&draw).is_ok() {
             first_frame_presented = true;
             log.emit(
@@ -1434,6 +1434,7 @@ fn run() -> Result<(), String> {
                 &rt.model.library.tracks,
                 log.health()["overall"].as_str().unwrap_or("unknown"),
                 rt.art,
+                power_view(&rt.power),
             );
             if let Some(g) = &mut rt.graphics {
                 if let Err(e) = g.render(&draw) {
@@ -1503,6 +1504,31 @@ fn run() -> Result<(), String> {
     );
     Ok(())
 }
+
+fn power_view(status: &Value) -> PowerView {
+    let battery = status["supplies"].as_array().and_then(|supplies| {
+        supplies
+            .iter()
+            .find(|supply| supply["type"].as_str() == Some("Battery"))
+            .or_else(|| {
+                supplies
+                    .iter()
+                    .find(|supply| supply["name"].as_str() == Some("BAT0"))
+            })
+    });
+    let battery_percent = battery
+        .and_then(|supply| supply["capacity"].as_str())
+        .and_then(|value| value.trim().parse::<u8>().ok())
+        .map(|value| value.min(100));
+    let charging = battery
+        .and_then(|supply| supply["status"].as_str())
+        .is_some_and(|status| matches!(status, "Charging" | "Full"));
+    PowerView {
+        battery_percent,
+        charging,
+    }
+}
+
 fn main() {
     if let Err(error) = run() {
         let record = json!({"level":"ERROR","subsystem":"startup","event":"fatal","message":error});
