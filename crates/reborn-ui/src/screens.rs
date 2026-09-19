@@ -1,7 +1,7 @@
 //! Composition of the Reborn screens. Screens only read application state and
 //! emit `Quad`s through shared components; they never call platform services.
 
-use crate::{components, theme, Item, PowerView, RadioView, Ui};
+use crate::{components, theme, timeout_label, Item, PowerView, RadioView, Ui};
 use components::{fit, progress, time, Canvas};
 use reborn_core::{AppModel, Screen, Track};
 use reborn_graphics::Quad;
@@ -59,7 +59,13 @@ pub fn draw(
         Screen::Albums | Screen::Music | Screen::Artists | Screen::Tracks | Screen::Folders => {
             draw_library(&mut c, ui, m, tracks, has_art)
         }
-        Screen::Diagnostics => draw_diagnostics(&mut c, m, health),
+        Screen::Diagnostics => {
+            if m.navigation.filter == "audio" {
+                draw_audio_information(&mut c, m);
+            } else {
+                draw_diagnostics(&mut c, m, health);
+            }
+        }
         Screen::Home => draw_home(&mut c, ui, m, has_art),
         Screen::TextEntry | Screen::Pairing => {}
     }
@@ -417,7 +423,13 @@ fn draw_now_playing(c: &mut Canvas, m: &AppModel, has_art: bool) {
         &technical_format(track),
         theme::color::TEXT_SECONDARY,
     );
-    c.badge(344.0, 130.0, 70.0, "Hi-Res", theme::color::TEXT_MUTED);
+    c.badge(
+        344.0,
+        130.0,
+        70.0,
+        &format!("{} ch", track.channels),
+        theme::color::TEXT_MUTED,
+    );
     c.progress(
         202.0,
         178.0,
@@ -1049,33 +1061,58 @@ fn draw_connectivity(c: &mut Canvas, ui: &Ui, m: &AppModel) {
             14.0,
             theme::color::TEXT_MUTED,
         );
-        for (index, (label, icon)) in [
-            ("Airplane", "display"),
-            ("Do Not Disturb", "repeat"),
-            ("Brightness", "display"),
-            ("System", "settings"),
-        ]
-        .iter()
-        .enumerate()
-        {
-            let x = 16.0 + index as f32 * 112.0;
-            c.panel(
-                x,
-                280.0,
-                104.0,
-                34.0,
-                theme::color::SURFACE,
-                theme::color::SURFACE_BORDER,
-            );
-            c.icon(icon, x + 10.0, 289.0, 15.0, theme::color::TEXT_SECONDARY);
-            c.text(
-                x + 31.0,
-                291.0,
-                label,
-                theme::type_scale::MICRO,
-                theme::color::TEXT_SECONDARY,
-            );
-        }
+        c.panel(
+            16.0,
+            280.0,
+            220.0,
+            34.0,
+            theme::color::SURFACE,
+            theme::color::SURFACE_BORDER,
+        );
+        c.icon(
+            "headphones",
+            28.0,
+            289.0,
+            15.0,
+            theme::color::TEXT_SECONDARY,
+        );
+        c.text(
+            52.0,
+            286.0,
+            "Output",
+            theme::type_scale::MICRO,
+            theme::color::TEXT_MUTED,
+        );
+        c.text(
+            52.0,
+            299.0,
+            &fit(&components::output_label(&m.output), 20),
+            theme::type_scale::MICRO,
+            theme::color::TEXT_SECONDARY,
+        );
+        c.panel(
+            244.0,
+            280.0,
+            220.0,
+            34.0,
+            theme::color::SURFACE,
+            theme::color::SURFACE_BORDER,
+        );
+        c.icon("display", 256.0, 289.0, 15.0, theme::color::TEXT_SECONDARY);
+        c.text(
+            280.0,
+            286.0,
+            "Screen timeout",
+            theme::type_scale::MICRO,
+            theme::color::TEXT_MUTED,
+        );
+        c.text(
+            280.0,
+            299.0,
+            &timeout_label(m.settings.screen_timeout_seconds),
+            theme::type_scale::MICRO,
+            theme::color::TEXT_SECONDARY,
+        );
         c.centered(
             240.0,
             348.0,
@@ -1187,6 +1224,72 @@ fn draw_diagnostics(c: &mut Canvas, m: &AppModel, health: &str) {
             theme::color::SUCCESS,
         );
     }
+}
+
+fn draw_audio_information(c: &mut Canvas, m: &AppModel) {
+    c.display(
+        16.0,
+        46.0,
+        "Audio Information",
+        theme::type_scale::SCREEN_TITLE,
+        theme::color::TEXT_PRIMARY,
+    );
+    c.text(
+        16.0,
+        77.0,
+        "Current source and output path",
+        theme::type_scale::SECONDARY,
+        theme::color::TEXT_SECONDARY,
+    );
+    let values = if let Some(track) = m.current() {
+        vec![
+            ("Codec", track.codec.to_uppercase()),
+            ("Sample rate", format!("{} kHz", track.sample_rate / 1000)),
+            ("Channels", format!("{} ch", track.channels)),
+            ("Processing", "32-bit float".into()),
+            ("Output", components::output_label(&m.output)),
+        ]
+    } else {
+        vec![
+            ("Source", "No track selected".into()),
+            ("Processing", "32-bit float".into()),
+            ("Output", components::output_label(&m.output)),
+        ]
+    };
+    for (index, (label, value)) in values.iter().enumerate() {
+        let y = 105.0 + index as f32 * 31.0;
+        c.panel(
+            16.0,
+            y,
+            448.0,
+            29.0,
+            theme::color::SURFACE,
+            theme::color::SURFACE_BORDER,
+        );
+        c.text(
+            30.0,
+            y + 8.0,
+            label,
+            theme::type_scale::ROW,
+            theme::color::TEXT_PRIMARY,
+        );
+        c.text(
+            294.0,
+            y + 9.0,
+            &fit(value, 19),
+            theme::type_scale::MICRO,
+            theme::color::TEXT_SECONDARY,
+        );
+    }
+    let y = 105.0 + values.len() as f32 * 31.0;
+    c.focus_panel(16.0, y, 448.0, 29.0, m.navigation.focus == 0);
+    c.text(
+        30.0,
+        y + 8.0,
+        "Back to Diagnostics",
+        theme::type_scale::ROW,
+        theme::color::TEXT_PRIMARY,
+    );
 }
 
 fn draw_modal(c: &mut Canvas, ui: &Ui, m: &AppModel) {
@@ -1480,7 +1583,7 @@ fn settings_description(screen: Screen) -> &'static str {
         Screen::SettingsLibrary => "Sources and library maintenance.",
         Screen::SettingsBluetooth => "Pair and manage wireless headphones.",
         Screen::SettingsWifi => "Connect to networks and saved Wi-Fi.",
-        Screen::SettingsDisplay => "Brightness and screen timeout.",
+        Screen::SettingsDisplay => "Screen timeout and wake behavior.",
         Screen::SettingsPower => "Safe power controls.",
         Screen::SettingsSystem => "About, diagnostics and safe actions.",
         _ => "Choose a category.",
@@ -1503,13 +1606,8 @@ fn settings_category(screen: Screen, focus: usize) -> usize {
 }
 
 fn technical_format(track: &Track) -> String {
-    let bits = if track.codec.to_ascii_lowercase().contains("flac") {
-        "24"
-    } else {
-        "16"
-    };
     let khz = track.sample_rate / 1000;
-    format!("{bits}-bit / {khz} kHz")
+    format!("{khz} kHz")
 }
 
 fn track_matches(track: &Track, filter: &str) -> bool {

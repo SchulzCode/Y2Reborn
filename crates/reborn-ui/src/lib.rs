@@ -267,7 +267,6 @@ impl Ui {
                 ),
                 Item::new("Crossfade", "crossfade")
                     .with_secondary(crossfade_label(m.settings.crossfade_ms)),
-                Item::new("Resume Playback", "resume").with_secondary("On"),
             ],
             Screen::SettingsLibrary => vec![
                 Item::new("Internal Storage", "internal").with_secondary("Music library"),
@@ -284,11 +283,8 @@ impl Ui {
                 Item::new("Scan Library", "scan_library"),
                 Item::new("Rebuild Library", "rebuild_library"),
             ],
-            Screen::SettingsDisplay => vec![
-                Item::new("Brightness", "brightness").with_secondary("Automatic"),
-                Item::new("Screen Timeout", "timeout")
-                    .with_secondary(timeout_label(m.settings.screen_timeout_seconds)),
-            ],
+            Screen::SettingsDisplay => vec![Item::new("Screen Timeout", "timeout")
+                .with_secondary(timeout_label(m.settings.screen_timeout_seconds))],
             Screen::SettingsPower => {
                 vec![Item::new("Power Menu", "power_menu").with_secondary("Shut down or reboot")]
             }
@@ -298,13 +294,19 @@ impl Ui {
                 Item::new("Reboot", "reboot"),
                 Item::new("Power Off", "power_off"),
             ],
-            Screen::Diagnostics => vec![
-                Item::new("Audio", "diag_audio"),
-                Item::new("Storage", "diag_storage"),
-                Item::new("Bluetooth", "diag_bluetooth"),
-                Item::new("Wi-Fi", "diag_wifi"),
-                Item::new("System", "diag_system"),
-            ],
+            Screen::Diagnostics => {
+                if m.navigation.filter == "audio" {
+                    vec![Item::new("Back to Diagnostics", "back_diagnostics")]
+                } else {
+                    vec![
+                        Item::new("Audio", "diag_audio"),
+                        Item::new("Storage", "diag_storage"),
+                        Item::new("Bluetooth", "diag_bluetooth"),
+                        Item::new("Wi-Fi", "diag_wifi"),
+                        Item::new("System", "diag_system"),
+                    ]
+                }
+            }
             Screen::TextEntry | Screen::Pairing => vec![],
             Screen::NowPlaying => vec![
                 Item::new("Previous Track", "previous"),
@@ -837,7 +839,12 @@ impl Ui {
                 }
                 _ => {}
             },
-            Screen::Diagnostics => {}
+            Screen::Diagnostics => {
+                if key == "back_diagnostics" {
+                    m.navigation.filter.clear();
+                    m.navigation.focus = 0;
+                }
+            }
             Screen::NowPlaying => match key {
                 "previous" => return Effect::PreviousTrack,
                 "toggle" => return Effect::TogglePlayback,
@@ -1159,7 +1166,7 @@ fn crossfade_label(ms: u32) -> String {
         format!("{} sec", ms / 1000)
     }
 }
-fn timeout_label(seconds: u32) -> String {
+pub(crate) fn timeout_label(seconds: u32) -> String {
     match seconds {
         0 => "Never".into(),
         15 => "15 sec".into(),
