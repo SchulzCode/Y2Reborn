@@ -19,6 +19,14 @@ const PMIC_KEYS: &str = "mtk-pmic-keys";
 const CLICK_WHEEL: &str = "APT32F click-wheel";
 const KEYPAD: &str = "mt6582-keypad";
 
+const EV_KEY: u16 = 1;
+const EV_REL: u16 = 2;
+const REL_WHEEL: u16 = 8;
+const KEY_UP: u16 = 103;
+const KEY_PAGEUP: u16 = 104;
+const KEY_DOWN: u16 = 108;
+const KEY_PAGEDOWN: u16 = 109;
+
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 pub struct Device {
     pub path: PathBuf,
@@ -359,7 +367,7 @@ impl ActionRouter {
 /// Decode one Linux input record. Device identity is part of the mapping so a
 /// keypad detent cannot collide with an application directional key.
 pub fn map(device: &str, kind: u16, code: u16, value: i32) -> Option<NormalizedInput> {
-    if kind == 2 && code == 8 {
+    if kind == EV_REL && code == REL_WHEEL {
         if value == 0 {
             return None;
         }
@@ -369,22 +377,26 @@ pub fn map(device: &str, kind: u16, code: u16, value: i32) -> Option<NormalizedI
             NormalizedInput::WheelCounterClockwise(value.unsigned_abs().clamp(1, 32) as u8)
         });
     }
-    if kind != 1 || !matches!(value, 0..=2) {
+    if kind != EV_KEY || !matches!(value, 0..=2) {
         return None;
     }
-    if device == KEYPAD && code == 103 {
-        return match value {
-            0 => None,
-            1 | 2 => Some(NormalizedInput::WheelCounterClockwise(1)),
+    if device == CLICK_WHEEL {
+        let direction = match code {
+            KEY_UP | KEY_PAGEUP => Some(false),
+            KEY_DOWN | KEY_PAGEDOWN => Some(true),
             _ => None,
         };
-    }
-    if device == KEYPAD && code == 108 {
-        return match value {
-            0 => None,
-            1 | 2 => Some(NormalizedInput::WheelClockwise(1)),
-            _ => None,
-        };
+        if let Some(clockwise) = direction {
+            return match value {
+                0 => None,
+                1 | 2 => Some(if clockwise {
+                    NormalizedInput::WheelClockwise(1)
+                } else {
+                    NormalizedInput::WheelCounterClockwise(1)
+                }),
+                _ => None,
+            };
+        }
     }
     let control = match (device, code) {
         (NAVIGATION_BUTTONS, 28) => PhysicalControl::Select,
@@ -422,10 +434,22 @@ mod tests {
             Some(NormalizedInput::Press(PhysicalControl::Select))
         );
         assert_eq!(
-            map(KEYPAD, 1, 108, 1),
+            map(CLICK_WHEEL, EV_KEY, KEY_DOWN, 1),
             Some(NormalizedInput::WheelClockwise(1))
         );
-        assert_eq!(map("event3", 1, 108, 1), None);
+        assert_eq!(
+            map(CLICK_WHEEL, EV_KEY, KEY_PAGEDOWN, 1),
+            Some(NormalizedInput::WheelClockwise(1))
+        );
+        assert_eq!(
+            map(CLICK_WHEEL, EV_KEY, KEY_UP, 1),
+            Some(NormalizedInput::WheelCounterClockwise(1))
+        );
+        assert_eq!(
+            map(CLICK_WHEEL, EV_KEY, KEY_PAGEUP, 1),
+            Some(NormalizedInput::WheelCounterClockwise(1))
+        );
+        assert_eq!(map(KEYPAD, EV_KEY, KEY_DOWN, 1), None);
         assert_eq!(
             map(PMIC_KEYS, 1, 116, 1),
             Some(NormalizedInput::Press(PhysicalControl::Power))
@@ -435,12 +459,12 @@ mod tests {
     #[test]
     fn wheel_is_always_separate_from_select_and_playback() {
         assert_eq!(
-            map(KEYPAD, 1, 108, 1),
+            map(CLICK_WHEEL, EV_KEY, KEY_DOWN, 1),
             Some(NormalizedInput::WheelClockwise(1))
         );
         let mut router = ActionRouter::default();
         let event = InputEvent {
-            device: KEYPAD.into(),
+            device: CLICK_WHEEL.into(),
             input: NormalizedInput::WheelClockwise(1),
         };
         assert_eq!(router.route(&event, true), vec![Action::WheelClockwise(1)]);
@@ -495,9 +519,21 @@ mod tests {
     fn sustained_wheel_rotation_accelerates_without_becoming_select() {
         let mut input = InputManager::empty();
         let start = Instant::now();
-        let first = input.feed(KEYPAD, 1, 108, 1, start);
-        let second = input.feed(KEYPAD, 1, 108, 1, start + Duration::from_millis(90));
-        let reset = input.feed(KEYPAD, 1, 108, 1, start + Duration::from_millis(500));
+        let first = input.feed(CLICK_WHEEL, EV_KEY, KEY_DOWN, 1, start);
+        let second = input.feed(
+            CLICK_WHEEL,
+            EV_KEY,
+            KEY_DOWN,
+            1,
+            start + Duration::from_millis(90),
+        );
+        let reset = input.feed(
+            CLICK_WHEEL,
+            EV_KEY,
+            KEY_DOWN,
+            1,
+            start + Duration::from_millis(500),
+        );
         assert_eq!(first[0].input, NormalizedInput::WheelClockwise(1));
         assert!(matches!(second[0].input, NormalizedInput::WheelClockwise(steps) if steps >= 2));
         assert_eq!(reset[0].input, NormalizedInput::WheelClockwise(1));
