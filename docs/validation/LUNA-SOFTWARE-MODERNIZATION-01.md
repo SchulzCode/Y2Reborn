@@ -83,8 +83,8 @@ Versions were checked against official release/tag/download sources and the fres
 |---|---:|---:|---:|---|
 | Buildroot | 2025.02.17 | 2026.08 | 2025.02.18 | UPGRADED to the latest 2025.02 LTS bugfix; 2026.08 held for broad Buildroot/hardware qualification scope. |
 | Linux | 6.18 Y2 tree | current supported stable/LTS line | 6.18.0-y2linux-gpu-02 | HELD; vendor board contracts and physical qualification dominate freshness. |
-| Rust toolchain | 1.90.0 pinned | newer stable evaluated | 1.90.0 | HELD; ARMv7/Buildroot cross-build is clean and replacing the ABI/toolchain is outside this pass. |
-| GCC/binutils/glibc | Bootlin armv7-eabihf glibc 2024.05-1 | newer SDKs | Bootlin 2024.05-1 | HELD; whole ABI/toolchain replacement requires separate qualification. |
+| Rust toolchain | 1.90.0 pinned | 1.98.1 | 1.90.0 | HELD; ARMv7/Buildroot cross-build is clean and replacing the ABI/toolchain is outside this pass. |
+| GCC/binutils/glibc | Bootlin armv7-eabihf glibc 2024.05-1 | Bootlin 2026.08-1: GCC 15.3, binutils 2.45.1, glibc 2.44 | Bootlin 2024.05-1 | HELD; whole ABI/toolchain replacement requires separate qualification. |
 | FFmpeg | 9.0.1 | 9.0.2 | 9.0.2 | UPGRADED; official stable security/bugfix release, exact audio-only component set and hash verified. |
 | BlueZ | 5.79 | 5.87 | 5.87 | UPGRADED; current stable, local obsolete patches removed after source review. |
 | BlueALSA | 4.3.1 | 5.0.0 | 5.0.0 | UPGRADED; v5 API/source was inspected and Reborn uses `bluealsad`, `Rate`, and `Format` deliberately. |
@@ -109,7 +109,7 @@ Versions were checked against official release/tag/download sources and the fres
 | libffi | 3.4.6 | newer upstream | 3.4.6 | HELD; unrelated ABI migration. |
 | direct Rust crates | serde 1.0.228, serde_json 1.0.145, libc 0.2.177, cc 1.2.41, pkg-config 0.3.32, rusqlite 0.37.0, dbus 0.9.9, flate2 1.1.5, tar 0.4.44 | current pinned stable releases evaluated | unchanged exact pins | CURRENT; no unconstrained lockfile churn, workspace checks pass. |
 
-Official source references used: [Buildroot downloads](https://buildroot.org/downloads/), [FFmpeg downloads](https://ffmpeg.org/download.html), [BlueZ releases](https://www.kernel.org/pub/linux/bluetooth/), [BlueALSA 5.0.0](https://github.com/arkq/bluez-alsa/releases/tag/v5.0.0), [BlueALSA migration notes](https://github.com/arkq/bluez-alsa/wiki/Migrating-from-release-4.3.1-or-earlier), [SQLite changes](https://sqlite.org/changes.html), [ALSA downloads](https://www.alsa-project.org/wiki/Download), [D-Bus releases](https://dbus.freedesktop.org/releases/dbus/), and [Dropbear releases](https://matt.ucc.asn.au/dropbear/releases.html).
+Official source references used: [Buildroot downloads](https://buildroot.org/downloads/), [FFmpeg downloads](https://ffmpeg.org/download.html), [BlueZ releases](https://www.kernel.org/pub/linux/bluetooth/), [BlueALSA 5.0.0](https://github.com/arkq/bluez-alsa/releases/tag/v5.0.0), [BlueALSA migration notes](https://github.com/arkq/bluez-alsa/wiki/Migrating-from-release-4.3.1-or-earlier), [SQLite changes](https://sqlite.org/changes.html), [ALSA downloads](https://www.alsa-project.org/wiki/Download), [D-Bus releases](https://dbus.freedesktop.org/releases/dbus/), [Dropbear releases](https://matt.ucc.asn.au/dropbear/releases.html), [Bootlin ARMv7 toolchains](https://toolchains.bootlin.com/releases_armv7-eabihf.html), and [Rust release announcements](https://blog.rust-lang.org/releases/).
 
 ## Bluetooth modernization record
 
