@@ -178,7 +178,7 @@ force. No candidate exists yet.
   49 passed, 0 failed.
 - **Result:** A scan is prune-safe only after traversal, file metadata, stable
   source identity, batch persistence, and finish persistence all succeed.
-- **Commit:** pending.
+- **Commit:** `6e8ea74` (`Prevent unsafe library scan pruning`).
 - **Remaining limitation:** Unclassified decoder-open failures are treated as
   unsafe even if a file is permanently corrupt; row removal waits for a later
   identity-consistent successful scan. `/proc/self/mountinfo` and a usable
@@ -187,7 +187,48 @@ force. No candidate exists yet.
 - **Evidence tier:** source inspection + SQLite/file fault injection + host
   mountinfo parser tests. No SD card or physical Y2 was accessed.
 
-## R5–R10
+## R5 — database recovery classification
+
+**Status: FIXED**
+
+- **Finding and symptom:** Startup treated nearly every SQLite open/setup error
+  as corruption, moved the live database first, then moved `-wal` and `-shm`
+  independently. A future schema, lock, read-only filesystem, or full disk
+  could detach a valid database; a sidecar rename failure could leave a split
+  database set.
+- **Current source confirmation:** `Database::spawn()` previously quarantined
+  any non-future-schema open error, while `open()` returned untyped strings and
+  enabled WAL before checking the schema version.
+- **Implementation:** SQLite failures are classified by primary/extended error
+  code and operation stage into corruption, future schema, busy/locked,
+  read-only, full disk, permission, I/O, WAL/SHM, migration, or setup failures.
+  The schema version is read before changing journal mode. Only SQLite
+  `CORRUPT`/`NOTADB` or a failed `quick_check(10)` reaches quarantine; all
+  operational and newer-schema cases preserve the source DB and fail startup.
+  Corruption recovery moves the DB and existing sidecars into one evidence
+  directory. Rename failures roll back in reverse order. An `INCOMPLETE`
+  marker lets the next startup restore a set left mid-transaction by process
+  interruption before attempting SQLite open.
+- **Files changed:** `crates/reborn-library/src/lib.rs`.
+- **Tests added:** Bad-header and damaged-page databases quarantine and rebuild;
+  future schema remains intact; locked, read-only, disk-full, permission,
+  generic I/O, WAL/SHM, and migration failures retain their distinct class.
+  Sidecar-set success, injected WAL/SHM rename failures with full rollback, and
+  interrupted-quarantine recovery are exercised at the filesystem boundary.
+- **Tests run:** `cargo fmt --all`; `cargo test -p reborn-library --locked` —
+  23 passed, 0 failed. Workspace/package check follows with the host gate.
+- **Result:** Only genuine corruption is quarantined; newer and operational
+  failures preserve the existing DB, and sidecar handling has rollback plus a
+  startup recovery path.
+- **Commit:** `b03b65f` (`Classify database recovery failures safely`).
+- **Remaining limitation:** The startup integrity probe reads the SQLite
+  database and busy handling may wait up to two seconds. Host fixtures verify
+  classification and recovery; target filesystem behavior remains
+  `PHYSICAL_QUALIFICATION_PENDING`.
+- **Evidence tier:** source inspection + SQLite fault injection + temporary
+  filesystem tests. No Y2 storage was accessed.
+
+## R6–R10
 
 Results will be recorded separately as each correction is reviewed and
 committed. No status is claimed yet.

@@ -2,7 +2,7 @@
 use reborn_core::{MediaSource, Source, Track};
 use reborn_media::{Cancel, Decoder};
 use reborn_observability::{HealthState, Level, Observer};
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, ErrorCode};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::{
@@ -18,6 +18,7 @@ use std::{
     thread,
     time::{Duration, Instant, UNIX_EPOCH},
 };
+const SQLITE_CANTOPEN_PERM_EXTENDED: i32 = rusqlite::ffi::SQLITE_CANTOPEN | (3 << 8);
 pub const SCHEMA_VERSION: i64 = 1;
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ScanMetrics {
@@ -55,24 +56,99 @@ pub struct Database {
 fn err(e: rusqlite::Error) -> String {
     format!("SQLite: {e}")
 }
-fn open(path: &Path) -> Result<Connection, String> {
-    let c = Connection::open(path).map_err(err)?;
-    c.busy_timeout(Duration::from_secs(2)).map_err(err)?;
-    c.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA foreign_keys=ON;")
-        .map_err(err)?;
+#[derive(Debug, PartialEq, Eq)]
+enum OpenFailure {
+    Corrupt(String),
+    FutureSchema(i64),
+    Busy(String),
+    ReadOnly(String),
+    DiskFull(String),
+    Io(String),
+    Permission(String),
+    WalShm(String),
+    Migration(String),
+    Setup(String),
+}
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum OpenStage {
+    Open,
+    Setup,
+    WalShm,
+    Migration,
+    Integrity,
+}
+fn classify_open_error(error: rusqlite::Error, stage: OpenStage) -> OpenFailure {
+    let code = error.sqlite_error_code();
+    let extended_code = match &error {
+        rusqlite::Error::SqliteFailure(code, _) => Some(code.extended_code),
+        _ => None,
+    };
+    let message = err(error);
+    match code {
+        Some(ErrorCode::DatabaseCorrupt | ErrorCode::NotADatabase) => OpenFailure::Corrupt(message),
+        Some(ErrorCode::DatabaseBusy | ErrorCode::DatabaseLocked) => OpenFailure::Busy(message),
+        Some(ErrorCode::ReadOnly) => OpenFailure::ReadOnly(message),
+        Some(ErrorCode::DiskFull) => OpenFailure::DiskFull(message),
+        Some(ErrorCode::PermissionDenied) => OpenFailure::Permission(message),
+        Some(ErrorCode::CannotOpen) if extended_code == Some(SQLITE_CANTOPEN_PERM_EXTENDED) => {
+            OpenFailure::Permission(message)
+        }
+        Some(ErrorCode::SystemIoFailure) if stage == OpenStage::WalShm => {
+            OpenFailure::WalShm(message)
+        }
+        Some(ErrorCode::SystemIoFailure) => OpenFailure::Io(message),
+        Some(ErrorCode::CannotOpen) if stage == OpenStage::WalShm => OpenFailure::WalShm(message),
+        _ if stage == OpenStage::Migration => OpenFailure::Migration(message),
+        _ => OpenFailure::Setup(message),
+    }
+}
+fn open_message(error: OpenFailure) -> String {
+    match error {
+        OpenFailure::Corrupt(message)
+        | OpenFailure::Busy(message)
+        | OpenFailure::ReadOnly(message)
+        | OpenFailure::DiskFull(message)
+        | OpenFailure::Io(message)
+        | OpenFailure::Permission(message)
+        | OpenFailure::WalShm(message)
+        | OpenFailure::Migration(message)
+        | OpenFailure::Setup(message) => message,
+        OpenFailure::FutureSchema(version) => {
+            format!("database schema {version} is newer than Reborn")
+        }
+    }
+}
+fn quick_check(connection: &Connection) -> Result<(), OpenFailure> {
+    let result: String = connection
+        .query_row("PRAGMA quick_check(10)", [], |row| row.get(0))
+        .map_err(|error| classify_open_error(error, OpenStage::Integrity))?;
+    if result == "ok" {
+        Ok(())
+    } else {
+        Err(OpenFailure::Corrupt(result))
+    }
+}
+fn open(path: &Path) -> Result<Connection, OpenFailure> {
+    let c = Connection::open(path).map_err(|error| classify_open_error(error, OpenStage::Open))?;
+    c.busy_timeout(Duration::from_secs(2))
+        .map_err(|error| classify_open_error(error, OpenStage::Setup))?;
     let version: i64 = c
         .pragma_query_value(None, "user_version", |r| r.get(0))
-        .map_err(err)?;
+        .map_err(|error| classify_open_error(error, OpenStage::Setup))?;
     if version > SCHEMA_VERSION {
-        return Err("database schema is newer than Reborn".into());
+        return Err(OpenFailure::FutureSchema(version));
     }
+    c.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA foreign_keys=ON;")
+        .map_err(|error| classify_open_error(error, OpenStage::WalShm))?;
     if version == 0 {
         c.execute_batch("BEGIN IMMEDIATE;
  CREATE TABLE sources(id TEXT PRIMARY KEY, root TEXT NOT NULL, online INTEGER NOT NULL);
  CREATE TABLE tracks(id INTEGER PRIMARY KEY, source_id TEXT NOT NULL REFERENCES sources(id),path TEXT NOT NULL,filename TEXT NOT NULL,size INTEGER NOT NULL,mtime INTEGER NOT NULL,title TEXT NOT NULL,artist TEXT NOT NULL,album TEXT NOT NULL,album_artist TEXT NOT NULL,track INTEGER NOT NULL,disc INTEGER NOT NULL,duration_ms INTEGER NOT NULL,codec TEXT NOT NULL,sample_rate INTEGER NOT NULL,channels INTEGER NOT NULL,bitrate INTEGER NOT NULL,artwork INTEGER NOT NULL,seen INTEGER NOT NULL,deleted INTEGER NOT NULL DEFAULT 0,UNIQUE(source_id,path));
  CREATE INDEX tracks_album ON tracks(album_artist,album,disc,track);CREATE INDEX tracks_artist ON tracks(artist);
- PRAGMA user_version=1;COMMIT;").map_err(err)?;
+ PRAGMA user_version=1;COMMIT;")
+            .map_err(|error| classify_open_error(error, OpenStage::Migration))?;
     }
+    quick_check(&c)?;
     Ok(c)
 }
 fn from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Track> {
@@ -163,38 +239,223 @@ fn validate(c: &Connection) -> Result<serde_json::Value, String> {
         json!({"passed":true,"schema":SCHEMA_VERSION,"quick_check":result,"tracks":count,"write_test":"rolled_back"}),
     )
 }
+fn sidecar(path: &Path, suffix: &str) -> PathBuf {
+    let mut name = path.as_os_str().to_os_string();
+    name.push(suffix);
+    PathBuf::from(name)
+}
+fn restore_quarantine_moves(
+    moved: &[(PathBuf, PathBuf)],
+    rename: &mut impl FnMut(&Path, &Path) -> std::io::Result<()>,
+) -> Vec<String> {
+    moved
+        .iter()
+        .rev()
+        .filter_map(|(original, archived)| {
+            rename(archived, original)
+                .err()
+                .map(|error| format!("{} -> {}: {error}", archived.display(), original.display()))
+        })
+        .collect()
+}
+fn quarantine_marker(path: &Path) -> PathBuf {
+    path.join("INCOMPLETE")
+}
+fn recover_interrupted_quarantines(path: &Path) -> Result<(), String> {
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("library.db");
+    let prefix = format!("{name}.corrupt-");
+    for entry in fs::read_dir(parent).map_err(|error| error.to_string())? {
+        let entry = entry.map_err(|error| error.to_string())?;
+        let candidate = entry.path();
+        if !entry.file_name().to_string_lossy().starts_with(&prefix)
+            || !candidate.is_dir()
+            || !quarantine_marker(&candidate).exists()
+        {
+            continue;
+        }
+        for filename in [
+            name.to_string(),
+            format!("{name}-wal"),
+            format!("{name}-shm"),
+        ] {
+            let archived = candidate.join(&filename);
+            if !archived.exists() {
+                continue;
+            }
+            let original = parent.join(&filename);
+            if original.exists() {
+                return Err(format!(
+                    "interrupted database quarantine has conflicting copies of {}; preserved at {}",
+                    original.display(),
+                    candidate.display()
+                ));
+            }
+            fs::rename(&archived, &original).map_err(|error| {
+                format!(
+                    "cannot recover interrupted database quarantine {}: {error}",
+                    candidate.display()
+                )
+            })?;
+        }
+        fs::remove_file(quarantine_marker(&candidate)).map_err(|error| {
+            format!(
+                "cannot clear recovered database quarantine marker {}: {error}",
+                candidate.display()
+            )
+        })?;
+        fs::remove_dir(&candidate).map_err(|error| {
+            format!(
+                "cannot remove recovered database quarantine directory {}: {error}",
+                candidate.display()
+            )
+        })?;
+    }
+    Ok(())
+}
+fn quarantine_database(path: &Path) -> Result<PathBuf, String> {
+    quarantine_database_with(path, |source, destination| fs::rename(source, destination))
+}
+fn quarantine_database_with(
+    path: &Path,
+    mut rename: impl FnMut(&Path, &Path) -> std::io::Result<()>,
+) -> Result<PathBuf, String> {
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("library.db");
+    let stamp = reborn_observability::wall_ms();
+    let mut quarantine = None;
+    for suffix in 0..100 {
+        let candidate = parent.join(format!("{name}.corrupt-{stamp}-{suffix}"));
+        match fs::create_dir(&candidate) {
+            Ok(()) => {
+                quarantine = Some(candidate);
+                break;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => {
+                return Err(format!("cannot create quarantine directory: {error}"));
+            }
+        }
+    }
+    let quarantine = quarantine.ok_or("cannot allocate unique quarantine directory")?;
+    let marker = quarantine_marker(&quarantine);
+    if let Err(error) = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&marker)
+        .and_then(|mut file| {
+            use std::io::Write;
+            file.write_all(b"database quarantine is incomplete")?;
+            file.sync_all()
+        })
+    {
+        let _ = fs::remove_dir_all(&quarantine);
+        return Err(format!("cannot mark quarantine transaction: {error}"));
+    }
+    let artifacts = [
+        path.to_path_buf(),
+        sidecar(path, "-wal"),
+        sidecar(path, "-shm"),
+    ];
+    let mut moved = Vec::<(PathBuf, PathBuf)>::new();
+    for source in artifacts {
+        match fs::symlink_metadata(&source) {
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => {
+                let reason = format!(
+                    "cannot inspect database artifact {}: {error}",
+                    source.display()
+                );
+                let rollback_errors = restore_quarantine_moves(&moved, &mut rename);
+                if rollback_errors.is_empty() {
+                    let _ = fs::remove_dir_all(&quarantine);
+                    return Err(format!(
+                        "{reason}; previously moved artifacts were restored"
+                    ));
+                }
+                return Err(format!(
+                    "{reason}; rollback incomplete, evidence remains at {}: {}",
+                    quarantine.display(),
+                    rollback_errors.join("; ")
+                ));
+            }
+        }
+        let destination = quarantine.join(
+            source
+                .file_name()
+                .ok_or("database artifact has no filename")?,
+        );
+        if let Err(error) = rename(&source, &destination) {
+            let rollback_errors = restore_quarantine_moves(&moved, &mut rename);
+            if rollback_errors.is_empty() {
+                let _ = fs::remove_dir_all(&quarantine);
+                return Err(format!(
+                    "cannot quarantine {}: {error}; previously moved artifacts were restored",
+                    source.display()
+                ));
+            }
+            return Err(format!(
+                "cannot quarantine {}: {error}; rollback incomplete, evidence remains at {}: {}",
+                source.display(),
+                quarantine.display(),
+                rollback_errors.join("; ")
+            ));
+        }
+        moved.push((source, destination));
+    }
+    if let Err(error) = fs::remove_file(&marker) {
+        let rollback_errors = restore_quarantine_moves(&moved, &mut rename);
+        if rollback_errors.is_empty() {
+            let _ = fs::remove_dir_all(&quarantine);
+            return Err(format!(
+                "cannot finalize database quarantine: {error}; original artifacts were restored"
+            ));
+        }
+        return Err(format!(
+            "cannot finalize database quarantine: {error}; rollback incomplete, recoverable evidence remains at {}: {}",
+            quarantine.display(),
+            rollback_errors.join("; ")
+        ));
+    }
+    Ok(quarantine)
+}
 impl Database {
     pub fn spawn(path: PathBuf, log: Observer) -> Result<Self, String> {
         if let Some(p) = path.parent() {
             fs::create_dir_all(p).map_err(|e| e.to_string())?;
         }
+        recover_interrupted_quarantines(&path)?;
         let mut recovered = None;
         let mut c = match open(&path) {
             Ok(connection) => connection,
-            Err(error) if error.contains("schema is newer") => return Err(error),
-            Err(error) if path.exists() => {
-                let stamp = reborn_observability::wall_ms();
-                let name = path
-                    .file_name()
-                    .and_then(|name| name.to_str())
-                    .unwrap_or("library.db");
-                let quarantined = path.with_file_name(format!("{name}.corrupt-{stamp}"));
-                fs::rename(&path, &quarantined)
-                    .map_err(|rename| format!("{error}; database quarantine failed: {rename}"))?;
-                for suffix in ["-wal", "-shm"] {
-                    let sidecar = PathBuf::from(format!("{}{}", path.display(), suffix));
-                    if sidecar.exists() {
-                        let sidecar_quarantine =
-                            PathBuf::from(format!("{}{}", quarantined.display(), suffix));
-                        fs::rename(&sidecar, sidecar_quarantine).map_err(|rename| {
-                            format!("{error}; database sidecar quarantine failed: {rename}")
-                        })?;
-                    }
-                }
-                recovered = Some((error, quarantined));
-                open(&path)?
+            Err(error @ OpenFailure::Corrupt(_)) if path.exists() => {
+                let error_message = open_message(error);
+                let quarantined = quarantine_database(&path).map_err(|quarantine_error| {
+                    format!("{error_message}; database quarantine failed: {quarantine_error}")
+                })?;
+                recovered = Some((error_message, quarantined.clone()));
+                open(&path).map_err(|rebuild| {
+                    format!(
+                        "corrupt database was preserved at {}; clean database creation failed: {}",
+                        quarantined.display(),
+                        open_message(rebuild)
+                    )
+                })?
             }
-            Err(error) => return Err(error),
+            Err(error) => return Err(open_message(error)),
         };
         if let Some((error, quarantined)) = recovered {
             log.emit(
@@ -629,6 +890,7 @@ fn scan_sources_with_identity(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::Cell;
     #[test]
     fn schema_and_rollback() {
         let p = std::env::temp_dir().join(format!("reborn-db-{}.sqlite", std::process::id()));
@@ -659,12 +921,30 @@ mod tests {
     }
     #[test]
     fn future_schema_rejected() {
-        let p = std::env::temp_dir().join(format!("reborn-future-{}.db", std::process::id()));
+        let root = std::env::temp_dir().join(format!("reborn-future-{}", std::process::id()));
+        fs::create_dir_all(&root).unwrap();
+        let p = root.join("library.db");
         let c = Connection::open(&p).unwrap();
         c.pragma_update(None, "user_version", 999).unwrap();
         drop(c);
-        assert!(open(&p).is_err());
-        fs::remove_file(p).unwrap();
+        assert!(matches!(open(&p), Err(OpenFailure::FutureSchema(999))));
+        let log = Observer::new(&root.join("logs")).unwrap();
+        assert!(Database::spawn(p.clone(), log)
+            .err()
+            .expect("future schema must refuse startup")
+            .contains("newer than Reborn"));
+        assert_eq!(
+            Connection::open(&p)
+                .unwrap()
+                .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
+                .unwrap(),
+            999
+        );
+        assert!(!root
+            .read_dir()
+            .unwrap()
+            .filter_map(Result::ok)
+            .any(|entry| entry.file_name().to_string_lossy().contains("corrupt-")));
     }
     #[test]
     fn formats() {
@@ -689,6 +969,226 @@ mod tests {
             .recv_timeout(Duration::from_secs(2))
             .unwrap();
         assert!(reply.is_ok());
+        let quarantine = root
+            .read_dir()
+            .unwrap()
+            .filter_map(Result::ok)
+            .find(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("library.db.corrupt-")
+            })
+            .expect("quarantine directory");
+        let quarantine = quarantine.path();
+        assert_eq!(
+            fs::read(quarantine.join("library.db")).unwrap(),
+            b"not a sqlite database"
+        );
+        db.stop();
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn quarantine_moves_database_and_sidecars_as_one_recoverable_set() {
+        let root =
+            std::env::temp_dir().join(format!("reborn-quarantine-set-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("library.db");
+        fs::write(&path, b"db evidence").unwrap();
+        fs::write(sidecar(&path, "-wal"), b"wal evidence").unwrap();
+        fs::write(sidecar(&path, "-shm"), b"shm evidence").unwrap();
+
+        let quarantine = quarantine_database(&path).unwrap();
+        assert!(!path.exists());
+        for (name, contents) in [
+            ("library.db", b"db evidence".as_slice()),
+            ("library.db-wal", b"wal evidence".as_slice()),
+            ("library.db-shm", b"shm evidence".as_slice()),
+        ] {
+            assert_eq!(fs::read(quarantine.join(name)).unwrap(), contents);
+        }
+        assert!(!quarantine_marker(&quarantine).exists());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    fn sqlite_error(code: i32) -> rusqlite::Error {
+        rusqlite::Error::SqliteFailure(rusqlite::ffi::Error::new(code), None)
+    }
+
+    #[test]
+    fn sqlite_failures_keep_corruption_separate_from_operations() {
+        assert!(matches!(
+            classify_open_error(
+                sqlite_error(rusqlite::ffi::SQLITE_CORRUPT),
+                OpenStage::Setup
+            ),
+            OpenFailure::Corrupt(_)
+        ));
+        assert!(matches!(
+            classify_open_error(sqlite_error(rusqlite::ffi::SQLITE_NOTADB), OpenStage::Open),
+            OpenFailure::Corrupt(_)
+        ));
+        assert!(matches!(
+            classify_open_error(sqlite_error(rusqlite::ffi::SQLITE_BUSY), OpenStage::Setup),
+            OpenFailure::Busy(_)
+        ));
+        assert!(matches!(
+            classify_open_error(sqlite_error(rusqlite::ffi::SQLITE_LOCKED), OpenStage::Setup),
+            OpenFailure::Busy(_)
+        ));
+        assert!(matches!(
+            classify_open_error(
+                sqlite_error(rusqlite::ffi::SQLITE_READONLY),
+                OpenStage::Setup
+            ),
+            OpenFailure::ReadOnly(_)
+        ));
+        assert!(matches!(
+            classify_open_error(sqlite_error(rusqlite::ffi::SQLITE_FULL), OpenStage::Setup),
+            OpenFailure::DiskFull(_)
+        ));
+        assert!(matches!(
+            classify_open_error(sqlite_error(rusqlite::ffi::SQLITE_PERM), OpenStage::Setup),
+            OpenFailure::Permission(_)
+        ));
+        let cantopen_permission = rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error {
+                code: ErrorCode::CannotOpen,
+                extended_code: SQLITE_CANTOPEN_PERM_EXTENDED,
+            },
+            None,
+        );
+        assert!(matches!(
+            classify_open_error(cantopen_permission, OpenStage::Open),
+            OpenFailure::Permission(_)
+        ));
+        assert!(matches!(
+            classify_open_error(sqlite_error(rusqlite::ffi::SQLITE_IOERR), OpenStage::Setup),
+            OpenFailure::Io(_)
+        ));
+        assert!(matches!(
+            classify_open_error(sqlite_error(rusqlite::ffi::SQLITE_IOERR), OpenStage::WalShm),
+            OpenFailure::WalShm(_)
+        ));
+        assert!(matches!(
+            classify_open_error(
+                sqlite_error(rusqlite::ffi::SQLITE_CONSTRAINT),
+                OpenStage::Migration
+            ),
+            OpenFailure::Migration(_)
+        ));
+    }
+
+    #[test]
+    fn locked_database_is_preserved_without_quarantine() {
+        let root = std::env::temp_dir().join(format!("reborn-busy-{}", std::process::id()));
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("library.db");
+        let lock = Connection::open(&path).unwrap();
+        lock.execute_batch("PRAGMA journal_mode=DELETE; BEGIN EXCLUSIVE;")
+            .unwrap();
+        let log = Observer::new(&root.join("logs")).unwrap();
+
+        let error = Database::spawn(path.clone(), log)
+            .err()
+            .expect("locked database must refuse startup");
+
+        assert!(error.to_ascii_lowercase().contains("locked"));
+        assert!(path.exists());
+        assert!(!root
+            .read_dir()
+            .unwrap()
+            .filter_map(Result::ok)
+            .any(|entry| entry.file_name().to_string_lossy().contains("corrupt-")));
+        lock.execute_batch("ROLLBACK;").unwrap();
+    }
+
+    #[test]
+    fn read_only_disk_full_permission_and_io_codes_are_operational() {
+        let root = std::env::temp_dir().join(format!("reborn-operational-{}", std::process::id()));
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("readonly.db");
+        drop(Connection::open(&path).unwrap());
+        let readonly =
+            Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+        let read_only_error = readonly
+            .execute("CREATE TABLE denied(value)", [])
+            .unwrap_err();
+        assert!(matches!(
+            classify_open_error(read_only_error, OpenStage::Migration),
+            OpenFailure::ReadOnly(_)
+        ));
+
+        let disk_full = root.join("full.db");
+        let connection = Connection::open(&disk_full).unwrap();
+        connection
+            .execute_batch("PRAGMA page_size=512; CREATE TABLE payload(value BLOB);")
+            .unwrap();
+        let pages: u32 = connection
+            .pragma_query_value(None, "page_count", |row| row.get(0))
+            .unwrap();
+        connection
+            .pragma_update(None, "max_page_count", pages)
+            .unwrap();
+        let full_error = connection
+            .execute("INSERT INTO payload VALUES(zeroblob(8192))", [])
+            .unwrap_err();
+        assert!(matches!(
+            classify_open_error(full_error, OpenStage::Migration),
+            OpenFailure::DiskFull(_)
+        ));
+        drop(connection);
+
+        assert!(matches!(
+            classify_open_error(sqlite_error(rusqlite::ffi::SQLITE_PERM), OpenStage::Open),
+            OpenFailure::Permission(_)
+        ));
+        assert!(matches!(
+            classify_open_error(sqlite_error(rusqlite::ffi::SQLITE_IOERR), OpenStage::Setup),
+            OpenFailure::Io(_)
+        ));
+    }
+
+    #[test]
+    fn checksum_page_corruption_is_detected_and_quarantined() {
+        let root = std::env::temp_dir().join(format!("reborn-checksum-{}", std::process::id()));
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("library.db");
+        let connection = Connection::open(&path).unwrap();
+        connection
+            .execute_batch(
+                "PRAGMA page_size=512; PRAGMA journal_mode=DELETE; PRAGMA user_version=1; CREATE TABLE payload(value BLOB);",
+            )
+            .unwrap();
+        connection
+            .execute("INSERT INTO payload VALUES(zeroblob(12000))", [])
+            .unwrap();
+        let page_count: u64 = connection
+            .pragma_query_value(None, "page_count", |row| row.get(0))
+            .unwrap();
+        let page_size: u64 = connection
+            .pragma_query_value(None, "page_size", |row| row.get(0))
+            .unwrap();
+        drop(connection);
+        assert!(page_count > 2);
+        fs::OpenOptions::new()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_len((page_count - 1) * page_size)
+            .unwrap();
+        assert!(matches!(open(&path), Err(OpenFailure::Corrupt(_))));
+
+        let log = Observer::new(&root.join("logs")).unwrap();
+        let db = Database::spawn(path.clone(), log).unwrap();
+        let test = db
+            .test()
+            .unwrap()
+            .recv_timeout(Duration::from_secs(2))
+            .unwrap();
+        assert!(test.is_ok());
         assert!(root
             .read_dir()
             .unwrap()
@@ -698,6 +1198,67 @@ mod tests {
                 .to_string_lossy()
                 .starts_with("library.db.corrupt-")));
         db.stop();
+    }
+
+    #[test]
+    fn wal_or_shm_rename_failure_restores_the_whole_artifact_set() {
+        for fail_at in [2, 3] {
+            let root = std::env::temp_dir().join(format!(
+                "reborn-quarantine-fail-{fail_at}-{}",
+                std::process::id()
+            ));
+            fs::create_dir_all(&root).unwrap();
+            let path = root.join("library.db");
+            fs::write(&path, b"db").unwrap();
+            fs::write(sidecar(&path, "-wal"), b"wal").unwrap();
+            fs::write(sidecar(&path, "-shm"), b"shm").unwrap();
+            let call_count = Cell::new(0usize);
+            let error = quarantine_database_with(&path, |from, to| {
+                let call = call_count.get() + 1;
+                call_count.set(call);
+                if call == fail_at {
+                    Err(std::io::Error::new(
+                        std::io::ErrorKind::PermissionDenied,
+                        "injected rename failure",
+                    ))
+                } else {
+                    fs::rename(from, to)
+                }
+            })
+            .unwrap_err();
+
+            assert!(error.contains("previously moved artifacts were restored"));
+            assert_eq!(fs::read(&path).unwrap(), b"db");
+            assert_eq!(fs::read(sidecar(&path, "-wal")).unwrap(), b"wal");
+            assert_eq!(fs::read(sidecar(&path, "-shm")).unwrap(), b"shm");
+            assert!(!root
+                .read_dir()
+                .unwrap()
+                .filter_map(Result::ok)
+                .any(|entry| entry.file_name().to_string_lossy().contains("corrupt-")));
+        }
+    }
+
+    #[test]
+    fn interrupted_quarantine_restores_archived_artifacts_before_open() {
+        let root =
+            std::env::temp_dir().join(format!("reborn-quarantine-recovery-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("library.db");
+        let quarantine = root.join("library.db.corrupt-test");
+        fs::create_dir(&quarantine).unwrap();
+        fs::write(quarantine_marker(&quarantine), b"incomplete").unwrap();
+        fs::write(quarantine.join("library.db"), b"db").unwrap();
+        fs::write(quarantine.join("library.db-wal"), b"wal").unwrap();
+        fs::write(sidecar(&path, "-shm"), b"shm").unwrap();
+
+        recover_interrupted_quarantines(&path).unwrap();
+
+        assert_eq!(fs::read(&path).unwrap(), b"db");
+        assert_eq!(fs::read(sidecar(&path, "-wal")).unwrap(), b"wal");
+        assert_eq!(fs::read(sidecar(&path, "-shm")).unwrap(), b"shm");
+        assert!(!quarantine.exists());
         let _ = fs::remove_dir_all(root);
     }
 }
