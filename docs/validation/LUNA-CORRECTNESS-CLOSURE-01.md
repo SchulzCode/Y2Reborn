@@ -354,15 +354,56 @@ force. No candidate exists yet.
   boundary_event_precedes_its_queue_entry_artwork` — both passed.
 - **Result:** Queue occurrence, not only track identity, controls artwork
   presentation timing.
-- **Commit:** pending.
+- **Commit:** `ed645c8` (`Bind artwork to queue entry boundaries`).
 - **Remaining limitation:** Renderer/art decoding behavior has host evidence;
   display presentation remains `PHYSICAL_QUALIFICATION_PENDING`.
 - **Evidence tier:** source inspection + targeted host runtime/event tests.
 
 ## R9B — Bluetooth transport epoch and open contract
 
-Results will be recorded after the transport invalidation and ALSA-open
-contract tests are reviewed and committed.
+**Status: PARTIAL**
+
+- **Finding and symptom:** Transport identity was only a hash of the PCM object
+  path. An object reused after daemon restart or renegotiation could leave a
+  stale typed sink plan active; the `bluealsa:` ALSA `plug` endpoint can also
+  hide conversion from the application.
+- **Current source confirmation:** `pcm_generation()` depended only on the
+  path. `AlsaSink::open_spec()` previously did not compare the actual opened
+  rate, format, channels, or device with the plan.
+- **Implementation:** Transport epochs now change on a daemon owner event,
+  object removal/recreation (including same path), or any observed contract
+  property change (Device, Transport, Mode, Codec, Format, Rate, Channels).
+  Epoch IDs are process-wide so a Bluetooth worker restart cannot reuse a
+  previous worker's values. The required D-Bus matches are registered with the
+  bus; if a required match cannot be installed, Bluetooth PCM observations are
+  withheld. `SinkSpec` records the object/device/transport/mode/codec and epoch,
+  validates the selected peer and negotiated format/rate/channels, and open
+  checks the actual ALSA application-side parameters against the plan. Runtime
+  reloads an active sink for a newly observed epoch and stops truthfully if its
+  selected PCM disappears.
+- **Files changed:** `crates/reborn-platform/src/bluetooth.rs`,
+  `crates/reborn-audio/src/lib.rs`, `crates/reborn-audio/src/native.rs`,
+  `app/reborn/src/main.rs`.
+- **Tests added:** Fake private D-Bus property change and same-path
+  remove/recreate; epoch invalidation for owner changes and each contract
+  property; non-reuse across a worker restart; SinkSpec stale generation,
+  wrong peer and changed-property rejection; runtime changed/unavailable epoch
+  behavior.
+- **Tests run:** `cargo test -p reborn-audio --locked` — 5 passed;
+  `cargo test -p reborn-platform --locked bluetooth::tests` — 7 passed;
+  `cargo test -p reborn --bin reborn --locked bluetooth_epoch_tests` — 1
+  passed; `cargo check -p reborn --locked` passed.
+- **Result:** Stale object-path-only identity is removed and the application-side
+  ALSA plan/open contract is checked; loss or change invalidates the active
+  sink.
+- **Commit:** pending.
+- **Remaining limitation:** `bluealsa:` is an ALSA `plug` wrapper, so the app
+  can verify the ALSA-facing contract but cannot prove the underlying
+  BlueALSA PCM is bit-precise without a private/raw interface. The software
+  deliberately makes no bit-precision claim. SBC remains the active codec;
+  physical transport qualification is `PHYSICAL_QUALIFICATION_PENDING`.
+- **Evidence tier:** source inspection + targeted host Rust tests + private
+  fake-D-Bus lifecycle/property test. No BlueALSA service or Y2 was accessed.
 
 ## R10 — build, version, and manifest truth
 

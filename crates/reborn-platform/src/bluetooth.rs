@@ -14,9 +14,10 @@ use reborn_observability::{HealthState, Level, Observer};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     path::{Path, PathBuf},
     sync::{
+        atomic::{AtomicBool, AtomicU64, Ordering},
         mpsc::{sync_channel, Receiver, RecvTimeoutError, SyncSender},
         Arc, Mutex,
     },
@@ -44,6 +45,10 @@ pub struct Status {
     pub error: Option<String>,
     #[serde(default)]
     pub scan: RadioScan,
+    #[serde(skip)]
+    bluez_owner: Option<String>,
+    #[serde(skip)]
+    bluealsa_owner: Option<String>,
 }
 impl Status {
     pub fn playback_pcm(&self, address: &str) -> Result<BluetoothPcm, String> {
@@ -113,12 +118,97 @@ fn text(p: &PropMap, k: &str) -> String {
 fn yes(p: &PropMap, k: &str) -> bool {
     p.get(k).and_then(|v| v.0.as_i64()).unwrap_or(0) != 0
 }
-fn pcm_generation(object: &str) -> u64 {
-    object.bytes().fold(0xcbf29ce484222325, |hash, byte| {
-        hash.wrapping_mul(0x100000001b3)
-            .wrapping_add(u64::from(byte))
-    })
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct PcmObservation {
+    object: String,
+    device: String,
+    transport: String,
+    mode: String,
+    codec: Option<String>,
+    format: Option<u16>,
+    rate: Option<u32>,
+    channels: Option<u8>,
 }
+impl From<&BluetoothPcm> for PcmObservation {
+    fn from(pcm: &BluetoothPcm) -> Self {
+        Self {
+            object: pcm.object.clone(),
+            device: pcm.device.clone(),
+            transport: pcm.transport.clone(),
+            mode: pcm.mode.clone(),
+            codec: pcm.codec.clone(),
+            format: pcm.format,
+            rate: pcm.rate,
+            channels: pcm.channels,
+        }
+    }
+}
+
+#[derive(Default)]
+struct TransportEpochs {
+    owners: Option<(String, String)>,
+    observations: HashMap<String, (PcmObservation, u64)>,
+}
+static NEXT_TRANSPORT_EPOCH: AtomicU64 = AtomicU64::new(1);
+
+fn next_transport_epoch() -> u64 {
+    NEXT_TRANSPORT_EPOCH.fetch_add(1, Ordering::Relaxed).max(1)
+}
+
+impl TransportEpochs {
+    fn refresh(
+        &mut self,
+        status: &mut Status,
+        invalidated: &HashSet<String>,
+        daemon_invalidated: bool,
+    ) {
+        let owners = (
+            status.bluez_owner.clone().unwrap_or_default(),
+            status.bluealsa_owner.clone().unwrap_or_default(),
+        );
+        if daemon_invalidated || self.owners.as_ref() != Some(&owners) {
+            self.owners = Some(owners);
+            self.observations.clear();
+        }
+        let present = status
+            .pcms
+            .iter()
+            .map(|pcm| pcm.object.clone())
+            .collect::<HashSet<_>>();
+        self.observations
+            .retain(|object, _| present.contains(object));
+        for pcm in &mut status.pcms {
+            let observation = PcmObservation::from(&*pcm);
+            let unchanged = self
+                .observations
+                .get(&observation.object)
+                .is_some_and(|(old, _)| {
+                    old == &observation && !invalidated.contains(&observation.object)
+                });
+            let generation = if unchanged {
+                self.observations[&observation.object].1
+            } else {
+                let generation = next_transport_epoch();
+                self.observations
+                    .insert(observation.object.clone(), (observation, generation));
+                generation
+            };
+            pcm.transport_generation = generation;
+        }
+    }
+}
+
+fn name_owner(c: &Connection, name: &str) -> Option<String> {
+    c.with_proxy(
+        "org.freedesktop.DBus",
+        "/org/freedesktop/DBus",
+        Duration::from_secs(1),
+    )
+    .method_call("org.freedesktop.DBus", "GetNameOwner", (name,))
+    .map(|(owner,): (String,)| owner)
+    .ok()
+}
+
 fn status(c: &Connection) -> Result<(String, Status), String> {
     let mut state = Status::default();
     let mut adapter = String::new();
@@ -148,14 +238,9 @@ fn status(c: &Connection) -> Result<(String, Status), String> {
             });
         }
     }
-    let reply: Result<(bool,), _> = c
-        .with_proxy(
-            "org.freedesktop.DBus",
-            "/org/freedesktop/DBus",
-            Duration::from_secs(1),
-        )
-        .method_call("org.freedesktop.DBus", "NameHasOwner", ("org.bluealsa",));
-    state.bluealsa = reply.is_ok_and(|r| r.0);
+    state.bluez_owner = name_owner(c, "org.bluez");
+    state.bluealsa_owner = name_owner(c, "org.bluealsa");
+    state.bluealsa = state.bluealsa_owner.is_some();
     // BlueALSA 5 exposes PCM objects through ObjectManager. Its negotiated
     // properties are Rate and Format; Sampling was the incompatible v4 name.
     let pcms: Result<Objects, _> = c
@@ -189,7 +274,7 @@ fn status(c: &Connection) -> Result<(String, Status), String> {
                         .and_then(|v| v.0.as_u64())
                         .and_then(|value| u8::try_from(value).ok()),
                     running: p.get("Running").and_then(|v| v.0.as_i64()).map(|v| v != 0),
-                    transport_generation: pcm_generation(&object),
+                    transport_generation: 0,
                 }
             })
             .collect();
@@ -397,13 +482,110 @@ impl Bluetooth {
                             json!({}),
                         );
                     }
+                    let transport_invalidations = Arc::new(Mutex::new(HashSet::new()));
+                    let invalidation_sink = transport_invalidations.clone();
+                    let daemon_invalidated = Arc::new(AtomicBool::new(false));
+                    let daemon_invalidation_sink = daemon_invalidated.clone();
+                    let mut transport_watches_ready = true;
+                    let mut owner_changed = MatchRule::new_signal(
+                        "org.freedesktop.DBus",
+                        "NameOwnerChanged",
+                    );
+                    owner_changed.sender = Some("org.freedesktop.DBus".into());
+                    owner_changed.path = Some(DbusPath::from("/org/freedesktop/DBus"));
+                    if let Err(error) = c.add_match::<(String, String, String), _>(
+                        owner_changed,
+                        move |(name, _, _), _, _| {
+                            if name == "org.bluez" || name == "org.bluealsa" {
+                                daemon_invalidation_sink.store(true, Ordering::Release);
+                            }
+                            true
+                        },
+                    ) {
+                        transport_watches_ready = false;
+                        log.emit(
+                            Level::Warn,
+                            "bluetooth",
+                            "transport_owner_watch_failed",
+                            &dbus_error(error),
+                            None,
+                            json!({"recovery":"property_and_owner_snapshot_only"}),
+                        );
+                    }
+                    let mut pcm_removed = MatchRule::new_signal(
+                        "org.freedesktop.DBus.ObjectManager",
+                        "InterfacesRemoved",
+                    );
+                    pcm_removed.sender = Some("org.bluealsa".into());
+                    pcm_removed.path = Some(DbusPath::from("/org/bluealsa"));
+                    if let Err(error) = c.add_match::<(DbusPath, Vec<String>), _>(
+                        pcm_removed,
+                        move |(object, interfaces), _, _| {
+                            if interfaces.iter().any(|name| name == "org.bluealsa.PCM1") {
+                                if let Ok(mut invalidated) = invalidation_sink.lock() {
+                                    invalidated.insert(object.to_string());
+                                }
+                            }
+                            true
+                        },
+                    ) {
+                        transport_watches_ready = false;
+                        log.emit(
+                            Level::Warn,
+                            "bluetooth",
+                            "transport_remove_watch_failed",
+                            &dbus_error(error),
+                            None,
+                            json!({"recovery":"periodic_snapshot_only"}),
+                        );
+                    }
+                    let property_invalidation_sink = transport_invalidations.clone();
+                    let mut properties_changed = MatchRule::new_signal(
+                        "org.freedesktop.DBus.Properties",
+                        "PropertiesChanged",
+                    );
+                    properties_changed.sender = Some("org.bluealsa".into());
+                    if let Err(error) = c.add_match::<(String, PropMap, Vec<String>), _>(
+                        properties_changed,
+                        move |(interface, changed, invalidated), _, message| {
+                            let relevant = [
+                                "Device", "Transport", "Mode", "Codec", "Format", "Rate",
+                                "Channels",
+                            ];
+                            if interface == "org.bluealsa.PCM1"
+                                && relevant.iter().any(|name| {
+                                    changed.contains_key(*name)
+                                        || invalidated.iter().any(|value| value == name)
+                                })
+                            {
+                                if let (Some(path), Ok(mut objects)) = (
+                                    message.path(),
+                                    property_invalidation_sink.lock(),
+                                ) {
+                                    objects.insert(path.to_string());
+                                }
+                            }
+                            true
+                        },
+                    ) {
+                        transport_watches_ready = false;
+                        log.emit(
+                            Level::Warn,
+                            "bluetooth",
+                            "transport_property_watch_failed",
+                            &dbus_error(error),
+                            None,
+                            json!({"recovery":"periodic_snapshot_only"}),
+                        );
+                    }
+                    let mut transport_epochs = TransportEpochs::default();
                     let mut refresh = Instant::now() - Duration::from_secs(5);
                     let mut current = Status::default();
                     let mut adapter = String::new();
                     let mut discovery: Option<Discovery> = None;
                     let mut operation_error = None;
                     loop {
-                        if c.process(Duration::from_millis(20)).is_err(){
+                        if c.process(Duration::from_millis(20)).is_err() {
                             current.available = false;
                             current.error = Some("Bluetooth service disconnected".into());
                             if current.scan.active() { current.scan = RadioScan::Failed { message: "Bluetooth service disconnected".into() }; }
@@ -415,6 +597,21 @@ impl Bluetooth {
                         if refresh.elapsed() > Duration::from_secs(2) {
                             match status(&c) {
                                 Ok((a, mut s)) => {
+                                    if !transport_watches_ready {
+                                        // A same-path daemon/object restart could otherwise
+                                        // survive the periodic snapshot. Refuse to expose a
+                                        // playable transport if its invalidation watches failed.
+                                        s.pcms.clear();
+                                    }
+                                    let invalidated = transport_invalidations
+                                        .lock()
+                                        .map(|mut objects| std::mem::take(&mut *objects))
+                                        .unwrap_or_default();
+                                    transport_epochs.refresh(
+                                        &mut s,
+                                        &invalidated,
+                                        daemon_invalidated.swap(false, Ordering::AcqRel),
+                                    );
                                     adapter = a;
                                     s.scan = current.scan.clone();
                                     s.error = operation_error.clone();
@@ -733,6 +930,11 @@ mod tests {
         let stops_out = stops.clone();
         let fail = Arc::new(AtomicBool::new(false));
         let fail_scan = fail.clone();
+        let pcm_rate = Arc::new(AtomicUsize::new(44_100));
+        let observed_pcm_rate = pcm_rate.clone();
+        let pcm_rate_for_method = pcm_rate.clone();
+        let recreate_pcm = Arc::new(AtomicBool::new(false));
+        let recreate_pcm_out = recreate_pcm.clone();
         let mut powered = false;
         let mut discovering = false;
         let mut found = false;
@@ -744,7 +946,33 @@ mod tests {
                 match member.as_str() {
                     "GetManagedObjects" => {
                         let mut objects = Objects::new();
-                        if msg.path().unwrap() != "/org/bluealsa" {
+                        if msg.path().unwrap() == "/org/bluealsa" {
+                            let mut properties = PropMap::new();
+                            properties.insert(
+                                "Device".into(),
+                                Variant(Box::new(
+                                    "/org/bluez/hci0/dev_01_02_03_04_05_06".to_string(),
+                                )),
+                            );
+                            properties.insert(
+                                "Transport".into(),
+                                Variant(Box::new("A2DP-source".to_string())),
+                            );
+                            properties.insert("Mode".into(), Variant(Box::new("sink".to_string())));
+                            properties.insert("Codec".into(), Variant(Box::new("SBC".to_string())));
+                            properties.insert("Format".into(), Variant(Box::new(0x8210u64)));
+                            properties.insert(
+                                "Rate".into(),
+                                Variant(Box::new(
+                                    pcm_rate_for_method.load(Ordering::Relaxed) as u32
+                                )),
+                            );
+                            properties.insert("Channels".into(), Variant(Box::new(2u64)));
+                            objects.insert(
+                                DbusPath::from("/org/bluealsa/hci0/dev_01_02_03_04_05_06/a2dp"),
+                                HashMap::from([("org.bluealsa.PCM1".into(), properties)]),
+                            );
+                        } else {
                             let mut properties = PropMap::new();
                             properties.insert("Powered".into(), Variant(Box::new(powered)));
                             properties.insert("Discovering".into(), Variant(Box::new(discovering)));
@@ -809,8 +1037,74 @@ mod tests {
             }),
         );
         let server = thread::spawn(move || {
+            let mut last_rate = 44_100;
             while !ending.load(Ordering::Relaxed) {
                 service.process(Duration::from_millis(10)).unwrap();
+                let rate = observed_pcm_rate.load(Ordering::Relaxed) as u32;
+                if rate != last_rate {
+                    let mut changed = PropMap::new();
+                    changed.insert("Rate".into(), Variant(Box::new(rate)));
+                    service
+                        .send(
+                            Message::new_signal(
+                                "/org/bluealsa/hci0/dev_01_02_03_04_05_06/a2dp",
+                                "org.freedesktop.DBus.Properties",
+                                "PropertiesChanged",
+                            )
+                            .unwrap()
+                            .append3(
+                                "org.bluealsa.PCM1",
+                                changed,
+                                Vec::<String>::new(),
+                            ),
+                        )
+                        .unwrap();
+                    last_rate = rate;
+                }
+                if recreate_pcm_out.swap(false, Ordering::AcqRel) {
+                    let object = DbusPath::from("/org/bluealsa/hci0/dev_01_02_03_04_05_06/a2dp");
+                    service
+                        .send(
+                            Message::new_signal(
+                                "/org/bluealsa",
+                                "org.freedesktop.DBus.ObjectManager",
+                                "InterfacesRemoved",
+                            )
+                            .unwrap()
+                            .append2(object.clone(), vec!["org.bluealsa.PCM1".to_string()]),
+                        )
+                        .unwrap();
+                    let mut properties = PropMap::new();
+                    properties.insert(
+                        "Device".into(),
+                        Variant(Box::new(
+                            "/org/bluez/hci0/dev_01_02_03_04_05_06".to_string(),
+                        )),
+                    );
+                    properties.insert(
+                        "Transport".into(),
+                        Variant(Box::new("A2DP-source".to_string())),
+                    );
+                    properties.insert("Mode".into(), Variant(Box::new("sink".to_string())));
+                    properties.insert("Codec".into(), Variant(Box::new("SBC".to_string())));
+                    properties.insert("Format".into(), Variant(Box::new(0x8210u64)));
+                    properties.insert("Rate".into(), Variant(Box::new(rate)));
+                    properties.insert("Channels".into(), Variant(Box::new(2u64)));
+                    service
+                        .send(
+                            Message::new_signal(
+                                "/org/bluealsa",
+                                "org.freedesktop.DBus.ObjectManager",
+                                "InterfacesAdded",
+                            )
+                            .unwrap()
+                            .append2(
+                                object,
+                                HashMap::from([("org.bluealsa.PCM1".to_string(), properties)]),
+                            ),
+                        )
+                        .unwrap();
+                }
             }
         });
         let directory = std::env::temp_dir().join(format!("rb-bluez-{}", bus.0.id()));
@@ -834,6 +1128,22 @@ mod tests {
             }
         }
         wait(&bt.events, |s| s.available && !s.powered);
+        let initial_pcm = wait(&bt.events, |s| !s.pcms.is_empty());
+        let initial_epoch = initial_pcm.pcms[0].transport_generation;
+        pcm_rate.store(48_000, Ordering::Release);
+        let changed_pcm = wait(&bt.events, |s| {
+            s.pcms.first().is_some_and(|pcm| {
+                pcm.rate == Some(48_000) && pcm.transport_generation != initial_epoch
+            })
+        });
+        let changed_epoch = changed_pcm.pcms[0].transport_generation;
+        recreate_pcm.store(true, Ordering::Release);
+        let recreated_pcm = wait(&bt.events, |s| {
+            s.pcms.first().is_some_and(|pcm| {
+                pcm.rate == Some(48_000) && pcm.transport_generation != changed_epoch
+            })
+        });
+        assert_ne!(recreated_pcm.pcms[0].transport_generation, initial_epoch);
         bt.commands.send(Command::Scan(true)).unwrap();
         wait(&bt.events, |s| s.scan == RadioScan::Starting);
         let scanning = wait(&bt.events, |s| {
@@ -968,5 +1278,77 @@ mod tests {
         );
         s.pcms[0].format = None;
         assert!(s.pcms[0].negotiated_format().is_err());
+    }
+
+    fn observed_transport() -> Status {
+        Status {
+            bluez_owner: Some(":1.20".into()),
+            bluealsa_owner: Some(":1.21".into()),
+            pcms: vec![BluetoothPcm {
+                object: "/org/bluealsa/hci0/dev_12_34_56_78_90_AB/a2dp".into(),
+                device: "/org/bluez/hci0/dev_12_34_56_78_90_AB".into(),
+                transport: "A2DP-source".into(),
+                mode: "sink".into(),
+                codec: Some("SBC".into()),
+                format: Some(0x8210),
+                rate: Some(44_100),
+                channels: Some(2),
+                ..Default::default()
+            }],
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn transport_epoch_changes_for_same_path_reuse_properties_and_daemon_sessions() {
+        let object = "/org/bluealsa/hci0/dev_12_34_56_78_90_AB/a2dp";
+        let mut status = observed_transport();
+        let mut epochs = TransportEpochs::default();
+        epochs.refresh(&mut status, &HashSet::new(), false);
+        let initial = status.pcms[0].transport_generation;
+        assert_ne!(initial, 0);
+
+        // A remove-and-recreate between polls may present the same object path
+        // and properties. The ObjectManager removal signal still invalidates it.
+        epochs.refresh(&mut status, &HashSet::from([object.to_string()]), false);
+        let recreated = status.pcms[0].transport_generation;
+        assert_ne!(recreated, initial);
+
+        let changes: [fn(&mut BluetoothPcm); 8] = [
+            |pcm| pcm.device.push_str("_replacement"),
+            |pcm| pcm.transport.push_str("_replacement"),
+            |pcm| pcm.mode.push_str("_replacement"),
+            |pcm| pcm.codec = Some("other".into()),
+            |pcm| pcm.format = Some(0x8420),
+            |pcm| pcm.rate = Some(48_000),
+            |pcm| pcm.channels = Some(1),
+            |pcm| pcm.object.push_str("_replacement"),
+        ];
+        for change in changes {
+            let mut changed = observed_transport();
+            let mut tracker = TransportEpochs::default();
+            tracker.refresh(&mut changed, &HashSet::new(), false);
+            let before = changed.pcms[0].transport_generation;
+            change(&mut changed.pcms[0]);
+            tracker.refresh(&mut changed, &HashSet::new(), false);
+            assert_ne!(changed.pcms[0].transport_generation, before);
+        }
+
+        // NameOwnerChanged invalidation catches a daemon restart even if it
+        // completed before the next GetNameOwner snapshot.
+        let mut restarted = observed_transport();
+        let mut tracker = TransportEpochs::default();
+        tracker.refresh(&mut restarted, &HashSet::new(), false);
+        let before = restarted.pcms[0].transport_generation;
+        tracker.refresh(&mut restarted, &HashSet::new(), true);
+        assert_ne!(restarted.pcms[0].transport_generation, before);
+
+        let mut new_worker = TransportEpochs::default();
+        let mut after_worker_restart = observed_transport();
+        new_worker.refresh(&mut after_worker_restart, &HashSet::new(), false);
+        assert_ne!(
+            after_worker_restart.pcms[0].transport_generation, initial,
+            "worker restart must not reuse a process-local stale sink epoch"
+        );
     }
 }

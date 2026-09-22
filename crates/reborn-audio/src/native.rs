@@ -181,6 +181,14 @@ impl AlsaSink {
         if pcm.channels != Some(2) {
             return Err("Bluetooth PCM must negotiate stereo for the audio sink".into());
         }
+        if pcm.transport_generation == 0
+            || pcm.object.is_empty()
+            || pcm.device.is_empty()
+            || pcm.transport.is_empty()
+            || pcm.mode.is_empty()
+        {
+            return Err("Bluetooth PCM has no complete observed transport identity".into());
+        }
         let rate = pcm.negotiated_rate()?;
         let preferred = pcm.negotiated_format()?;
         Self::plan_named(
@@ -231,6 +239,18 @@ impl AlsaSink {
             return Err(error(r));
         }
         let actual = format_contract(raw.format)?;
+        if raw.rate != rate {
+            return Err(format!(
+                "ALSA sink rate {} does not match requested rate {rate}",
+                raw.rate
+            ));
+        }
+        if raw.channels != 2 {
+            return Err(format!(
+                "ALSA sink opened {} channels; stereo output is required",
+                raw.channels
+            ));
+        }
         if strict_format && actual != preferred {
             return Err(format!(
                 "ALSA sink changed observed Bluetooth PCM format from {} to {}",
@@ -248,11 +268,18 @@ impl AlsaSink {
             layout: "stereo".into(),
             device: device.into(),
             codec: observed.and_then(|pcm| pcm.codec.clone()),
+            transport_object: observed.map(|pcm| pcm.object.clone()),
+            transport_device: observed.map(|pcm| pcm.device.clone()),
+            transport: observed.map(|pcm| pcm.transport.clone()),
+            mode: observed.map(|pcm| pcm.mode.clone()),
             transport_generation: observed.map_or(0, |pcm| pcm.transport_generation),
             fallback: raw.fallback != 0,
             fallback_reason: text(&raw.fallback_reason),
         };
         let params = parameters(&raw, Some(&spec))?;
+        if let Some(observed) = observed {
+            spec.validate_bluetooth_observation(observed)?;
+        }
         if spec.fallback {
             log.emit(
                 Level::Warn,
@@ -279,6 +306,21 @@ impl AlsaSink {
         Self::open_spec(&spec, log, id)
     }
     pub fn open_spec(spec: &SinkSpec, log: Observer, id: u64) -> Result<Self, String> {
+        if matches!(spec.output, AudioOutput::Bluetooth(_))
+            && (spec.transport_generation == 0
+                || spec.transport_object.as_deref().is_none_or(str::is_empty)
+                || spec.transport_device.as_deref().is_none_or(str::is_empty)
+                || spec.transport.as_deref().is_none_or(str::is_empty)
+                || spec.mode.as_deref().is_none_or(str::is_empty))
+        {
+            return Err("Bluetooth sink spec has no observed transport epoch".into());
+        }
+        if spec.channels != 2
+            || spec.physical_bits != spec.format.physical_bits()
+            || spec.valid_bits != spec.format.valid_bits()
+        {
+            return Err("planned ALSA sink parameters are internally inconsistent".into());
+        }
         let (device, wired) = if spec.device.is_empty() {
             output_name(&spec.output)?
         } else {
@@ -323,7 +365,29 @@ impl AlsaSink {
             );
             return Err(error(r));
         }
-        let params = parameters(&p, planned)?;
+        let params = match parameters(&p, planned) {
+            Ok(params) => params,
+            Err(error) => {
+                // The native constructor owns a live handle even if its returned
+                // parameter record fails our format contract.
+                if !raw.is_null() {
+                    unsafe { rb_sink_close(raw) };
+                }
+                return Err(error);
+            }
+        };
+        if let Some(spec) = planned {
+            if params.rate != spec.rate
+                || params.format != spec.format
+                || params.channels != u32::from(spec.channels)
+                || params.device != spec.device
+            {
+                if !raw.is_null() {
+                    unsafe { rb_sink_close(raw) };
+                }
+                return Err("opened ALSA sink does not match the planned sink contract".into());
+            }
+        }
         log.emit(
             Level::Info,
             "alsa",

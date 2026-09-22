@@ -48,6 +48,36 @@ struct Runtime {
     reconfiguration_attempted: bool,
     sink_release_started: bool,
     transition_generation: Option<u64>,
+    active_transport_generation: Option<u64>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TransportEpochState {
+    Current,
+    Changed,
+    Unavailable,
+}
+
+fn transport_epoch_state(
+    output: &AudioOutput,
+    playback: PlaybackState,
+    active_generation: Option<u64>,
+    status: &bluetooth::Status,
+) -> TransportEpochState {
+    let AudioOutput::Bluetooth(address) = output else {
+        return TransportEpochState::Current;
+    };
+    if !matches!(playback, PlaybackState::Playing | PlaybackState::Buffering) {
+        return TransportEpochState::Current;
+    }
+    let Some(active_generation) = active_generation else {
+        return TransportEpochState::Current;
+    };
+    match status.playback_pcm(address) {
+        Ok(pcm) if pcm.transport_generation == active_generation => TransportEpochState::Current,
+        Ok(pcm) if pcm.transport_generation != 0 => TransportEpochState::Changed,
+        _ => TransportEpochState::Unavailable,
+    }
 }
 
 #[derive(Default, Clone, Copy)]
@@ -413,6 +443,8 @@ impl Runtime {
         )?;
         self.model.generation = generation;
         self.model.playback = PlaybackState::Buffering;
+        self.active_transport_generation =
+            bluetooth_pcm.as_ref().map(|pcm| pcm.transport_generation);
         self.art = false;
         self.dirty.mark_both();
         Ok(())
@@ -434,8 +466,27 @@ impl Runtime {
         );
         self.model.invalidate();
         self.playback.stop(self.model.generation);
+        self.active_transport_generation = None;
         self.model.playback = PlaybackState::Paused;
         self.dirty.mark_both();
+        self.checkpoint();
+    }
+    fn fail_active_transport(&mut self, error: &str) {
+        self.model.invalidate();
+        self.playback.stop(self.model.generation);
+        self.active_transport_generation = None;
+        self.model.playback = PlaybackState::Error;
+        self.model.last_error = Some(error.to_owned());
+        self.art = false;
+        self.dirty.mark_both();
+        self.log.emit(
+            Level::Error,
+            "bluetooth",
+            "transport_invalidated",
+            error,
+            None,
+            json!({"recovery":"stopped_without_sink"}),
+        );
         self.checkpoint();
     }
     fn toggle(&mut self) -> Result<(), String> {
@@ -490,6 +541,9 @@ impl Runtime {
             self.model.playback,
             PlaybackState::Playing | PlaybackState::Buffering
         );
+        if !active {
+            self.active_transport_generation = None;
+        }
         self.model.output = out;
         self.dirty.mark_both();
         if active {
@@ -1306,6 +1360,7 @@ fn run() -> Result<(), String> {
         reconfiguration_attempted: false,
         sink_release_started: false,
         transition_generation: None,
+        active_transport_generation: None,
     };
     startup_phase(&log, process_started, "runtime_ready");
     let last_snapshot = Arc::new(Mutex::new(json!({"starting":true})));
@@ -1641,6 +1696,27 @@ fn run() -> Result<(), String> {
                 None,
                 json!({"recovery":"paused"}),
             );
+        }
+        match transport_epoch_state(
+            &rt.model.output,
+            rt.model.playback,
+            rt.active_transport_generation,
+            &rt.bt_state,
+        ) {
+            TransportEpochState::Current => {}
+            TransportEpochState::Changed => {
+                if let Err(error) = rt.with_model_action(|runtime| runtime.load()) {
+                    rt.ui.notice = format!("Bluetooth audio transport changed: {error}");
+                    rt.dirty.mark_render();
+                }
+            }
+            TransportEpochState::Unavailable => {
+                rt.fail_active_transport(
+                    "Bluetooth playback PCM disappeared or lost its negotiated identity",
+                );
+                rt.ui.notice = "Bluetooth audio transport changed; playback stopped".into();
+                rt.dirty.mark_render();
+            }
         }
         while let Ok(env) = server.requests.try_recv() {
             let req = env.request;
@@ -2010,6 +2086,63 @@ mod artwork_presentation_tests {
 }
 
 #[cfg(test)]
+mod bluetooth_epoch_tests {
+    use super::{transport_epoch_state, TransportEpochState};
+    use crate::bluetooth::{self, Device};
+    use reborn_core::{AudioOutput, BluetoothPcm, PlaybackState};
+
+    fn status(generation: u64) -> bluetooth::Status {
+        let mut status = bluetooth::Status::default();
+        status.bluealsa = true;
+        status.devices = vec![Device {
+            path: "/org/bluez/hci0/dev_01_02_03_04_05_06".into(),
+            address: "01:02:03:04:05:06".into(),
+            connected: true,
+            audio: true,
+            ..Default::default()
+        }];
+        status.pcms = vec![BluetoothPcm {
+            object: "/org/bluealsa/hci0/dev_01_02_03_04_05_06/a2dp".into(),
+            device: status.devices[0].path.clone(),
+            transport: "A2DP-source".into(),
+            mode: "sink".into(),
+            codec: Some("SBC".into()),
+            format: Some(0x8210),
+            rate: Some(44_100),
+            channels: Some(2),
+            transport_generation: generation,
+            ..Default::default()
+        }];
+        status
+    }
+
+    #[test]
+    fn active_sink_is_reopened_or_stopped_when_transport_epoch_is_stale() {
+        let output = AudioOutput::Bluetooth("01:02:03:04:05:06".into());
+        let current = status(10);
+        assert_eq!(
+            transport_epoch_state(&output, PlaybackState::Playing, Some(10), &current),
+            TransportEpochState::Current
+        );
+        assert_eq!(
+            transport_epoch_state(&output, PlaybackState::Playing, Some(10), &status(11)),
+            TransportEpochState::Changed
+        );
+
+        let mut disappeared = status(10);
+        disappeared.pcms.clear();
+        assert_eq!(
+            transport_epoch_state(&output, PlaybackState::Playing, Some(10), &disappeared),
+            TransportEpochState::Unavailable
+        );
+        assert_eq!(
+            transport_epoch_state(&output, PlaybackState::Paused, Some(10), &status(11)),
+            TransportEpochState::Current
+        );
+    }
+}
+
+#[cfg(test)]
 mod runtime_dirty_tests {
     use super::DirtyState;
 
@@ -2182,6 +2315,10 @@ mod runtime_reconfiguration_tests {
             layout: "stereo".into(),
             device: "transaction-test".into(),
             codec: None,
+            transport_object: None,
+            transport_device: None,
+            transport: None,
+            mode: None,
             transport_generation: 0,
             fallback: false,
             fallback_reason: String::new(),
