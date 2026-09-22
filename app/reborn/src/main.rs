@@ -37,12 +37,50 @@ struct Runtime {
     graphics: Option<Renderer>,
     power: Value,
     art: bool,
-    dirty: bool,
+    dirty: DirtyState,
     root: PathBuf,
     headless: bool,
     last_activity: Instant,
     query: Option<Receiver<Result<Vec<Track>, String>>>,
 }
+
+#[derive(Default)]
+struct DirtyState {
+    render: bool,
+    persistence: bool,
+}
+
+impl DirtyState {
+    fn mark_render(&mut self) {
+        self.render = true;
+    }
+
+    fn mark_persistence(&mut self) {
+        self.persistence = true;
+    }
+
+    fn mark_both(&mut self) {
+        self.mark_render();
+        self.mark_persistence();
+    }
+
+    fn rendered(&mut self) {
+        self.render = false;
+    }
+
+    fn checkpoint_succeeded(&mut self) {
+        self.persistence = false;
+    }
+
+    fn checkpoint_failed(&mut self) {
+        self.persistence = true;
+    }
+
+    fn checkpoint_due(&self) -> bool {
+        self.persistence
+    }
+}
+
 impl Runtime {
     fn play_index(&mut self, index: usize, force_shuffle: bool) -> Result<(), String> {
         self.play_members(
@@ -114,10 +152,12 @@ impl Runtime {
             None,
             json!({"state":self.model.playback,"recovery_attempted":false}),
         );
-        self.dirty = true;
+        self.dirty.mark_render();
     }
     fn checkpoint(&mut self) {
+        self.dirty.mark_persistence();
         if let Err(e) = self.model.checkpoint(&self.root.join("state/session.json")) {
+            self.dirty.checkpoint_failed();
             self.log.emit(
                 Level::Warn,
                 "core",
@@ -127,7 +167,7 @@ impl Runtime {
                 json!({}),
             );
         } else {
-            self.dirty = false;
+            self.dirty.checkpoint_succeeded();
         }
     }
     fn load(&mut self) -> Result<(), String> {
@@ -210,7 +250,7 @@ impl Runtime {
         self.model.invalidate();
         self.model.playback = PlaybackState::Buffering;
         self.art = false;
-        self.dirty = true;
+        self.dirty.mark_both();
         self.playback.load_with_gapless(playback::LoadRequest {
             track,
             entry_id,
@@ -242,8 +282,8 @@ impl Runtime {
         self.model.invalidate();
         self.playback.stop(self.model.generation);
         self.model.playback = PlaybackState::Paused;
+        self.dirty.mark_both();
         self.checkpoint();
-        self.dirty = true;
     }
     fn toggle(&mut self) -> Result<(), String> {
         if matches!(
@@ -295,6 +335,7 @@ impl Runtime {
             PlaybackState::Playing | PlaybackState::Buffering
         );
         self.model.output = out;
+        self.dirty.mark_both();
         self.log.emit(
             Level::Info,
             "audio",
@@ -307,11 +348,11 @@ impl Runtime {
             self.load()?
         }
         self.checkpoint();
-        self.dirty = true;
+        self.dirty.mark_render();
         Ok(())
     }
     fn effect(&mut self, e: Effect) -> Result<(), String> {
-        self.dirty = true;
+        self.dirty.mark_render();
         match e {
             Effect::None => {}
             Effect::Play(index) => self.play_index(index, false)?,
@@ -755,7 +796,7 @@ impl Runtime {
         json!({"status":self.status(),"health":self.log.health(),"metrics":self.log.metrics(),"recent_errors":self.log.events(20,None,Some(Level::Warn),None),"resource_usage":fs::read_to_string("/proc/self/status").unwrap_or_default(),"kernel_events":kernel_events()})
     }
     fn play_control(&mut self, a: PlaybackAction) -> Result<(), String> {
-        self.dirty = true;
+        self.dirty.mark_render();
         match a {
             PlaybackAction::Play(id) => {
                 let index = self
@@ -777,6 +818,7 @@ impl Runtime {
                 self.playback.stop(self.model.generation);
                 self.model.playback = PlaybackState::Stopped;
                 self.model.position_ms = 0;
+                self.dirty.mark_both();
                 self.checkpoint();
                 Ok(())
             }
@@ -789,6 +831,7 @@ impl Runtime {
                         .map(|t| t.duration_ms.saturating_sub(1))
                         .unwrap_or(0),
                 );
+                self.dirty.mark_both();
                 if self.model.playback == PlaybackState::Playing {
                     self.load()
                 } else {
@@ -799,6 +842,7 @@ impl Runtime {
             PlaybackAction::Bluetooth(s) => self.switch(AudioOutput::Bluetooth(s)),
             PlaybackAction::Volume(v) => {
                 self.model.settings.volume = v.min(100);
+                self.dirty.mark_both();
                 if matches!(
                     self.model.playback,
                     PlaybackState::Playing | PlaybackState::Buffering
@@ -1085,7 +1129,10 @@ fn run() -> Result<(), String> {
         graphics,
         power: power::status(),
         art: false,
-        dirty: true,
+        dirty: DirtyState {
+            render: true,
+            persistence: false,
+        },
         root: root.clone(),
         headless,
         last_activity: Instant::now(),
@@ -1195,28 +1242,39 @@ fn run() -> Result<(), String> {
                         if let Some(g) = &mut rt.graphics {
                             if g.artwork(&bytes).is_ok() {
                                 rt.art = true;
-                                rt.dirty = true;
+                                rt.dirty.mark_render();
                             }
                         }
                     }
                 }
                 playback::PlaybackEvent::Core(event) => {
                     if let Event::Position { generation, ms } = event {
-                        if generation == rt.model.generation
-                            && ms / 1000 != rt.model.position_ms / 1000
-                        {
-                            rt.dirty = true
+                        if generation == rt.model.generation && ms != rt.model.position_ms {
+                            rt.dirty.mark_persistence();
+                            if ms / 1000 != rt.model.position_ms / 1000 {
+                                rt.dirty.mark_render();
+                            }
                         }
                         rt.model.apply(Event::Position { generation, ms });
                         continue;
                     }
+                    let persists = matches!(
+                        &event,
+                        Event::TrackBoundary { .. }
+                            | Event::PlaybackError { .. }
+                            | Event::SourceChanged(_)
+                            | Event::BluetoothDisconnected(_)
+                    );
                     let error = matches!(&event,Event::PlaybackError{generation,..}if *generation==rt.model.generation);
                     let ended = matches!(
                         &event,
                         Event::TrackEnded { generation } if *generation == rt.model.generation
                     );
                     rt.model.apply(event);
-                    rt.dirty = true;
+                    rt.dirty.mark_render();
+                    if persists {
+                        rt.dirty.mark_persistence();
+                    }
                     if error {
                         rt.model.invalidate();
                         rt.playback.stop(rt.model.generation);
@@ -1264,7 +1322,7 @@ fn run() -> Result<(), String> {
                     rt.fail("scanner", e);
                 }
             }
-            rt.dirty = true;
+            rt.dirty.mark_render();
         }
         if let Some(rx) = &rt.query {
             if let Ok(value) = rx.try_recv() {
@@ -1273,7 +1331,7 @@ fn run() -> Result<(), String> {
                     Err(e) => rt.fail("database", e),
                 }
                 rt.query = None;
-                rt.dirty = true;
+                rt.dirty.mark_render();
             }
         }
         if let Some(service) = &rt.wifi {
@@ -1323,7 +1381,7 @@ fn run() -> Result<(), String> {
                     })
                     .collect();
                 rt.wifi_state = s;
-                rt.dirty |= rt.model.screen == Screen::Wifi;
+                rt.dirty.render |= rt.model.screen == Screen::Wifi;
             }
         }
         let mut bt_lost = false;
@@ -1390,7 +1448,7 @@ fn run() -> Result<(), String> {
                     })
                     .collect();
                 rt.ui.pairing = s.pending.as_ref().map(|p| p.display.clone());
-                rt.dirty |= rt.model.screen == Screen::Bluetooth || rt.ui.pairing.is_some();
+                rt.dirty.render |= rt.model.screen == Screen::Bluetooth || rt.ui.pairing.is_some();
                 rt.bt_state = s;
             }
         }
@@ -1399,7 +1457,6 @@ fn run() -> Result<(), String> {
                 rt.model.apply(Event::BluetoothDisconnected(address));
             }
             rt.pause();
-            rt.checkpoint();
             rt.ui.notice = "Bluetooth disconnected; playback paused".into();
             log.emit(
                 Level::Warn,
@@ -1599,7 +1656,8 @@ fn run() -> Result<(), String> {
                         rt.model.apply(Event::LibraryScanFailed(error.clone()));
                         rt.fail("scanner", error);
                     }
-                    rt.dirty = true;
+                    rt.dirty.mark_render();
+                    rt.dirty.mark_persistence();
                 }
             }
             if !headless
@@ -1620,13 +1678,16 @@ fn run() -> Result<(), String> {
                 let _ = log.diagnostic(&root.join("diagnostics"), rt.snapshot(), true);
             }
         }
-        if checkpoint.elapsed() > Duration::from_secs(15) && rt.dirty {
+        if checkpoint.elapsed() > Duration::from_secs(15) && rt.dirty.checkpoint_due() {
             rt.checkpoint();
             checkpoint = Instant::now();
         } else if checkpoint.elapsed() > Duration::from_secs(15) {
             checkpoint = Instant::now();
         }
-        if rt.dirty && !rt.model.screen_off && render_time.elapsed() > Duration::from_millis(34) {
+        if rt.dirty.render
+            && !rt.model.screen_off
+            && render_time.elapsed() > Duration::from_millis(34)
+        {
             let draw = rt.ui.draw(
                 &rt.model,
                 &rt.model.library.tracks,
@@ -1670,7 +1731,7 @@ fn run() -> Result<(), String> {
                     }
                 }
             }
-            rt.dirty = false;
+            rt.dirty.rendered();
             render_time = Instant::now();
         }
         thread::sleep(Duration::from_millis(15));
@@ -1738,5 +1799,89 @@ fn main() {
         let _ = serde_json::to_writer(std::io::stderr(), &record);
         let _ = std::io::stderr().write_all(b"\n");
         std::process::exit(1)
+    }
+}
+
+#[cfg(test)]
+mod runtime_dirty_tests {
+    use super::DirtyState;
+
+    #[test]
+    fn stopped_setting_save_keeps_its_redraw_request() {
+        let mut dirty = DirtyState::default();
+        dirty.mark_both(); // SetScreenTimeout while playback is stopped.
+
+        dirty.checkpoint_succeeded();
+
+        assert!(!dirty.checkpoint_due());
+        assert!(dirty.render);
+    }
+
+    #[test]
+    fn rendering_before_checkpoint_keeps_persistence_pending() {
+        let mut dirty = DirtyState::default();
+        dirty.mark_both();
+
+        dirty.rendered();
+
+        assert!(dirty.checkpoint_due());
+        dirty.checkpoint_succeeded();
+        assert!(!dirty.checkpoint_due());
+    }
+
+    #[test]
+    fn checkpoint_before_render_keeps_redraw_pending() {
+        let mut dirty = DirtyState::default();
+        dirty.mark_both();
+
+        dirty.checkpoint_succeeded();
+
+        assert!(dirty.render);
+        dirty.rendered();
+        assert!(!dirty.render);
+    }
+
+    #[test]
+    fn bluetooth_loss_notice_can_be_saved_and_still_rendered() {
+        let mut dirty = DirtyState::default();
+        dirty.mark_both(); // Lost transport changes output/playback and sets a notice.
+
+        dirty.checkpoint_succeeded();
+
+        assert!(!dirty.checkpoint_due());
+        assert!(dirty.render);
+    }
+
+    #[test]
+    fn rendered_position_change_remains_due_for_bounded_checkpoint() {
+        let mut dirty = DirtyState::default();
+        dirty.mark_persistence(); // Position events are saved on the 15-second cadence.
+        dirty.mark_render();
+        dirty.rendered();
+
+        assert!(dirty.checkpoint_due());
+        dirty.checkpoint_succeeded();
+        assert!(!dirty.checkpoint_due());
+    }
+
+    #[test]
+    fn unchanged_state_does_not_schedule_a_save_loop() {
+        let mut dirty = DirtyState::default();
+        assert!(!dirty.checkpoint_due());
+
+        dirty.mark_render();
+        dirty.rendered();
+
+        assert!(!dirty.checkpoint_due());
+    }
+
+    #[test]
+    fn failed_checkpoint_retains_persistence_intent() {
+        let mut dirty = DirtyState::default();
+        dirty.mark_persistence();
+
+        dirty.checkpoint_failed();
+
+        assert!(dirty.checkpoint_due());
     }
 }
