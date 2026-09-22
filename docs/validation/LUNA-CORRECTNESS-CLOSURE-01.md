@@ -285,13 +285,52 @@ force. No candidate exists yet.
   passed, 0 failed.
 - **Result:** Context action intent stays on the selected queue candidate while
   explicit collection actions remain collection-wide.
-- **Commit:** pending.
+- **Commit:** `ae4ce7b` (`Keep filtered track actions singular`).
 - **Remaining limitation:** Verification is at the UI Action/Effect boundary;
   actual queue mutation and physical button interaction remain
   `PHYSICAL_QUALIFICATION_PENDING`.
 - **Evidence tier:** source inspection + host UI action tests.
 
-## R8–R10
+## R8 — cancel actions after input loss
+
+**Status: FIXED**
+
+- **Finding and symptom:** `SYN_DROPPED` and descriptor loss synthesized
+  `Release`, which the action router treated as Select, Next/Previous,
+  Play/Pause, or Power activation.
+- **Current source confirmation:** `InputManager::release_stale_inputs()`
+  emitted `NormalizedInput::Release` on loss, and the router mapped confirmed
+  releases directly to actions. It also accepted unmatched release/repeat
+  events.
+- **Implementation:** Added an explicit `Cancel` normalized event. State loss
+  cancels held controls and clears timing/long/repeat state; unmatched release
+  and repeat records cancel rather than activate. For `SYN_DROPPED`, the input
+  manager discards all events through that device's next `SYN_REPORT`. It does
+  not attempt an unsafe key-state ioctl through the existing abstraction and
+  remains fail-safe until a new press is observed. Device paths are reopened by
+  matching the canonical sysfs device identity and name, and missing devices
+  are rediscovered on subsequent polls.
+- **Files changed:** `crates/reborn-core/src/lib.rs`,
+  `crates/reborn-platform/src/input.rs`.
+- **Tests added:** Held Select, Next, and Power followed by `SYN_DROPPED`; stale
+  events through `SYN_REPORT`; unmatched release/repeat after reconnect;
+  device disappearance before release; cancellation of long/repeat router
+  state; and event-node replacement with the same physical identity versus a
+  reused node with a different identity.
+- **Tests run:** `cargo fmt --all -- --check`; `cargo test -p reborn-platform
+  --locked` — 28 passed, 0 failed.
+- **Result:** Input loss cannot synthesize an activation-sensitive command;
+  current key state remains unknown and therefore canceled until a fresh press.
+- **Commit:** pending.
+- **Remaining limitation:** No current key-state ioctl resynchronization is
+  attempted; loss of state requires a release then a new press before that key
+  can activate. `SYN_DROPPED` behavior follows the [Linux kernel evdev event
+  protocol](https://docs.kernel.org/input/event-codes.html). Hardware button
+  behavior remains `PHYSICAL_QUALIFICATION_PENDING`.
+- **Evidence tier:** source inspection + deterministic event-stream tests +
+  official Linux kernel documentation. No input device was opened on the Y2.
+
+## R9–R10
 
 Results will be recorded separately as each correction is reviewed and
 committed. No status is claimed yet.

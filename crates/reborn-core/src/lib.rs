@@ -251,6 +251,7 @@ pub enum PhysicalControl {
 pub enum NormalizedInput {
     Press(PhysicalControl),
     Release(PhysicalControl),
+    Cancel(PhysicalControl),
     LongPress(PhysicalControl),
     Repeat(PhysicalControl),
     WheelClockwise(u8),
