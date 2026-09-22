@@ -113,6 +113,10 @@ impl Runtime {
             AudioOutput::Wired if track.sample_rate >= 8_000 => track.sample_rate,
             _ => self.output_rate()?,
         };
+        /* ALSA planning opens the named PCM to probe its actual parameters.
+         * Release the worker's exclusive handle first so reconfiguration is
+         * ordered and cannot race an in-flight sink owner. */
+        self.playback.stop_and_wait(self.model.generation)?;
         let (spec, _planned) = match reborn_audio::AlsaSink::plan(
             &self.model.output,
             requested_rate,
@@ -1004,8 +1008,14 @@ fn run() -> Result<(), String> {
         }
         while let Ok(e) = rt.playback.events.try_recv() {
             match e {
-                playback::PlaybackEvent::Artwork { generation, bytes } => {
-                    if generation == rt.model.generation {
+                playback::PlaybackEvent::Artwork {
+                    generation,
+                    track_id,
+                    bytes,
+                } => {
+                    if generation == rt.model.generation
+                        && rt.model.current().is_some_and(|track| track.id == track_id)
+                    {
                         if let Some(g) = &mut rt.graphics {
                             if g.artwork(&bytes).is_ok() {
                                 rt.art = true;

@@ -18,7 +18,11 @@ use std::{
 };
 pub enum PlaybackEvent {
     Core(Event),
-    Artwork { generation: u64, bytes: Vec<u8> },
+    Artwork {
+        generation: u64,
+        track_id: i64,
+        bytes: Vec<u8>,
+    },
 }
 pub struct LoadRequest {
     pub track: Track,
@@ -52,7 +56,7 @@ enum SinkCommand {
         spec: SinkSpec,
         id: u64,
     },
-    Stop,
+    Stop(Option<SyncSender<()>>),
 }
 enum Stream {
     Pcm {
@@ -80,7 +84,7 @@ pub struct Playback {
 fn emit(tx: &SyncSender<PlaybackEvent>, e: Event) {
     let _ = tx.send(PlaybackEvent::Core(e));
 }
-fn send_stream(
+fn send_stream_item(
     tx: &SyncSender<Stream>,
     buffered: &AtomicU64,
     epoch: &AtomicU64,
@@ -109,6 +113,70 @@ fn send_stream(
             Err(_) => return Err("audio queue closed".into()),
         }
     }
+}
+
+const MAX_SINK_WRITE_BYTES: usize = 524_288;
+
+/* Keep every queued PCM block within the direct ALSA writer's byte limit.
+ * This matters for the configured 5/10/15 second crossfade windows, which
+ * are intentionally produced by FFmpeg as one transition result. */
+fn send_stream(
+    tx: &SyncSender<Stream>,
+    buffered: &AtomicU64,
+    epoch: &AtomicU64,
+    generation: u64,
+    item: Stream,
+    frames: u64,
+    log: &Observer,
+) -> Result<(), String> {
+    let Stream::Pcm {
+        generation: item_generation,
+        block,
+    } = item
+    else {
+        return send_stream_item(tx, buffered, epoch, generation, item, frames, log);
+    };
+    if item_generation != generation {
+        return Ok(());
+    }
+    let frame_bytes = block.format.bytes_per_frame();
+    let total_frames = usize::try_from(block.frames)
+        .map_err(|_| "PCM frame count exceeds platform bounds".to_string())?;
+    if frame_bytes == 0 || total_frames == 0 || block.data.len() != total_frames * frame_bytes {
+        return Err("PCM block is not frame aligned".into());
+    }
+    let max_frames = MAX_SINK_WRITE_BYTES / frame_bytes;
+    if max_frames == 0 {
+        return Err("PCM format exceeds sink byte limit".into());
+    }
+    let mut offset = 0usize;
+    while offset < total_frames {
+        let count = (total_frames - offset).min(max_frames);
+        let start = offset * frame_bytes;
+        let end = (offset + count) * frame_bytes;
+        let chunk = Pcm {
+            data: block.data[start..end].to_vec(),
+            position_ms: block.position_ms + offset as u64 * 1000 / u64::from(block.rate),
+            packets: if offset == 0 { block.packets } else { 0 },
+            frames: count as u64,
+            rate: block.rate,
+            format: block.format,
+        };
+        send_stream_item(
+            tx,
+            buffered,
+            epoch,
+            generation,
+            Stream::Pcm {
+                generation,
+                block: chunk,
+            },
+            count as u64,
+            log,
+        )?;
+        offset += count;
+    }
+    Ok(())
 }
 
 struct TailWindow {
@@ -334,9 +402,11 @@ fn publish_artwork(
         }
     }
     let path = cache.join(format!("{}-{}-{}.rgba", track.id, track.size, track.mtime));
-    let bytes = std::fs::read(&path)
+    let cached = std::fs::read(&path)
         .ok()
-        .filter(|b| b.len() == 160 * 160 * 4)
+        .filter(|b| b.len() == 160 * 160 * 4);
+    let bytes = cached
+        .clone()
         .or_else(|| {
             decoder
                 .metadata
@@ -365,8 +435,14 @@ fn publish_artwork(
             .find_map(|candidate| external_artwork(&candidate).ok())
         });
     if let Some(bytes) = bytes {
-        let _ = reborn_core::atomic_write(&path, &bytes);
-        let _ = events.try_send(PlaybackEvent::Artwork { generation, bytes });
+        if cached.is_none() {
+            let _ = reborn_core::atomic_write(&path, &bytes);
+        }
+        let _ = events.try_send(PlaybackEvent::Artwork {
+            generation,
+            track_id: track.id,
+            bytes,
+        });
     }
 }
 type SinkFactory =
@@ -412,7 +488,7 @@ impl Playback {
                 dl.heartbeat("playback", 20);
                 let job = match dr.recv_timeout(Duration::from_millis(500)) {
                     Ok(DecodeCommand::Load(j)) => j,
-                    Ok(DecodeCommand::Stop) => continue,
+                            Ok(DecodeCommand::Stop) => continue,
                     Err(RecvTimeoutError::Timeout) => continue,
                     Err(_) => break,
                 };
@@ -467,6 +543,7 @@ impl Playback {
                     let mut decoder_pending = VecDeque::new();
                     let mut next_decoder = None;
                     let mut next_pending = VecDeque::new();
+                    let mut packet_count = 0u64;
                     let open_next = |start: usize| -> Option<(usize, Decoder)> {
                         for (candidate, track) in tracks.iter().enumerate().skip(start) {
                             match Decoder::open_with(
@@ -475,14 +552,7 @@ impl Playback {
                                 job.dsp.clone(),
                                 job.cancel.clone(),
                             ) {
-                                Ok(mut next) => {
-                                    publish_artwork(
-                                        &cache,
-                                        track,
-                                        &mut next,
-                                        job.generation,
-                                        &det,
-                                    );
+                                Ok(next) => {
                                     return Some((candidate, next));
                                 }
                                 Err(e) => dl.emit(
@@ -512,7 +582,9 @@ impl Playback {
                         if let Some(block) =
                             read_pending_or_decoder(&mut decoder, &mut decoder_pending)?
                         {
-                            dl.add("ffmpeg_packets_decoded", block.packets as f64);
+                            let packet_delta = block.packets.saturating_sub(packet_count);
+                            packet_count = packet_count.max(block.packets);
+                            dl.add("ffmpeg_packets_decoded", packet_delta as f64);
                             dl.add("ffmpeg_frames_decoded", block.frames as f64);
                             let block_frames = block.frames;
                             if crossfade_enabled && overlap_frames > 0 {
@@ -665,6 +737,34 @@ impl Playback {
                                                     suffix_frames,
                                                     &dl,
                                                 )?;
+                                                /* The next-track prefix was already removed from
+                                                 * the decoder window. If mixing fails, put that
+                                                 * exact prefix back on the stream after the old
+                                                 * suffix so no audible samples disappear. */
+                                                if fade_frames > 0 {
+                                                    let prefix = Pcm {
+                                                        data: head.data[..fade_frames * frame_bytes]
+                                                            .to_vec(),
+                                                        position_ms: head.position_ms,
+                                                        packets: head.packets,
+                                                        frames: fade_frames as u64,
+                                                        rate: head.rate,
+                                                        format: head.format,
+                                                    };
+                                                    let prefix_frames = prefix.frames;
+                                                    send_stream(
+                                                        &pt,
+                                                        &db,
+                                                        &de,
+                                                        job.generation,
+                                                        Stream::Pcm {
+                                                            generation: job.generation,
+                                                            block: prefix,
+                                                        },
+                                                        prefix_frames,
+                                                        &dl,
+                                                    )?;
+                                                }
                                             }
                                         }
                                     }
@@ -743,6 +843,13 @@ impl Playback {
                             0,
                             &dl,
                         )?;
+                        publish_artwork(
+                            &cache,
+                            &tracks[next_index],
+                            &mut next,
+                            job.generation,
+                            &det,
+                        );
                         if let Some((candidate, following)) = open_next(next_index + 1) {
                             preopened_index = Some(candidate);
                             next_decoder = Some(following);
@@ -761,6 +868,7 @@ impl Playback {
                         }
                         dl.add("ffmpeg_corrupt_packets", next.metadata.corrupt_packets as f64);
                         decoder = next;
+                        packet_count = 0;
                         decoder_pending = std::mem::take(&mut next_pending);
                         next_pending = VecDeque::new();
                         tail = TailWindow::new(job.spec.rate, processing_format);
@@ -863,10 +971,13 @@ impl Playback {
                                 }
                                 last_progress = Instant::now();
                             }
-                            SinkCommand::Stop => {
+                            SinkCommand::Stop(reply) => {
                                 sink = None;
                                 pending = None;
                                 eof = false;
+                                if let Some(reply) = reply {
+                                    let _ = reply.try_send(());
+                                }
                             }
                         }
                     }
@@ -953,7 +1064,10 @@ impl Playback {
                         }
                     }
                     if let (Some(s), Some((block, offset))) = (&mut sink, &mut pending) {
-                        match s.write(&block.data[*offset..]) {
+                        let frame_bytes = block.format.bytes_per_frame();
+                        let max_bytes = (MAX_SINK_WRITE_BYTES / frame_bytes) * frame_bytes;
+                        let end = (*offset + max_bytes).min(block.data.len());
+                        match s.write(&block.data[*offset..end]) {
                             Ok(n) => {
                                 if n > 0 {
                                     *offset += n * block.format.bytes_per_frame();
@@ -1127,8 +1241,21 @@ impl Playback {
         if let Some(c) = self.cancel.take() {
             c.cancel()
         }
-        let _ = self.sink.try_send(SinkCommand::Stop);
+        let _ = self.sink.try_send(SinkCommand::Stop(None));
         let _ = self.decode.try_send(DecodeCommand::Stop);
+    }
+    pub fn stop_and_wait(&mut self, generation: u64) -> Result<(), String> {
+        self.epoch.store(generation, Ordering::Release);
+        if let Some(c) = self.cancel.take() {
+            c.cancel();
+        }
+        let (tx, rx) = sync_channel(1);
+        self.sink
+            .send(SinkCommand::Stop(Some(tx)))
+            .map_err(|_| "audio worker unavailable")?;
+        let _ = self.decode.try_send(DecodeCommand::Stop);
+        rx.recv_timeout(Duration::from_secs(2))
+            .map_err(|_| "audio sink release deadline exceeded".into())
     }
     pub fn shutdown(&mut self, generation: u64) -> Result<(), String> {
         self.stop(generation);
