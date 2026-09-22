@@ -106,37 +106,40 @@ force. No candidate exists yet.
   waiting for the sink actor's factory result. `Playback::stop_and_wait()` used
   blocking `send()` before calling `recv_timeout(2s)`.
 - **Implementation:** Reconfiguration now runs release acknowledgement,
-  sink planning, acknowledged worker open, decoder start enqueue, and only then
-  model commit. The sink actor has a direct one-slot open-result reply; start
-  failure invalidates its generation and queues release. A sink-open guard
-  refuses a second open until the prior release is acknowledged. The two-second
-  release deadline now covers retrying a full command queue and waiting for the
-  release reply. Runtime action snapshots restore output, settings, queue,
-  selection, and position on failure; after release starts, active playback is
-  reported as `Error`, stale generations are invalidated, and the restored
-  state is checkpointed. Planning/open failure never commits candidate output
-  or settings.
+  sink planning, and nonblocking worker-open enqueue. The sink actor has a
+  direct one-slot open-result reply which the runtime polls while the UI loop
+  continues. Decoder start and model persistence occur only after the open
+  acknowledgement; a failed or timed-out open invalidates its generation and
+  queues release. A sink-open guard refuses a second open until the prior
+  release is acknowledged. The two-second release deadline covers retrying a
+  full command queue and waiting for the release reply. Runtime action snapshots
+  restore output, settings, queue, selection, and position on failure; after
+  release starts, active playback is reported as `Error`, stale generations are
+  invalidated, and the restored state is checkpointed. Planning/open failure
+  never commits candidate output or settings. New audio actions are held briefly
+  while one open result is pending.
 - **Files changed:** `app/reborn/src/main.rs`, `app/reborn/src/playback.rs`.
 - **Tests added:** Runtime tests inject plan failure after releasing a live fake
   sink, verify no replacement start, and verify single sink ownership on a
   successful replacement. Model recovery tests cover output, queue selection,
   seek position, volume, ReplayGain, and EQ rollback, plus pre-release failure.
-  Playback tests inject sink-open failure, a full command queue, a disconnected
-  receiver, and a full event queue that stalls the actor; they assert synchronous
-  open failure, no `TrackStarted`, bounded release, and successful recovery once
-  the stalled queue drains. Existing output-switch coverage now also verifies
+  Playback tests inject sink-open failure, a deliberately stalled open actor, a
+  full command queue, a disconnected receiver, and a full event queue that
+  stalls the actor; they assert the runtime-facing open call returns before the
+  actor, no `TrackStarted` occurs on failure, bounded release, and recovery once
+  the stalled queue drains. Existing output-switch coverage also verifies that
   the sink actor rejects a second open without release acknowledgement.
 - **Tests run:** `cargo fmt --all -- --check`; `cargo check -p reborn --locked`;
-  `cargo test -p reborn --bin reborn --locked` — 21 passed, 0 failed.
+  fresh-target `cargo test -p reborn --bin reborn --locked` — 27 passed, 0
+  failed after the nonblocking-open correction.
 - **Result:** Release/plan/start/commit/fail ordering is explicit and the
   failure-boundary tests pass. The prior logical state is preserved where safe;
   failed active transitions cannot report `Playing` without a sink.
 - **Commit:** `72f9995` (`Make sink reconfiguration transactional`).
-- **Remaining limitation:** ALSA planning and the bounded worker-open
-  acknowledgement remain synchronous on the runtime thread; each stop/open
-  boundary is bounded at two seconds. This introduces a bounded wait for the
-  actual sink-open result so settings cannot commit on command enqueue alone.
-  Actual BlueALSA and wired-device open timing remains
+- **Remaining limitation:** Sink release acknowledgement and ALSA planning
+  remain synchronous on the runtime thread; release stays bounded at two
+  seconds, including command-queue backpressure. The worker-open acknowledgement
+  is polled without blocking the UI loop. Actual BlueALSA and wired-device timing remains
   `PHYSICAL_QUALIFICATION_PENDING`.
 - **Evidence tier:** source inspection + fake sink/worker host tests. No physical
   sink was opened.

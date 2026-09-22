@@ -45,10 +45,17 @@ struct Runtime {
     action_depth: usize,
     action_before: Option<AppModel>,
     action_dirty_before: Option<DirtyState>,
+    pending_reconfiguration: Option<PendingReconfiguration>,
     reconfiguration_attempted: bool,
     sink_release_started: bool,
     transition_generation: Option<u64>,
     active_transport_generation: Option<u64>,
+}
+
+struct PendingReconfiguration {
+    previous: AppModel,
+    dirty_before: DirtyState,
+    generation: u64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -174,6 +181,11 @@ impl Runtime {
     ) -> Result<(), String> {
         let outermost = self.action_depth == 0;
         if outermost {
+            if self.pending_reconfiguration.is_some() {
+                self.ui.notice = "Audio output is still starting".into();
+                self.dirty.mark_render();
+                return Err("audio reconfiguration is still pending".into());
+            }
             self.action_before = Some(self.model.clone());
             self.action_dirty_before = Some(self.dirty);
             self.reconfiguration_attempted = false;
@@ -192,10 +204,17 @@ impl Runtime {
             let attempted = self.reconfiguration_attempted;
             let release_started = self.sink_release_started;
             let generation = self.transition_generation;
+            let start_pending = self.playback.has_pending_start();
             self.reconfiguration_attempted = false;
             self.sink_release_started = false;
             self.transition_generation = None;
-            if let Err(error) = &result {
+            if result.is_ok() && attempted && start_pending {
+                self.pending_reconfiguration = Some(PendingReconfiguration {
+                    previous: before,
+                    dirty_before,
+                    generation: generation.unwrap_or(self.model.generation),
+                });
+            } else if let Err(error) = &result {
                 if attempted {
                     self.restore_failed_reconfiguration(
                         before,
@@ -225,9 +244,74 @@ impl Runtime {
         }
         self.model = failed_reconfiguration_model(previous, error, true, transition_generation);
         self.playback.stop(self.model.generation);
+        self.active_transport_generation = None;
         self.art = false;
         self.dirty.mark_both();
         self.checkpoint();
+    }
+    fn poll_pending_reconfiguration(&mut self) {
+        if self.pending_reconfiguration.is_none() {
+            return;
+        }
+        let epoch_state = transport_epoch_state(
+            &self.model.output,
+            self.model.playback,
+            self.active_transport_generation,
+            &self.bt_state,
+        );
+        if epoch_state != TransportEpochState::Current {
+            let pending = self.pending_reconfiguration.take().unwrap();
+            let error = match epoch_state {
+                TransportEpochState::Changed => "Bluetooth transport changed during sink open",
+                TransportEpochState::Unavailable => {
+                    "Bluetooth transport disappeared during sink open"
+                }
+                TransportEpochState::Current => unreachable!(),
+            };
+            self.restore_failed_reconfiguration(
+                pending.previous,
+                pending.dirty_before,
+                error,
+                true,
+                Some(pending.generation),
+            );
+            self.ui.notice = error.into();
+            self.dirty.mark_render();
+            return;
+        }
+        let Some(result) = self.playback.poll_start() else {
+            return;
+        };
+        let Some(pending) = self.pending_reconfiguration.take() else {
+            if let Err(error) = result {
+                self.fail("playback", error);
+            }
+            return;
+        };
+        match result {
+            Ok(()) => {
+                if self.dirty.checkpoint_due() {
+                    self.checkpoint();
+                }
+            }
+            Err(error) => {
+                self.restore_failed_reconfiguration(
+                    pending.previous,
+                    pending.dirty_before,
+                    &error,
+                    true,
+                    Some(pending.generation),
+                );
+                self.ui.notice = format!("Playback could not start: {error}");
+                self.dirty.mark_render();
+            }
+        }
+    }
+    fn abandon_pending_reconfiguration(&mut self) {
+        if let Some(pending) = self.pending_reconfiguration.take() {
+            self.model = pending.previous;
+            self.dirty = pending.dirty_before;
+        }
     }
 
     fn play_index(&mut self, index: usize, force_shuffle: bool) -> Result<(), String> {
@@ -304,6 +388,9 @@ impl Runtime {
     }
     fn checkpoint(&mut self) {
         self.dirty.mark_persistence();
+        if self.playback.has_pending_start() || self.pending_reconfiguration.is_some() {
+            return;
+        }
         if let Err(e) = self.model.checkpoint(&self.root.join("state/session.json")) {
             self.dirty.checkpoint_failed();
             self.log.emit(
@@ -427,7 +514,7 @@ impl Runtime {
                     gapless_enabled,
                     id,
                 ) = request_parts;
-                playback.start_with_gapless(playback::LoadRequest {
+                playback.begin_start_with_gapless(playback::LoadRequest {
                     track,
                     entry_id,
                     queue,
@@ -456,6 +543,7 @@ impl Runtime {
         }
     }
     fn pause(&mut self) {
+        self.abandon_pending_reconfiguration();
         self.log.emit(
             Level::Info,
             "playback",
@@ -472,6 +560,7 @@ impl Runtime {
         self.checkpoint();
     }
     fn fail_active_transport(&mut self, error: &str) {
+        self.abandon_pending_reconfiguration();
         self.model.invalidate();
         self.playback.stop(self.model.generation);
         self.active_transport_generation = None;
@@ -1357,6 +1446,7 @@ fn run() -> Result<(), String> {
         action_depth: 0,
         action_before: None,
         action_dirty_before: None,
+        pending_reconfiguration: None,
         reconfiguration_attempted: false,
         sink_release_started: false,
         transition_generation: None,
@@ -1408,6 +1498,7 @@ fn run() -> Result<(), String> {
     while !reborn_platform::stop_requested() {
         log.heartbeat("ui", 10);
         rt.ui.expire_notice();
+        rt.poll_pending_reconfiguration();
         if let Some(input) = &mut inputs {
             for event in input.poll() {
                 if let Some((_, _, _, events)) = &mut monitor {
@@ -1683,6 +1774,7 @@ fn run() -> Result<(), String> {
             }
         }
         if bt_lost {
+            rt.abandon_pending_reconfiguration();
             if let AudioOutput::Bluetooth(address) = rt.model.output.clone() {
                 rt.model.apply(Event::BluetoothDisconnected(address));
             }
@@ -1705,7 +1797,13 @@ fn run() -> Result<(), String> {
         ) {
             TransportEpochState::Current => {}
             TransportEpochState::Changed => {
-                if let Err(error) = rt.with_model_action(|runtime| runtime.load()) {
+                if rt.pending_reconfiguration.is_some() {
+                    rt.fail_active_transport(
+                        "Bluetooth transport changed while a new sink was opening",
+                    );
+                    rt.ui.notice = "Bluetooth audio transport changed; playback stopped".into();
+                    rt.dirty.mark_render();
+                } else if let Err(error) = rt.with_model_action(|runtime| runtime.load()) {
                     rt.ui.notice = format!("Bluetooth audio transport changed: {error}");
                     rt.dirty.mark_render();
                 }
@@ -1869,6 +1967,7 @@ fn run() -> Result<(), String> {
                 last_sd = sd;
                 let sources = storage::sources(&rt.model.settings.music_directory);
                 if sources != rt.model.sources {
+                    rt.abandon_pending_reconfiguration();
                     let old = rt.model.sources.clone();
                     for s in &sources {
                         if !old.iter().any(|v| v.id == s.id) {

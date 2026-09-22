@@ -10,7 +10,7 @@ use std::{
     path::PathBuf,
     sync::{
         atomic::{AtomicU64, Ordering},
-        mpsc::{sync_channel, Receiver, RecvTimeoutError, SyncSender, TrySendError},
+        mpsc::{sync_channel, Receiver, RecvTimeoutError, SyncSender, TryRecvError, TrySendError},
         Arc, Mutex,
     },
     thread,
@@ -49,6 +49,11 @@ struct Job {
     generation: u64,
     id: u64,
     cancel: Cancel,
+}
+struct PendingStart {
+    opened: Receiver<Result<(), String>>,
+    job: Box<Job>,
+    deadline: Instant,
 }
 enum DecodeCommand {
     Load(Box<Job>),
@@ -93,6 +98,7 @@ pub struct Playback {
     event_sender: SyncSender<PlaybackEvent>,
     epoch: Arc<AtomicU64>,
     cancel: Option<Cancel>,
+    pending_start: Option<PendingStart>,
     sink_released: bool,
     state: Arc<Mutex<serde_json::Value>>,
     observer: Observer,
@@ -1064,6 +1070,10 @@ impl Playback {
                                 id,
                                 reply,
                             } => {
+                                if g != se.load(Ordering::Acquire) {
+                                    let _ = reply.try_send(Err("stale sink generation".into()));
+                                    continue;
+                                }
                                 sink = None;
                                 pending = None;
                                 generation = g;
@@ -1321,6 +1331,7 @@ impl Playback {
             event_sender,
             epoch,
             cancel: None,
+            pending_start: None,
             sink_released: true,
             state,
             observer: state_observer,
@@ -1357,7 +1368,20 @@ impl Playback {
         self.stop_and_wait(request.generation)?;
         self.start_with_gapless(request)
     }
+    #[cfg(test)]
     pub(crate) fn start_with_gapless(&mut self, request: LoadRequest) -> Result<(), String> {
+        self.begin_start_with_gapless(request)?;
+        loop {
+            if let Some(result) = self.poll_start() {
+                return result;
+            }
+            thread::sleep(Duration::from_millis(1));
+        }
+    }
+    pub(crate) fn begin_start_with_gapless(&mut self, request: LoadRequest) -> Result<(), String> {
+        if self.pending_start.is_some() {
+            return Err("audio sink open is already pending".into());
+        }
         let LoadRequest {
             track,
             entry_id,
@@ -1379,53 +1403,87 @@ impl Playback {
         let cancel = Cancel::new()?;
         let (reply, opened) = sync_channel(1);
         let deadline = Instant::now() + Duration::from_secs(2);
-        self.sink_released = false;
-        let opened_result = (|| {
-            send_before_deadline(
-                &self.sink,
-                SinkCommand::Open {
-                    generation,
-                    spec: spec.clone(),
-                    id,
-                    reply,
-                },
-                deadline,
-                "audio worker unavailable",
-                "audio open deadline exceeded",
-            )?;
-            let remaining = deadline.saturating_duration_since(Instant::now());
-            match opened.recv_timeout(remaining) {
-                Ok(result) => result,
-                Err(RecvTimeoutError::Timeout) => Err("audio open deadline exceeded".into()),
-                Err(RecvTimeoutError::Disconnected) => Err("audio worker unavailable".into()),
-            }
-        })();
-        if let Err(error) = opened_result {
-            cancel.cancel();
-            self.invalidate_start(generation);
-            return Err(error);
-        }
-        self.decode
-            .try_send(DecodeCommand::Load(Box::new(Job {
-                track,
-                entry_id,
-                queue,
-                queue_entry_ids,
-                spec,
-                dsp,
-                gapless_enabled,
-                position,
-                generation,
-                id,
-                cancel: cancel.clone(),
-            })))
-            .map_err(|_| {
+        let job = Box::new(Job {
+            track,
+            entry_id,
+            queue,
+            queue_entry_ids,
+            spec: spec.clone(),
+            dsp,
+            gapless_enabled,
+            position,
+            generation,
+            id,
+            cancel: cancel.clone(),
+        });
+        match self.sink.try_send(SinkCommand::Open {
+            generation,
+            spec,
+            id,
+            reply,
+        }) {
+            Ok(()) => {}
+            Err(TrySendError::Full(_)) => {
                 cancel.cancel();
-                self.invalidate_start(generation);
-                "playback command queue full".to_string()
-            })?;
+                return Err("audio worker busy".into());
+            }
+            Err(TrySendError::Disconnected(_)) => {
+                cancel.cancel();
+                return Err("audio worker unavailable".into());
+            }
+        }
+        self.sink_released = false;
         self.cancel = Some(cancel);
+        self.pending_start = Some(PendingStart {
+            opened,
+            job,
+            deadline,
+        });
         Ok(())
+    }
+    pub(crate) fn has_pending_start(&self) -> bool {
+        self.pending_start.is_some()
+    }
+    pub(crate) fn poll_start(&mut self) -> Option<Result<(), String>> {
+        let PendingStart {
+            opened,
+            job,
+            deadline,
+        } = self.pending_start.take()?;
+        let job = job;
+        let opened_result = match opened.try_recv() {
+            Ok(result) => result,
+            Err(TryRecvError::Empty) if Instant::now() < deadline => {
+                self.pending_start = Some(PendingStart {
+                    opened,
+                    job,
+                    deadline,
+                });
+                return None;
+            }
+            Err(TryRecvError::Empty) => Err("audio open deadline exceeded".into()),
+            Err(TryRecvError::Disconnected) => Err("audio worker unavailable".into()),
+        };
+        if let Err(error) = opened_result {
+            job.cancel.cancel();
+            self.cancel.take();
+            self.invalidate_start(job.generation);
+            return Some(Err(error));
+        }
+        let cancel = job.cancel.clone();
+        let generation = job.generation;
+        match self.decode.try_send(DecodeCommand::Load(job)) {
+            Ok(()) => {
+                self.cancel = Some(cancel);
+                Some(Ok(()))
+            }
+            Err(_) => {
+                cancel.cancel();
+                self.cancel.take();
+                self.invalidate_start(generation);
+                Some(Err("playback command queue full".into()))
+            }
+        }
     }
     fn invalidate_start(&mut self, generation: u64) {
         let invalidated = generation.wrapping_add(1);
@@ -1435,6 +1493,7 @@ impl Playback {
     }
     pub fn stop(&mut self, generation: u64) {
         self.epoch.store(generation, Ordering::Release);
+        self.pending_start.take();
         if let Some(c) = self.cancel.take() {
             c.cancel()
         }
@@ -1451,6 +1510,7 @@ impl Playback {
     ) -> Result<(), String> {
         let deadline = Instant::now() + timeout;
         self.epoch.store(generation, Ordering::Release);
+        self.pending_start.take();
         if let Some(c) = self.cancel.take() {
             c.cancel();
         }
@@ -1739,35 +1799,57 @@ mod tests {
         assert_eq!(output, input_samples);
     }
     #[test]
-    fn open_failure_is_synchronous_and_never_reports_started() {
+    fn async_open_failure_is_reported_without_waiting_or_starting_decode() {
         let root = std::env::temp_dir().join(format!(
             "reborn-open-failure-{}-{}",
             std::process::id(),
             Instant::now().elapsed().as_nanos()
         ));
         let log = Observer::new(&root).unwrap();
+        let (entered_tx, entered_rx) = sync_channel(1);
+        let (release_tx, release_rx) = sync_channel(1);
         let mut playback = Playback::with_sink(
             log,
             root,
-            Box::new(|_, _, _| Err("injected sink open failure".into())),
+            Box::new(move |_, _, _| {
+                let _ = entered_tx.try_send(());
+                let _ = release_rx.recv();
+                Err("injected sink open failure".into())
+            }),
         )
         .unwrap();
-
-        let error = playback
-            .load(
-                track(),
-                vec![],
-                0,
-                spec(AudioOutput::Wired, 44_100),
-                1,
-                DspConfig::with_volume(35),
-                1,
-            )
-            .unwrap_err();
-
+        playback.stop_and_wait(2).unwrap();
+        let started = Instant::now();
+        playback
+            .begin_start_with_gapless(LoadRequest {
+                track: track(),
+                entry_id: QueueEntryId(1),
+                queue: vec![],
+                queue_entry_ids: vec![],
+                position: 0,
+                spec: spec(AudioOutput::Wired, 44_100),
+                generation: 2,
+                dsp: DspConfig::with_volume(35),
+                gapless_enabled: true,
+                id: 1,
+            })
+            .unwrap();
+        assert!(started.elapsed() < Duration::from_millis(100));
+        assert!(entered_rx.recv_timeout(Duration::from_millis(100)).is_ok());
+        assert!(playback.has_pending_start());
+        assert!(playback.poll_start().is_none());
+        release_tx.try_send(()).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(1);
+        let error = loop {
+            if let Some(result) = playback.poll_start() {
+                break result.unwrap_err();
+            }
+            assert!(Instant::now() < deadline);
+            thread::sleep(Duration::from_millis(1));
+        };
         assert!(error.contains("injected sink open failure"));
         assert!(playback.events.try_recv().is_err());
-        playback.shutdown(2).unwrap();
+        playback.shutdown(3).unwrap();
     }
 
     #[test]
@@ -1790,6 +1872,7 @@ mod tests {
             event_sender,
             epoch: Arc::new(AtomicU64::new(0)),
             cancel: None,
+            pending_start: None,
             sink_released: false,
             state: Arc::new(Mutex::new(json!({}))),
             observer: log,
@@ -1820,6 +1903,7 @@ mod tests {
             event_sender,
             epoch: Arc::new(AtomicU64::new(0)),
             cancel: None,
+            pending_start: None,
             sink_released: false,
             state: Arc::new(Mutex::new(json!({}))),
             observer: log,
