@@ -321,7 +321,7 @@ force. No candidate exists yet.
   --locked` — 28 passed, 0 failed.
 - **Result:** Input loss cannot synthesize an activation-sensitive command;
   current key state remains unknown and therefore canceled until a fresh press.
-- **Commit:** pending.
+- **Commit:** `d592203` (`Cancel activation after input state loss`).
 - **Remaining limitation:** No current key-state ioctl resynchronization is
   attempted; loss of state requires a release then a new press before that key
   can activate. `SYN_DROPPED` behavior follows the [Linux kernel evdev event
@@ -330,7 +330,40 @@ force. No candidate exists yet.
 - **Evidence tier:** source inspection + deterministic event-stream tests +
   official Linux kernel documentation. No input device was opened on the Y2.
 
-## R9–R10
+## R9A — artwork occurrence and presentation order
 
-Results will be recorded separately as each correction is reviewed and
-committed. No status is claimed yet.
+**Status: FIXED**
+
+- **Finding and symptom:** Artwork used a separate event queue from playback
+  boundaries and only carried `TrackId`. The same track queued twice could
+  receive art before the second occurrence became current, then reject and
+  lose that art permanently.
+- **Current source confirmation:** The decoder sent artwork directly through
+  the UI event queue while audio boundaries crossed the sink stream; the UI
+  matched only generation and track ID.
+- **Implementation:** Artwork now travels through the bounded audio stream
+  after its authoritative boundary and uses the same playback event sender.
+  Events carry `QueueEntryId`; the UI accepts art only for the current queue
+  occurrence and clears presentation state at a boundary.
+- **Files changed:** `app/reborn/src/playback.rs`, `app/reborn/src/main.rs`.
+- **Tests added:** Duplicate `TrackId` occurrences reject next-entry art before
+  the boundary and accept it after; the playback event channel preserves
+  boundary-before-art order.
+- **Tests run:** `cargo test -p reborn --bin reborn --locked
+  artwork_presentation_tests`; `cargo test -p reborn --bin reborn --locked
+  boundary_event_precedes_its_queue_entry_artwork` — both passed.
+- **Result:** Queue occurrence, not only track identity, controls artwork
+  presentation timing.
+- **Commit:** pending.
+- **Remaining limitation:** Renderer/art decoding behavior has host evidence;
+  display presentation remains `PHYSICAL_QUALIFICATION_PENDING`.
+- **Evidence tier:** source inspection + targeted host runtime/event tests.
+
+## R9B — Bluetooth transport epoch and open contract
+
+Results will be recorded after the transport invalidation and ALSA-open
+contract tests are reviewed and committed.
+
+## R10 — build, version, and manifest truth
+
+Results will be recorded after packaging identity fixes and validation.

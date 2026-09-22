@@ -20,6 +20,7 @@ pub enum PlaybackEvent {
     Core(Event),
     Artwork {
         generation: u64,
+        entry_id: QueueEntryId,
         track_id: i64,
         bytes: Vec<u8>,
     },
@@ -74,6 +75,12 @@ enum Stream {
         next_track_id: Option<i64>,
         transition_ms: u64,
     },
+    Artwork {
+        generation: u64,
+        entry_id: QueueEntryId,
+        track_id: i64,
+        bytes: Vec<u8>,
+    },
     End {
         generation: u64,
     },
@@ -92,6 +99,20 @@ pub struct Playback {
 }
 fn emit(tx: &SyncSender<PlaybackEvent>, e: Event) {
     let _ = tx.send(PlaybackEvent::Core(e));
+}
+fn emit_artwork(
+    tx: &SyncSender<PlaybackEvent>,
+    generation: u64,
+    entry_id: QueueEntryId,
+    track_id: i64,
+    bytes: Vec<u8>,
+) {
+    let _ = tx.send(PlaybackEvent::Artwork {
+        generation,
+        entry_id,
+        track_id,
+        bytes,
+    });
 }
 fn send_before_deadline<T>(
     sender: &SyncSender<T>,
@@ -470,9 +491,7 @@ fn publish_artwork(
     cache: &std::path::Path,
     track: &Track,
     decoder: &mut Decoder,
-    generation: u64,
-    events: &SyncSender<PlaybackEvent>,
-) {
+) -> Option<Vec<u8>> {
     let _ = std::fs::create_dir_all(cache);
     if let Ok(entries) = std::fs::read_dir(cache) {
         let mut files = entries
@@ -522,11 +541,9 @@ fn publish_artwork(
         if cached.is_none() {
             let _ = reborn_core::atomic_write(&path, &bytes);
         }
-        let _ = events.try_send(PlaybackEvent::Artwork {
-            generation,
-            track_id: track.id,
-            bytes,
-        });
+        Some(bytes)
+    } else {
+        None
     }
 }
 pub(crate) type SinkFactory =
@@ -630,7 +647,22 @@ impl Playback {
                     if job.position > 0 {
                         decoder.seek(job.position)?;
                     }
-                    publish_artwork(&cache, &tracks[0], &mut decoder, job.generation, &det);
+                    if let Some(bytes) = publish_artwork(&cache, &tracks[0], &mut decoder) {
+                        send_stream_item(
+                            &pt,
+                            &db,
+                            &de,
+                            job.generation,
+                            Stream::Artwork {
+                                generation: job.generation,
+                                entry_id: job.entry_id,
+                                track_id: tracks[0].id,
+                                bytes,
+                            },
+                            0,
+                            &dl,
+                        )?;
+                    }
                     let overlap_frames = (u64::from(job.spec.rate)
                         * u64::from(job.dsp.crossfade_ms)
                         / 1000) as usize;
@@ -939,13 +971,24 @@ impl Playback {
                             0,
                             &dl,
                         )?;
-                        publish_artwork(
-                            &cache,
-                            &tracks[next_index],
-                            &mut next,
-                            job.generation,
-                            &det,
-                        );
+                        if let Some(bytes) =
+                            publish_artwork(&cache, &tracks[next_index], &mut next)
+                        {
+                            send_stream_item(
+                                &pt,
+                                &db,
+                                &de,
+                                job.generation,
+                                Stream::Artwork {
+                                    generation: job.generation,
+                                    entry_id: entry_ids[next_index],
+                                    track_id: tracks[next_index].id,
+                                    bytes,
+                                },
+                                0,
+                                &dl,
+                            )?;
+                        }
                         if let Some((candidate, following)) = open_next(next_index + 1) {
                             preopened_index = Some(candidate);
                             next_decoder = Some(following);
@@ -1120,6 +1163,17 @@ impl Playback {
                                     }
                                     pending = Some((block, 0));
                                 }
+                            }
+                            Ok(Stream::Artwork {
+                                generation: g,
+                                entry_id,
+                                track_id,
+                                bytes,
+                            }) if g == generation
+                                && g == se.load(Ordering::Acquire)
+                                && sink.is_some() =>
+                            {
+                                emit_artwork(&et, g, entry_id, track_id, bytes);
                             }
                             Ok(Stream::Boundary {
                                 generation: g,
@@ -1514,10 +1568,46 @@ mod tests {
             layout: "stereo".into(),
             device: "test".into(),
             codec: None,
+            transport_object: None,
+            transport_device: None,
+            transport: None,
+            mode: None,
             transport_generation: 0,
             fallback: false,
             fallback_reason: String::new(),
         }
+    }
+    #[test]
+    fn boundary_event_precedes_its_queue_entry_artwork() {
+        let (tx, rx) = sync_channel(4);
+        let entry_id = QueueEntryId(22);
+        emit(
+            &tx,
+            Event::TrackBoundary {
+                generation: 7,
+                next_entry_id: Some(entry_id),
+                next_track_id: Some(4),
+                output_position_ms: 0,
+            },
+        );
+        emit_artwork(&tx, 7, entry_id, 4, vec![1, 2, 3]);
+
+        assert!(matches!(
+            rx.recv().unwrap(),
+            PlaybackEvent::Core(Event::TrackBoundary {
+                next_entry_id: Some(id),
+                ..
+            }) if id == entry_id
+        ));
+        assert!(matches!(
+            rx.recv().unwrap(),
+            PlaybackEvent::Artwork {
+                entry_id: id,
+                track_id: 4,
+                bytes,
+                ..
+            } if id == entry_id && bytes == [1, 2, 3]
+        ));
     }
     fn indexed_pcm(first: usize, frames: usize, rate: u32) -> Pcm {
         let mut data = Vec::with_capacity(frames * 8);
