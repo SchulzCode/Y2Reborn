@@ -252,14 +252,46 @@ force. No candidate exists yet.
   playback::tests` — 13 passed, 0 failed.
 - **Result:** Every consumed input frame has an owner after a later read error;
   the old suffix and next prefix remain ordered and sink writes stay bounded.
-- **Commit:** pending.
+- **Commit:** `48ddaaa` (`Preserve crossfade input after read errors`).
 - **Remaining limitation:** Fault injection exercises the real window assembly
   and stream chunker with deterministic PCM; physical 5/10/15-second playback
   remains `PHYSICAL_QUALIFICATION_PENDING`.
 - **Evidence tier:** source inspection + runtime helper fault injection + host
   playback tests. No physical output was used.
 
-## R7–R10
+## R7 — filtered single-track context actions
+
+**Status: FIXED**
+
+- **Finding and symptom:** In a filtered view, context-menu Play could start the
+  selected track plus the rest of the filtered collection, while Play Next and
+  Add to Queue enqueued every filter match.
+- **Current source confirmation:** The context handler routed Play through the
+  collection-aware `play_effect()` and special-cased filtered queue actions to
+  `PlayNextCollection`/`AddToQueueCollection`.
+- **Implementation:** Context rows are resolved against the focused source row.
+  A `track:*` row exposes single-track actions; Play emits `Play(index)`, and
+  Play Next/Add emit their single-index effects regardless of active album,
+  artist, or folder filter. Explicit Album collection rows still emit
+  collection effects. Album/artist collection context actions retain their
+  collection semantics.
+- **Files changed:** `crates/reborn-ui/src/lib.rs`,
+  `crates/reborn-ui/src/screens.rs`.
+- **Tests added:** Album screen, artist screen, and folder-filtered tracks each
+  select the second matching track and verify Play, Play Next, and Add affect
+  only that track. Explicit album Play, Play Next, and Add continue to target
+  both album members.
+- **Tests run:** `cargo fmt --all`; `cargo test -p reborn-ui --locked` — 12
+  passed, 0 failed.
+- **Result:** Context action intent stays on the selected queue candidate while
+  explicit collection actions remain collection-wide.
+- **Commit:** pending.
+- **Remaining limitation:** Verification is at the UI Action/Effect boundary;
+  actual queue mutation and physical button interaction remain
+  `PHYSICAL_QUALIFICATION_PENDING`.
+- **Evidence tier:** source inspection + host UI action tests.
+
+## R8–R10
 
 Results will be recorded separately as each correction is reviewed and
 committed. No status is claimed yet.

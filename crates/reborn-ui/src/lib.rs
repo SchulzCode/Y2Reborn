@@ -496,7 +496,33 @@ impl Ui {
         }
     }
 
-    fn context_rows(&self, m: &AppModel) -> Vec<Item> {
+    fn context_rows(&self, m: &AppModel, tracks: &[Track]) -> Vec<Item> {
+        let selected_key = m.navigation.context_target.and_then(|target| {
+            self.rows(m, tracks)
+                .get(target)
+                .map(|item| item.key.clone())
+        });
+        if selected_key
+            .as_deref()
+            .is_some_and(|key| key.starts_with("track:"))
+        {
+            return vec![
+                Item::new("Play", "play"),
+                Item::new("Play Next", "play_next"),
+                Item::new("Add to Queue", "add_queue"),
+                Item::new("Go to Album", "go_album"),
+                Item::new("Go to Artist", "go_artist"),
+                Item::new("Track Information", "track_info"),
+            ];
+        }
+        if m.screen == Screen::Artist && selected_key.as_deref() == Some("play:collection") {
+            return vec![
+                Item::new("Play Artist", "artist_play"),
+                Item::new("Shuffle Artist", "artist_shuffle"),
+                Item::new("Play Next", "artist_next"),
+                Item::new("Add to Queue", "artist_queue"),
+            ];
+        }
         match m.screen {
             Screen::Album => vec![
                 Item::new("Play Album", "album_play"),
@@ -554,9 +580,9 @@ impl Ui {
         }
     }
 
-    fn modal_rows(&self, m: &AppModel) -> Vec<Item> {
+    fn modal_rows(&self, m: &AppModel, tracks: &[Track]) -> Vec<Item> {
         match m.navigation.modal {
-            Some(Modal::ContextMenu) => self.context_rows(m),
+            Some(Modal::ContextMenu) => self.context_rows(m, tracks),
             Some(Modal::PowerMenu) => vec![
                 Item::new("Power Off", "power_off"),
                 Item::new("Reboot", "reboot"),
@@ -570,8 +596,8 @@ impl Ui {
         }
     }
 
-    pub(crate) fn modal_rows_public(&self, m: &AppModel) -> Vec<Item> {
-        self.modal_rows(m)
+    pub(crate) fn modal_rows_public(&self, m: &AppModel, tracks: &[Track]) -> Vec<Item> {
+        self.modal_rows(m, tracks)
     }
 
     pub(crate) fn modal_copy(&self, m: &AppModel) -> (&'static str, &'static str) {
@@ -647,7 +673,7 @@ impl Ui {
                     let rows = self.rows(m, tracks);
                     if rows.get(m.navigation.focus).is_some_and(|row| row.enabled) {
                         m.navigation.context_target = Some(m.navigation.focus);
-                        if !self.context_rows(m).is_empty() {
+                        if !self.context_rows(m, tracks).is_empty() {
                             m.navigation.modal = Some(Modal::ContextMenu);
                             m.navigation.modal_focus = 0;
                         } else {
@@ -694,7 +720,7 @@ impl Ui {
 
     fn move_focus(&mut self, m: &mut AppModel, tracks: &[Track], delta: i32) {
         let rows = if m.navigation.modal.is_some() {
-            self.modal_rows(m)
+            self.modal_rows(m, tracks)
         } else {
             self.rows(m, tracks)
         };
@@ -1010,7 +1036,7 @@ impl Ui {
     }
 
     fn modal_action(&mut self, m: &mut AppModel, tracks: &[Track]) -> Effect {
-        let rows = self.modal_rows(m);
+        let rows = self.modal_rows(m, tracks);
         let Some(row) = rows.get(m.navigation.modal_focus) else {
             return Effect::None;
         };
@@ -1098,23 +1124,25 @@ impl Ui {
                 m.navigation.modal = None;
                 m.navigation.context_target = None;
                 match menu_key.as_str() {
-                    "play" => track_index
-                        .map(|index| self.play_effect(m, tracks, index, false))
-                        .unwrap_or(Effect::None),
-                    "play_next" if !m.navigation.filter.is_empty() => {
+                    "play" => track_index.map(Effect::Play).unwrap_or(Effect::None),
+                    "play_next" => track_index.map(Effect::PlayNext).unwrap_or(Effect::None),
+                    "add_queue" => track_index.map(Effect::AddToQueue).unwrap_or(Effect::None),
+                    "album_play" => self.play_first_filtered(m, tracks),
+                    "album_shuffle" => self.play_first_filtered_shuffled(m, tracks),
+                    "album_next" | "artist_next" => {
                         let members = self.filtered_indices(m, tracks);
                         (!members.is_empty())
                             .then_some(Effect::PlayNextCollection(members))
                             .unwrap_or(Effect::None)
                     }
-                    "play_next" => track_index.map(Effect::PlayNext).unwrap_or(Effect::None),
-                    "add_queue" if !m.navigation.filter.is_empty() => {
+                    "album_queue" | "artist_queue" => {
                         let members = self.filtered_indices(m, tracks);
                         (!members.is_empty())
                             .then_some(Effect::AddToQueueCollection(members))
                             .unwrap_or(Effect::None)
                     }
-                    "add_queue" => track_index.map(Effect::AddToQueue).unwrap_or(Effect::None),
+                    "artist_play" => self.play_first_filtered(m, tracks),
+                    "artist_shuffle" => self.play_first_filtered_shuffled(m, tracks),
                     "go_album" => {
                         if let Some(index) = track_index.and_then(|i| tracks.get(i)) {
                             Self::go(m, Screen::Album, album_filter(index));
@@ -1419,6 +1447,105 @@ mod tests {
         assert_eq!(app.navigation.modal, Some(Modal::ContextMenu));
         ui.action(&mut app, &[], Action::Back);
         assert_eq!(app.navigation.modal, None);
+    }
+    #[test]
+    fn filtered_track_context_actions_stay_on_the_selected_track() {
+        let other = Track {
+            id: 0,
+            path: PathBuf::from("/other/elsewhere.flac"),
+            artist: "Other Artist".into(),
+            album: "Other Album".into(),
+            ..preview_track()
+        };
+        let first = Track {
+            id: 1,
+            path: PathBuf::from("/data/music/selected/first.flac"),
+            artist: "Northark".into(),
+            album: "Echoes".into(),
+            ..preview_track()
+        };
+        let selected = Track {
+            id: 2,
+            path: PathBuf::from("/data/music/selected/selected.flac"),
+            artist: "Northark".into(),
+            album: "Echoes".into(),
+            ..preview_track()
+        };
+        let tracks = vec![other, first, selected];
+        let cases = [
+            (Screen::Album, "album:Echoes", 5),
+            (Screen::Artist, "artist:Northark", 2),
+            (Screen::Tracks, "folder:/data/music/selected", 1),
+        ];
+
+        for (screen, filter, selected_row) in cases {
+            for (menu_row, expected) in [
+                (0, Effect::Play(2)),
+                (1, Effect::PlayNext(2)),
+                (2, Effect::AddToQueue(2)),
+            ] {
+                let mut ui = Ui::default();
+                let mut app = model(screen);
+                app.navigation.filter = filter.into();
+                app.navigation.focus = selected_row;
+                assert_eq!(
+                    ui.action(&mut app, &tracks, Action::ContextMenu),
+                    Effect::None
+                );
+                assert_eq!(app.navigation.modal, Some(Modal::ContextMenu));
+                let labels = ui
+                    .modal_rows_public(&app, &tracks)
+                    .into_iter()
+                    .map(|item| item.label)
+                    .take(3)
+                    .collect::<Vec<_>>();
+                assert_eq!(labels, vec!["Play", "Play Next", "Add to Queue"]);
+                app.navigation.modal_focus = menu_row;
+
+                assert_eq!(ui.action(&mut app, &tracks, Action::Select), expected);
+                assert_eq!(app.navigation.modal, None);
+            }
+        }
+    }
+
+    #[test]
+    fn album_collection_actions_remain_collection_wide() {
+        let tracks = vec![
+            Track {
+                id: 0,
+                album: "Other Album".into(),
+                ..preview_track()
+            },
+            Track {
+                id: 1,
+                album: "Echoes".into(),
+                ..preview_track()
+            },
+            Track {
+                id: 2,
+                album: "Echoes".into(),
+                ..preview_track()
+            },
+        ];
+        for (row, expected) in [
+            (
+                0,
+                Effect::PlayCollection {
+                    selected: 1,
+                    members: vec![1, 2],
+                    shuffle: false,
+                },
+            ),
+            (2, Effect::PlayNextCollection(vec![1, 2])),
+            (3, Effect::AddToQueueCollection(vec![1, 2])),
+        ] {
+            let mut ui = Ui::default();
+            let mut app = model(Screen::Album);
+            app.navigation.filter = "album:Echoes".into();
+            app.navigation.focus = row;
+
+            assert_eq!(ui.action(&mut app, &tracks, Action::Select), expected);
+        }
     }
     #[test]
     fn destructive_actions_default_to_cancel() {

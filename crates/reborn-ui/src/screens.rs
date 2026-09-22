@@ -71,7 +71,7 @@ pub fn draw(
     }
     if m.navigation.modal.is_some() {
         c.clear_focus_marks();
-        draw_modal(&mut c, ui, m);
+        draw_modal(&mut c, ui, m, tracks);
     }
     if shows_mini_player(m.screen) {
         components::bottom_info(&mut c, m, has_art);
@@ -1295,8 +1295,8 @@ fn draw_audio_information(c: &mut Canvas, m: &AppModel) {
     );
 }
 
-fn draw_modal(c: &mut Canvas, ui: &Ui, m: &AppModel) {
-    let rows = ui.modal_rows_public(m);
+fn draw_modal(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track]) {
+    let rows = ui.modal_rows_public(m, tracks);
     let (title, body) = ui.modal_copy(m);
     components::dialog(c, title, body, &rows, m.navigation.modal_focus);
 }
