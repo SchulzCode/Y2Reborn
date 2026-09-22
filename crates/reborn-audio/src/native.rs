@@ -22,6 +22,8 @@ struct RawParams {
 unsafe extern "C" {
     fn rb_alsa_logging(callback: extern "C" fn(*const c_char));
     fn rb_alsa_error(e: c_int) -> *const c_char;
+    fn rb_alsa_format_info(format: u32, valid_bits: *mut c_int, physical_bits: *mut c_int)
+        -> c_int;
     fn rb_wired_device(p: *mut c_char, n: c_int) -> c_int;
     fn rb_alsa_plan(
         name: *const c_char,
@@ -69,19 +71,39 @@ fn native_format(format: PcmFormat) -> u32 {
         PcmFormat::S32LE => 2,
     }
 }
-fn format(value: u32) -> PcmFormat {
+fn format(value: u32) -> Result<PcmFormat, String> {
     match value {
-        1 => PcmFormat::S16LE,
-        3 => PcmFormat::S24LE,
-        _ => PcmFormat::S32LE,
+        1 => Ok(PcmFormat::S16LE),
+        2 => Ok(PcmFormat::S32LE),
+        3 => Ok(PcmFormat::S24LE),
+        _ => Err(format!("unsupported ALSA format code {value}")),
     }
 }
-fn parameters(raw: &RawParams, planned: Option<&SinkSpec>) -> Parameters {
-    Parameters {
+fn format_contract(value: u32) -> Result<PcmFormat, String> {
+    let format = format(value)?;
+    let mut valid_bits = 0;
+    let mut physical_bits = 0;
+    // SAFETY: ALSA writes two integers through live pointers.
+    let result = unsafe { rb_alsa_format_info(value, &mut valid_bits, &mut physical_bits) };
+    if result < 0 {
+        return Err(error(result));
+    }
+    if valid_bits != i32::from(format.valid_bits())
+        || physical_bits != i32::from(format.physical_bits())
+    {
+        return Err(format!(
+            "ALSA format {} reports {valid_bits} valid bits in {physical_bits} physical bits",
+            format.as_str()
+        ));
+    }
+    Ok(format)
+}
+fn parameters(raw: &RawParams, planned: Option<&SinkSpec>) -> Result<Parameters, String> {
+    Ok(Parameters {
         rate: raw.rate,
         period: raw.period,
         buffer: raw.buffer,
-        format: format(raw.format),
+        format: format_contract(raw.format)?,
         channels: raw.channels,
         hardware_mixer_gain_db: (raw.hardware_mixer_gain_cdb != i32::MIN)
             .then_some(raw.hardware_mixer_gain_cdb as f32 / 100.0),
@@ -91,7 +113,7 @@ fn parameters(raw: &RawParams, planned: Option<&SinkSpec>) -> Parameters {
             .map(|s| s.fallback_reason.clone())
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| text(&raw.fallback_reason)),
-    }
+    })
 }
 pub fn wired_device() -> Result<String, String> {
     let mut b = [0; 128];
@@ -208,7 +230,7 @@ impl AlsaSink {
             );
             return Err(error(r));
         }
-        let actual = format(raw.format);
+        let actual = format_contract(raw.format)?;
         if strict_format && actual != preferred {
             return Err(format!(
                 "ALSA sink changed observed Bluetooth PCM format from {} to {}",
@@ -230,7 +252,7 @@ impl AlsaSink {
             fallback: raw.fallback != 0,
             fallback_reason: text(&raw.fallback_reason),
         };
-        let params = parameters(&raw, Some(&spec));
+        let params = parameters(&raw, Some(&spec))?;
         if spec.fallback {
             log.emit(
                 Level::Warn,
@@ -301,7 +323,7 @@ impl AlsaSink {
             );
             return Err(error(r));
         }
-        let params = parameters(&p, planned);
+        let params = parameters(&p, planned)?;
         log.emit(
             Level::Info,
             "alsa",
@@ -415,5 +437,38 @@ pub fn initialize_logging(log: Observer) {
     if LOGGER.set(log).is_ok() {
         // SAFETY: callback has process lifetime and is registered once.
         unsafe { rb_alsa_logging(alsa_log) }
+    }
+}
+
+#[cfg(test)]
+mod format_tests {
+    use super::*;
+
+    #[test]
+    fn s24_code_maps_to_alsa_24_valid_bits_in_a_32_bit_container() {
+        let mut valid_bits = 0;
+        let mut physical_bits = 0;
+        let result = unsafe {
+            rb_alsa_format_info(
+                native_format(PcmFormat::S24LE),
+                &mut valid_bits,
+                &mut physical_bits,
+            )
+        };
+
+        assert_eq!(result, 0);
+        assert_eq!(valid_bits, 24);
+        assert_eq!(physical_bits, 32);
+        assert_eq!(PcmFormat::S24LE.bytes_per_frame(), 8);
+        assert_eq!(format_contract(3).unwrap(), PcmFormat::S24LE);
+    }
+
+    #[test]
+    fn unknown_native_format_is_rejected() {
+        assert!(format(4).is_err());
+        assert!(format_contract(4).is_err());
+        let mut valid_bits = 0;
+        let mut physical_bits = 0;
+        assert!(unsafe { rb_alsa_format_info(4, &mut valid_bits, &mut physical_bits) } < 0);
     }
 }

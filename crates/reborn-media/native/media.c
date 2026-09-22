@@ -128,7 +128,7 @@ typedef struct {
   SwrContext *output_swr;
   RbCancel *cancel;
   RbDspConfig dsp;
-  int stream, output_rate, output_bytes;
+  int stream, output_rate, output_bytes, output_format;
   enum AVSampleFormat output_fmt;
   int decoder_eof, source_eof, source_null_sent, filter_eof, output_drained;
   int first_frame;
@@ -198,7 +198,51 @@ static void text(char *dst, size_t n, const char *src) {
   snprintf(dst, n, "%s", src ? src : "");
 }
 static enum AVSampleFormat format_from_int(int format) {
-  return format == 2 ? AV_SAMPLE_FMT_S32 : AV_SAMPLE_FMT_S16;
+  switch (format) {
+  case 1:
+    return AV_SAMPLE_FMT_S16;
+  case 2:
+  case 3: /* S24_LE is packed into the low three bytes of an S32 container. */
+    return AV_SAMPLE_FMT_S32;
+  default:
+    return AV_SAMPLE_FMT_NONE;
+  }
+}
+
+static uint32_t read_s24le(const uint8_t *p) {
+  return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16);
+}
+
+static void normalize_s24le(const uint8_t *input, uint8_t *output,
+                            size_t samples) {
+  for (size_t i = 0; i < samples; i++) {
+    memcpy(output + i * 4, input + i * 4, 3);
+    output[i * 4 + 3] = 0;
+  }
+}
+
+static void unpack_s24le_to_s32(const uint8_t *input, uint8_t *output,
+                                size_t samples) {
+  for (size_t i = 0; i < samples; i++) {
+    uint32_t value = read_s24le(input + i * 4);
+    if (value & 0x00800000u)
+      value |= 0xff000000u;
+    uint32_t q31 = value << 8;
+    memcpy(output + i * 4, &q31, sizeof(q31));
+  }
+}
+
+static void pack_s32_to_s24le(const uint8_t *input, uint8_t *output,
+                              size_t samples) {
+  for (size_t i = 0; i < samples; i++) {
+    uint32_t q31;
+    memcpy(&q31, input + i * 4, sizeof(q31));
+    uint32_t value = q31 >> 8;
+    output[i * 4] = (uint8_t)value;
+    output[i * 4 + 1] = (uint8_t)(value >> 8);
+    output[i * 4 + 2] = (uint8_t)(value >> 16);
+    output[i * 4 + 3] = 0; /* ALSA's S24_LE padding byte. */
+  }
 }
 
 /* Final sink conversion is kept here with the media membrane.  Playback may
@@ -211,12 +255,36 @@ int rb_media_convert(const uint8_t *input, int frames, int rate, int input_forma
       (input_format != 1 && input_format != 2 && input_format != 3) ||
       (output_format != 1 && output_format != 2 && output_format != 3))
     return AVERROR(EINVAL);
+  if ((size_t)frames > SIZE_MAX / (2 * sizeof(int32_t)))
+    return AVERROR(EINVAL);
+  size_t samples = (size_t)frames * 2;
   enum AVSampleFormat in_fmt = format_from_int(input_format);
   enum AVSampleFormat out_fmt = format_from_int(output_format);
-  if (in_fmt == out_fmt) {
-    size_t bytes = (size_t)frames * 2 * av_get_bytes_per_sample(in_fmt);
-    memcpy(output, input, bytes);
+  if (input_format == output_format) {
+    if (input_format == 3)
+      normalize_s24le(input, output, samples);
+    else
+      memcpy(output, input, samples * (size_t)av_get_bytes_per_sample(in_fmt));
     return frames;
+  }
+  uint8_t *normalized_input = NULL;
+  uint8_t *converted_output = NULL;
+  const uint8_t *swr_input = input;
+  uint8_t *swr_destination = output;
+  if (input_format == 3) {
+    normalized_input = av_malloc_array(samples, sizeof(int32_t));
+    if (!normalized_input)
+      return AVERROR(ENOMEM);
+    unpack_s24le_to_s32(input, normalized_input, samples);
+    swr_input = normalized_input;
+  }
+  if (output_format == 3) {
+    converted_output = av_malloc_array(samples, sizeof(int32_t));
+    if (!converted_output) {
+      av_free(normalized_input);
+      return AVERROR(ENOMEM);
+    }
+    swr_destination = converted_output;
   }
   AVChannelLayout stereo = AV_CHANNEL_LAYOUT_STEREO;
   SwrContext *swr = NULL;
@@ -224,12 +292,17 @@ int rb_media_convert(const uint8_t *input, int frames, int rate, int input_forma
                               rate, 0, NULL);
   if (r < 0 || (r = swr_init(swr)) < 0) {
     swr_free(&swr);
+    av_free(normalized_input);
+    av_free(converted_output);
     return r < 0 ? r : AVERROR(EINVAL);
   }
-  uint8_t *in[] = {(uint8_t *)input};
-  uint8_t *out[] = {output};
-  r = swr_convert(swr, out, capacity_frames, (const uint8_t **)in, frames);
+  uint8_t *out[] = {swr_destination};
+  r = swr_convert(swr, out, capacity_frames, &swr_input, frames);
   swr_free(&swr);
+  if (r >= 0 && output_format == 3)
+    pack_s32_to_s24le(converted_output, output, (size_t)r * 2);
+  av_free(normalized_input);
+  av_free(converted_output);
   return r < 0 ? r : r;
 }
 
@@ -254,13 +327,28 @@ static int crossfade_frame(const uint8_t *input, int frames, int rate,
   }
   if (r >= 0 && new_swr)
     r = swr_init(*to_float);
+  uint8_t *normalized_input = NULL;
+  const uint8_t *swr_input = input;
+  if (r >= 0 && input_format == 3) {
+    if ((size_t)frames > SIZE_MAX / (2 * sizeof(int32_t))) {
+      r = AVERROR(EINVAL);
+    } else {
+      normalized_input = av_malloc_array((size_t)frames * 2, sizeof(int32_t));
+      if (!normalized_input)
+        r = AVERROR(ENOMEM);
+      else {
+        unpack_s24le_to_s32(input, normalized_input, (size_t)frames * 2);
+        swr_input = normalized_input;
+      }
+    }
+  }
   if (r >= 0) {
-    uint8_t *in[] = {(uint8_t *)input};
     r = swr_convert(*to_float, frame->extended_data, frames,
-                    (const uint8_t **)in, frames);
+                    &swr_input, frames);
     if (r >= 0 && r != frames)
       r = AVERROR(EINVAL);
   }
+  av_free(normalized_input);
   if (r < 0) {
     av_frame_free(&frame);
     return r;
@@ -357,17 +445,47 @@ int rb_media_crossfade(const uint8_t *a, const uint8_t *b, int frames, int rate,
       r = AVERROR(ENOSPC);
       goto done;
     }
-    uint8_t *out[] = {output + (size_t)*written_frames *
-                               2 * av_get_bytes_per_sample(format)};
+    int sample_bytes = av_get_bytes_per_sample(format_from_int(format));
+    if (sample_bytes <= 0) {
+      av_frame_free(&filtered);
+      filtered = NULL;
+      r = AVERROR(EINVAL);
+      goto done;
+    }
+    size_t room_samples = (size_t)room * 2;
+    uint8_t *temporary_output = NULL;
+    uint8_t *destination = output + (size_t)*written_frames * 2 * sample_bytes;
+    if (format == 3) {
+      if (room_samples > SIZE_MAX / sizeof(int32_t)) {
+        av_frame_free(&filtered);
+        filtered = NULL;
+        r = AVERROR(EINVAL);
+        goto done;
+      }
+      temporary_output = av_malloc_array(room_samples, sizeof(int32_t));
+      if (!temporary_output) {
+        av_frame_free(&filtered);
+        filtered = NULL;
+        r = AVERROR(ENOMEM);
+        goto done;
+      }
+      destination = temporary_output;
+    }
+    uint8_t *out[] = {destination};
     int n = swr_convert(from_float, out, room,
                         (const uint8_t **)filtered->extended_data,
                         filtered->nb_samples);
     av_frame_free(&filtered);
     filtered = NULL;
     if (n < 0) {
+      av_free(temporary_output);
       r = n;
       goto done;
     }
+    if (format == 3)
+      pack_s32_to_s24le(temporary_output, output + (size_t)*written_frames * 8,
+                        (size_t)n * 2);
+    av_free(temporary_output);
     *written_frames += n;
   }
 done:
@@ -381,6 +499,8 @@ done:
 }
 
 static int append_pending(RbMedia *m, const uint8_t *data, size_t frames) {
+  if (frames > SIZE_MAX / (size_t)m->output_bytes)
+    return AVERROR(EINVAL);
   size_t bytes = frames * (size_t)m->output_bytes;
   size_t available = m->pending_frames - m->pending_offset;
   if (m->pending_offset && available)
@@ -404,7 +524,11 @@ static int append_pending(RbMedia *m, const uint8_t *data, size_t frames) {
     m->pending = next;
     m->pending_capacity = cap;
   }
-  memcpy(m->pending + m->pending_frames * m->output_bytes, data, bytes);
+  uint8_t *destination = m->pending + m->pending_frames * m->output_bytes;
+  if (m->output_format == 3)
+    pack_s32_to_s24le(data, destination, frames * 2);
+  else
+    memcpy(destination, data, bytes);
   m->pending_frames += frames;
   return 0;
 }
@@ -763,13 +887,14 @@ int rb_media_open(const char *path, int rate, int output_format,
   if (m->dsp.volume > 100)
     m->dsp.volume = 100;
   m->output_rate = rate;
-  m->output_fmt = format_from_int(output_format);
-  m->output_bytes = av_get_bytes_per_sample(m->output_fmt) * 2;
   if (rate < 8000 || rate > 384000 ||
       (output_format != 1 && output_format != 2 && output_format != 3)) {
     ret = AVERROR(EINVAL);
     goto fail;
   }
+  m->output_format = output_format;
+  m->output_fmt = format_from_int(output_format);
+  m->output_bytes = av_get_bytes_per_sample(m->output_fmt) * 2;
   deadline(cancel);
   m->f = avformat_alloc_context();
   if (!m->f)
@@ -843,7 +968,8 @@ int rb_media_open(const char *path, int rate, int output_format,
        av_get_sample_fmt_name(m->c->sample_fmt));
   text(meta->internal_sample_fmt, sizeof(meta->internal_sample_fmt), "fltp");
   text(meta->final_sample_fmt, sizeof(meta->final_sample_fmt),
-       av_get_sample_fmt_name(m->output_fmt));
+       output_format == 3 ? "s24le-in-32"
+                          : av_get_sample_fmt_name(m->output_fmt));
   text(meta->filters, sizeof(meta->filters), m->filter_description);
   meta->track = strtoul(tag(m, "track"), NULL, 10);
   meta->disc = strtoul(tag(m, "disc"), NULL, 10);

@@ -864,15 +864,158 @@ mod tests {
             i16::MAX
         );
         assert_eq!(i16::from_le_bytes(output[8..10].try_into().unwrap()), 0);
-        let s24 = convert_pcm(
-            &vec![0; 4 * PcmFormat::S32LE.bytes_per_frame()],
-            48_000,
-            PcmFormat::S32LE,
-            PcmFormat::S24LE,
-        )
-        .unwrap();
-        assert_eq!(s24.len(), 4 * PcmFormat::S24LE.bytes_per_frame());
-        assert!(s24.iter().all(|sample| *sample == 0));
+    }
+    #[test]
+    fn s32_to_s24_writes_signed_low_24_bits_in_four_byte_words() {
+        let values = [
+            0,
+            0,
+            0,
+            0, // +0 and -0 both have the all-zero representation.
+            256,
+            -256,
+            0x4000_0000,
+            -0x4000_0000,
+            i32::MAX,
+            i32::MIN,
+        ];
+        let input = values
+            .iter()
+            .flat_map(|value| value.to_le_bytes())
+            .collect::<Vec<_>>();
+
+        let output = convert_pcm(&input, 48_000, PcmFormat::S32LE, PcmFormat::S24LE).unwrap();
+
+        let expected: [[u8; 4]; 10] = [
+            [0x00, 0x00, 0x00, 0x00],
+            [0x00, 0x00, 0x00, 0x00],
+            [0x00, 0x00, 0x00, 0x00],
+            [0x00, 0x00, 0x00, 0x00],
+            [0x01, 0x00, 0x00, 0x00],
+            [0xff, 0xff, 0xff, 0x00],
+            [0x00, 0x00, 0x40, 0x00],
+            [0x00, 0x00, 0xc0, 0x00],
+            [0xff, 0xff, 0x7f, 0x00],
+            [0x00, 0x00, 0x80, 0x00],
+        ];
+        let expected = expected.into_iter().flatten().collect::<Vec<_>>();
+        assert_eq!(output.len(), 5 * PcmFormat::S24LE.bytes_per_frame());
+        assert_eq!(output, expected);
+    }
+    #[test]
+    fn s24_input_is_sign_extended_to_q31_for_internal_conversion() {
+        let values = [
+            1u32,
+            0x00ff_ffff,
+            0x0040_0000,
+            0x00c0_0000,
+            0x007f_ffff,
+            0x0080_0000,
+        ];
+        let mut input = Vec::new();
+        for value in values {
+            input.extend_from_slice(&[
+                value as u8,
+                (value >> 8) as u8,
+                (value >> 16) as u8,
+                0xa5, // Padding is ignored on input.
+            ]);
+        }
+
+        let output = convert_pcm(&input, 48_000, PcmFormat::S24LE, PcmFormat::S32LE).unwrap();
+        let samples = output
+            .chunks_exact(4)
+            .map(|word| i32::from_le_bytes(word.try_into().unwrap()))
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            samples,
+            [
+                256,
+                -256,
+                0x4000_0000,
+                -0x4000_0000,
+                2_147_483_392,
+                i32::MIN
+            ]
+        );
+        assert_eq!(output.len(), 3 * PcmFormat::S32LE.bytes_per_frame());
+    }
+    #[test]
+    fn s24_crossfade_unpacks_and_repacks_24_valid_bits() {
+        fn input(frames: usize, left: u32, right: u32) -> Vec<u8> {
+            let mut bytes = Vec::with_capacity(frames * PcmFormat::S24LE.bytes_per_frame());
+            for _ in 0..frames {
+                for value in [left, right] {
+                    bytes.extend_from_slice(&[
+                        value as u8,
+                        (value >> 8) as u8,
+                        (value >> 16) as u8,
+                        0,
+                    ]);
+                }
+            }
+            bytes
+        }
+
+        let frames = 16;
+        let first = input(frames, 0x0040_0000, 0x00c0_0000);
+        let next = input(frames, 0x0020_0000, 0x00e0_0000);
+        let output = crossfade_pcm(&first, &next, frames, 48_000, PcmFormat::S24LE).unwrap();
+
+        assert_eq!(output.len(), frames * PcmFormat::S24LE.bytes_per_frame());
+        assert!(output
+            .chunks_exact(4)
+            .any(|sample| sample[..3] != [0, 0, 0]));
+        assert!(output.chunks_exact(4).all(|sample| sample[3] == 0));
+    }
+    #[test]
+    fn decoded_fltp_to_s24_matches_q31_top_bits_and_exact_frame_count() {
+        fn decode(format: PcmFormat) -> Vec<u8> {
+            let mut decoder = Decoder::open_with(
+                &fixture("tone.flac"),
+                OutputSpec {
+                    rate: 44_100,
+                    format,
+                },
+                DspConfig::with_volume(100),
+                Cancel::new().unwrap(),
+            )
+            .unwrap();
+            let mut pcm = Vec::new();
+            while let Some(block) = decoder.read().unwrap() {
+                pcm.extend_from_slice(&block.data);
+            }
+            if format == PcmFormat::S24LE {
+                assert_eq!(decoder.metadata.final_sample_fmt, "s24le-in-32");
+            }
+            pcm
+        }
+
+        let s32 = decode(PcmFormat::S32LE);
+        let s24 = decode(PcmFormat::S24LE);
+        assert_eq!(s32.len() % PcmFormat::S32LE.bytes_per_frame(), 0);
+        assert_eq!(s24.len() % PcmFormat::S24LE.bytes_per_frame(), 0);
+        assert_eq!(s24.len(), s32.len());
+        assert!(s32.chunks_exact(4).any(|sample| sample != [0, 0, 0, 0]));
+
+        for (source, destination) in s32.chunks_exact(4).zip(s24.chunks_exact(4)) {
+            let q31 = u32::from_le_bytes(source.try_into().unwrap());
+            let value = q31 >> 8;
+            assert_eq!(
+                destination,
+                [value as u8, (value >> 8) as u8, (value >> 16) as u8, 0]
+            );
+        }
+    }
+    #[test]
+    fn unsupported_native_sample_format_fails_closed() {
+        let api = api().unwrap();
+        let input = [0u8; 8];
+        let mut output = [0u8; 8];
+        let result =
+            unsafe { (api.convert)(input.as_ptr(), 1, 48_000, 4, 3, output.as_mut_ptr(), 1) };
+        assert!(result < 0);
     }
     #[test]
     fn malformed_is_error() {

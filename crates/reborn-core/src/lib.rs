@@ -50,6 +50,8 @@ pub enum AudioOutput {
 pub enum PcmFormat {
     #[serde(rename = "S16_LE")]
     S16LE,
+    /// Signed 24-bit PCM in the low three bytes of a 32-bit little-endian
+    /// container, matching ALSA `SND_PCM_FORMAT_S24_LE` (not packed S24_3LE).
     #[serde(rename = "S24_LE")]
     S24LE,
     #[default]
@@ -774,6 +776,13 @@ pub fn atomic_write(path: &Path, bytes: &[u8]) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn s24_le_has_24_valid_bits_in_a_four_byte_stereo_frame() {
+        assert_eq!(PcmFormat::S24LE.bytes_per_sample(), 4);
+        assert_eq!(PcmFormat::S24LE.bytes_per_frame(), 8);
+        assert_eq!(PcmFormat::S24LE.physical_bits(), 32);
+        assert_eq!(PcmFormat::S24LE.valid_bits(), 24);
+    }
     #[test]
     fn stale_events_cannot_restart_after_stop() {
         let mut m = AppModel::default();

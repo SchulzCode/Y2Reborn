@@ -93,7 +93,20 @@ static int wired_profile_allows(int format, unsigned rate) {
   size_t n = fread(json, 1, sizeof(json) - 1, file);
   fclose(file);
   json[n] = 0;
-  const char *format_name = format == 3 ? "S24_LE" : format == 2 ? "S32_LE" : "S16_LE";
+  const char *format_name;
+  switch (format) {
+  case 1:
+    format_name = "S16_LE";
+    break;
+  case 2:
+    format_name = "S32_LE";
+    break;
+  case 3:
+    format_name = "S24_LE";
+    break;
+  default:
+    return 0;
+  }
   char rate_name[16];
   snprintf(rate_name, sizeof(rate_name), "%u", rate);
   return profile_section_has(json, "\"qualified_formats\"", format_name) &&
@@ -106,8 +119,22 @@ static snd_pcm_format_t pcm_format(unsigned format) {
   case 3:
     return SND_PCM_FORMAT_S24_LE;
   default:
-    return SND_PCM_FORMAT_S32_LE;
+    return SND_PCM_FORMAT_UNKNOWN;
   }
+}
+int rb_alsa_format_info(unsigned format, int *valid_bits, int *physical_bits) {
+  if (!valid_bits || !physical_bits)
+    return -EINVAL;
+  snd_pcm_format_t selected = pcm_format(format);
+  if (selected == SND_PCM_FORMAT_UNKNOWN)
+    return -EINVAL;
+  int valid = snd_pcm_format_width(selected);
+  int physical = snd_pcm_format_physical_width(selected);
+  if (valid <= 0 || physical <= 0)
+    return -EINVAL;
+  *valid_bits = valid;
+  *physical_bits = physical;
+  return 0;
 }
 static int test_candidate(snd_pcm_t *pcm, unsigned rate, unsigned format) {
   snd_pcm_hw_params_t *p;
@@ -127,7 +154,8 @@ static int test_candidate(snd_pcm_t *pcm, unsigned rate, unsigned format) {
 int rb_alsa_plan(const char *name, unsigned requested_rate,
                  unsigned preferred_format, int wired, int strict_format,
                  RbParams *params) {
-  if (!name || !params || requested_rate < 8000 || requested_rate > 384000)
+  if (!name || !params || requested_rate < 8000 || requested_rate > 384000 ||
+      (preferred_format != 1 && preferred_format != 2 && preferred_format != 3))
     return -EINVAL;
   memset(params, 0, sizeof(*params));
   snprintf(params->device, sizeof(params->device), "%s", name);
@@ -208,6 +236,8 @@ void rb_sink_close(RbSink *s) {
 int rb_sink_open(const char *name, unsigned rate, unsigned format, int wired,
                  RbSink **out, RbParams *params) {
   int r;
+  if (format != 1 && format != 2 && format != 3)
+    return -EINVAL;
   *out = NULL;
   RbSink *s = calloc(1, sizeof(*s));
   if (!s)
