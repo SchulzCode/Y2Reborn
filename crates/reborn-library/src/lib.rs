@@ -1,5 +1,5 @@
 #![forbid(unsafe_code)]
-use reborn_core::{Source, Track};
+use reborn_core::{MediaSource, Source, Track};
 use reborn_media::{Cancel, Decoder};
 use reborn_observability::{HealthState, Level, Observer};
 use rusqlite::{params, Connection};
@@ -8,6 +8,7 @@ use serde_json::json;
 use std::{
     collections::BTreeMap,
     fs,
+    os::fd::AsRawFd,
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -41,8 +42,10 @@ enum DbCommand {
     List(Filter, SyncSender<Result<Vec<Track>, String>>),
     Existing(String, SyncSender<Result<BTreeMap<PathBuf, Track>, String>>),
     Batch(Vec<Track>, i64, SyncSender<Result<(), String>>),
-    Finish(String, i64, bool, SyncSender<Result<(), String>>),
+    Finish(Source, i64, bool, SyncSender<Result<bool, String>>),
     Test(SyncSender<Result<serde_json::Value, String>>),
+    #[cfg(test)]
+    TestSql(String, SyncSender<Result<(), String>>),
     Stop,
 }
 #[derive(Clone)]
@@ -211,8 +214,9 @@ impl Database {
  DbCommand::List(f,reply)=>{let _=reply.try_send(list(&c,&f));Ok(())},
  DbCommand::Existing(id,reply)=>{let value=(||{let mut q=c.prepare(&format!("{SELECT} WHERE t.source_id=?1 LIMIT 250000")).map_err(err)?;let rows=q.query_map([id],from_row).map_err(err)?;let tracks=rows.collect::<rusqlite::Result<Vec<_>>>().map_err(err)?;Ok(tracks.into_iter().map(|t|(t.path.clone(),t)).collect())})();let _=reply.try_send(value);Ok(())},
  DbCommand::Batch(v,s,reply)=>{let r=batch(&mut c,v,s);let _=reply.try_send(r.clone());r},
- DbCommand::Finish(id,seen,complete,reply)=>{let r=if complete{c.execute("UPDATE tracks SET deleted=1 WHERE source_id=?1 AND seen<>?2",params![id,seen]).map(|_|()).map_err(err)}else{Ok(())};let _=reply.try_send(r.clone());r},
- DbCommand::Test(reply)=>{let r=validate(&c);let _=reply.try_send(r);Ok(())}};
+ DbCommand::Finish(source,seen,complete,reply)=>{let r=if complete&&source_identity_is_current(&source){c.execute("UPDATE tracks SET deleted=1 WHERE source_id=?1 AND seen<>?2",params![source.id,seen]).map(|_|true).map_err(err)}else{Ok(false)};let _=reply.try_send(r.clone());r.map(|_|())},
+ DbCommand::Test(reply)=>{let r=validate(&c);let _=reply.try_send(r);Ok(())},
+ #[cfg(test)] DbCommand::TestSql(sql,reply)=>{let r=c.execute_batch(&sql).map_err(err);let _=reply.try_send(r.clone());r}};
  log.gauge("database_query_latency_ms",now.elapsed().as_secs_f64()*1000.);if let Err(e)=result{log.health_set("database",HealthState::Failed,true,&e);log.emit(Level::Error,"database","operation_failed",&e,None,json!({"recovery_attempted":false}));}
  if let Ok(n)=c.query_row("SELECT count(*) FROM tracks WHERE deleted=0",[],|r|r.get::<_,i64>(0)){log.gauge("library_tracks",n as f64);}
  }}).map_err(|e|e.to_string())?;
@@ -237,6 +241,15 @@ impl Database {
             .map_err(|e| e.to_string())?;
         Ok(rx)
     }
+    #[cfg(test)]
+    fn execute_test_sql(&self, sql: String) -> Result<(), String> {
+        let (tx, rx) = sync_channel(1);
+        self.tx
+            .send(DbCommand::TestSql(sql, tx))
+            .map_err(|e| e.to_string())?;
+        rx.recv_timeout(Duration::from_secs(10))
+            .map_err(|e| e.to_string())?
+    }
     fn existing(&self, id: String) -> Result<BTreeMap<PathBuf, Track>, String> {
         let (tx, rx) = sync_channel(1);
         self.tx
@@ -259,6 +272,45 @@ pub fn supported(path: &Path) -> bool {
 }
 pub fn unchanged(old: &Track, size: u64, mtime: i64) -> bool {
     old.size == size && old.mtime == mtime
+}
+fn mount_id_for_path(path: &Path, mountinfo: &str) -> Option<u64> {
+    mountinfo
+        .lines()
+        .filter_map(|line| {
+            let (mount, _) = line.split_once(" - ")?;
+            let fields = mount.split_whitespace().collect::<Vec<_>>();
+            let id = fields.first()?.parse::<u64>().ok()?;
+            let mount_path = fields
+                .get(4)?
+                .replace("\\040", " ")
+                .replace("\\011", "\t")
+                .replace("\\012", "\n")
+                .replace("\\134", "\\");
+            let mount_path = Path::new(&mount_path);
+            path.starts_with(mount_path)
+                .then_some((mount_path.components().count(), id))
+        })
+        .max_by_key(|(length, _)| *length)
+        .map(|(_, id)| id)
+}
+fn source_identity_matches_at(source: &Source, mountinfo: &str) -> bool {
+    match &source.kind {
+        MediaSource::Internal => true,
+        MediaSource::SdCard(uuid) => {
+            source.id == format!("uuid:{uuid}")
+                && !uuid.starts_with("device:")
+                && source.mount_id.is_some_and(|expected| {
+                    mount_id_for_path(&source.root, mountinfo) == Some(expected)
+                })
+        }
+    }
+}
+fn source_identity_is_current(source: &Source) -> bool {
+    if matches!(&source.kind, MediaSource::Internal) {
+        return true;
+    }
+    fs::read_to_string("/proc/self/mountinfo")
+        .is_ok_and(|mountinfo| source_identity_matches_at(source, &mountinfo))
 }
 pub struct Scanner {
     tx: SyncSender<Vec<Source>>,
@@ -305,6 +357,15 @@ fn scan_sources(
     log: &Observer,
     stop: &AtomicBool,
 ) -> Result<ScanMetrics, String> {
+    scan_sources_with_identity(db, sources, log, stop, source_identity_is_current)
+}
+fn scan_sources_with_identity(
+    db: &Database,
+    sources: &[Source],
+    log: &Observer,
+    stop: &AtomicBool,
+    identity_is_current: impl Fn(&Source) -> bool,
+) -> Result<ScanMetrics, String> {
     let start = Instant::now();
     let id = log.correlation();
     let seen = reborn_observability::wall_ms() as i64;
@@ -321,14 +382,40 @@ fn scan_sources(
         json!({"sources":sources.len()}),
     );
     for source in sources.iter().filter(|s| s.online) {
+        if !identity_is_current(source) {
+            stats.complete = false;
+            stats.failures += 1;
+            continue;
+        }
+        let root_handle = match fs::File::open(&source.root) {
+            Ok(handle) => handle,
+            Err(_) => {
+                stats.complete = false;
+                stats.failures += 1;
+                continue;
+            }
+        };
+        // Traverse through the open directory descriptor so a path reused by
+        // a replacement mount cannot redirect in-flight reads to another FS.
+        let pinned_root = PathBuf::from(format!("/proc/self/fd/{}", root_handle.as_raw_fd()));
+        if !identity_is_current(source) {
+            stats.complete = false;
+            stats.failures += 1;
+            continue;
+        }
         let existing = db.existing(source.id.clone())?;
-        let mut directories = vec![(source.root.clone(), 0)];
+        let mut directories = vec![(pinned_root.clone(), 0)];
         let mut batch_items = vec![];
         let mut complete = true;
-        while let Some((dir, depth)) = directories.pop() {
+        'source_traversal: while let Some((dir, depth)) = directories.pop() {
             log.heartbeat("scanner", 30);
             if stop.load(Ordering::Relaxed) {
                 return Err("scan cancelled".into());
+            }
+            if !identity_is_current(source) {
+                complete = false;
+                stats.failures += 1;
+                break;
             }
             if depth > 32 {
                 complete = false;
@@ -353,6 +440,12 @@ fn scan_sources(
                     }
                 };
                 let path = entry.path();
+                let Ok(relative_path) = path.strip_prefix(&pinned_root) else {
+                    complete = false;
+                    stats.failures += 1;
+                    continue;
+                };
+                let logical_path = source.root.join(relative_path);
                 let meta = match entry.metadata() {
                     Ok(m) => m,
                     Err(_) => {
@@ -361,28 +454,38 @@ fn scan_sources(
                         continue;
                     }
                 };
-                if entry.file_type().map(|t| t.is_symlink()).unwrap_or(true) {
-                    continue;
+                match entry.file_type() {
+                    Ok(file_type) if file_type.is_symlink() => continue,
+                    Ok(_) => {}
+                    Err(_) => {
+                        complete = false;
+                        stats.failures += 1;
+                        continue;
+                    }
                 }
                 if meta.is_dir() {
                     directories.push((path, depth + 1));
                     continue;
                 }
-                if !meta.is_file() || !supported(&path) {
+                if !meta.is_file() || !supported(&logical_path) {
                     continue;
                 }
                 stats.discovered += 1;
                 if stats.discovered > 250000 {
                     return Err("scan file limit exceeded".into());
                 }
-                let mtime = meta
+                let Some(mtime) = meta
                     .modified()
                     .ok()
                     .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
                     .map(|t| t.as_nanos().min(i64::MAX as u128) as i64)
-                    .unwrap_or(0);
+                else {
+                    complete = false;
+                    stats.failures += 1;
+                    continue;
+                };
                 let track = if let Some(t) = existing
-                    .get(&path)
+                    .get(&logical_path)
                     .filter(|t| unchanged(t, meta.len(), mtime))
                 {
                     stats.reused += 1;
@@ -392,7 +495,7 @@ fn scan_sources(
                         Ok(d) => {
                             let m = d.metadata.clone();
                             stats.rescanned += 1;
-                            let filename = path
+                            let filename = logical_path
                                 .file_name()
                                 .unwrap_or_default()
                                 .to_string_lossy()
@@ -400,7 +503,7 @@ fn scan_sources(
                             Track {
                                 id: 0,
                                 source_id: source.id.clone(),
-                                path: path.clone(),
+                                path: logical_path.clone(),
                                 filename: filename.clone(),
                                 size: meta.len(),
                                 mtime,
@@ -424,6 +527,7 @@ fn scan_sources(
                             }
                         }
                         Err(e) => {
+                            complete = false;
                             stats.failures += 1;
                             log.add("library_scan_errors", 1.);
                             log.emit(
@@ -432,7 +536,7 @@ fn scan_sources(
                                 "file_failed",
                                 &e,
                                 Some(id),
-                                json!({"path":path,"recovery":"skip_file"}),
+                                json!({"path":logical_path,"recovery":"retain_source_rows"}),
                             );
                             continue;
                         }
@@ -440,6 +544,12 @@ fn scan_sources(
                 };
                 batch_items.push(track);
                 if batch_items.len() == 64 {
+                    if !identity_is_current(source) {
+                        complete = false;
+                        stats.failures += 1;
+                        batch_items.clear();
+                        break 'source_traversal;
+                    }
                     let (reply, result) = sync_channel(1);
                     db.tx
                         .send(DbCommand::Batch(
@@ -455,23 +565,34 @@ fn scan_sources(
             }
         }
         if !batch_items.is_empty() {
-            let (reply, result) = sync_channel(1);
-            db.tx
-                .send(DbCommand::Batch(batch_items, seen, reply))
-                .map_err(|e| e.to_string())?;
-            result
-                .recv_timeout(Duration::from_secs(15))
-                .map_err(|e| e.to_string())??;
+            if identity_is_current(source) {
+                let (reply, result) = sync_channel(1);
+                db.tx
+                    .send(DbCommand::Batch(batch_items, seen, reply))
+                    .map_err(|e| e.to_string())?;
+                result
+                    .recv_timeout(Duration::from_secs(15))
+                    .map_err(|e| e.to_string())??;
+            } else {
+                complete = false;
+                stats.failures += 1;
+            }
         }
-        // Never mark files deleted after incomplete traversal or physical removal.
-        complete &= source.root.is_dir();
+        if !identity_is_current(source) {
+            complete = false;
+            stats.failures += 1;
+        }
         let (reply, result) = sync_channel(1);
         db.tx
-            .send(DbCommand::Finish(source.id.clone(), seen, complete, reply))
+            .send(DbCommand::Finish(source.clone(), seen, complete, reply))
             .map_err(|e| e.to_string())?;
-        result
+        let pruned = result
             .recv_timeout(Duration::from_secs(15))
             .map_err(|e| e.to_string())??;
+        if complete && !pruned {
+            complete = false;
+            stats.failures += 1;
+        }
         stats.complete &= complete;
     }
     // A FIFO database barrier makes scan completion mean writes have completed.
@@ -696,5 +817,258 @@ mod consistency_tests {
         .is_empty());
         drop(c);
         fs::remove_file(p).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod scan_safety_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicBool, AtomicUsize};
+
+    fn root(label: &str) -> PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "reborn-scan-{label}-{}-{}",
+            std::process::id(),
+            reborn_observability::wall_ms()
+        ));
+        fs::create_dir_all(&path).unwrap();
+        path
+    }
+
+    fn source(id: &str, path: &Path) -> Source {
+        Source {
+            id: id.into(),
+            kind: MediaSource::Internal,
+            root: path.into(),
+            online: true,
+            mount: "test".into(),
+            mount_id: None,
+        }
+    }
+
+    fn database(root: &Path) -> (Database, Observer) {
+        let log = Observer::new(&root.join("logs")).unwrap();
+        let db = Database::spawn(root.join("library.db"), log.clone()).unwrap();
+        (db, log)
+    }
+
+    fn seed(db: &Database, source: &Source, path: &Path) {
+        db.sources(vec![source.clone()]).unwrap();
+        let (reply, result) = sync_channel(1);
+        db.tx
+            .send(DbCommand::Batch(
+                vec![Track {
+                    source_id: source.id.clone(),
+                    path: path.into(),
+                    filename: "old.flac".into(),
+                    size: 1,
+                    mtime: 1,
+                    title: "Prior Valid Row".into(),
+                    ..Default::default()
+                }],
+                1,
+                reply,
+            ))
+            .unwrap();
+        result
+            .recv_timeout(Duration::from_secs(3))
+            .unwrap()
+            .unwrap();
+    }
+
+    fn tracks(db: &Database) -> Vec<Track> {
+        db.list(Filter {
+            limit: 100,
+            ..Default::default()
+        })
+        .unwrap()
+        .recv_timeout(Duration::from_secs(3))
+        .unwrap()
+        .unwrap()
+    }
+
+    #[test]
+    fn changed_file_decoder_open_failure_retains_prior_row() {
+        let root = root("changed-open-failure");
+        let path = root.join("changed.flac");
+        fs::write(&path, b"changed file with unreadable transient bytes").unwrap();
+        let source = source("internal", &root);
+        let (db, log) = database(&root);
+        seed(&db, &source, &path);
+
+        let stats =
+            scan_sources_with_identity(&db, &[source], &log, &AtomicBool::new(false), |_| true)
+                .unwrap();
+
+        assert!(!stats.complete);
+        assert!(stats.failures > 0);
+        let rows = tracks(&db);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].title, "Prior Valid Row");
+        assert_eq!(rows[0].size, 1);
+        db.stop();
+    }
+
+    #[test]
+    fn sd_identity_rejects_unmounted_and_reused_mount_paths() {
+        let source = Source {
+            id: "uuid:old-volume".into(),
+            kind: MediaSource::SdCard("old-volume".into()),
+            root: "/media/sd".into(),
+            online: true,
+            mount: "/dev/mmcblk0p1".into(),
+            mount_id: Some(40),
+        };
+        let original = "40 1 179:1 / /media/sd rw - vfat /dev/mmcblk0p1 rw\n";
+        let empty_mountpoint = "1 0 8:1 / / rw - ext4 /dev/root rw\n";
+        let replacement = "58 1 179:2 / /media/sd rw - ext4 /dev/mmcblk1p1 rw\n";
+
+        assert!(source_identity_matches_at(&source, original));
+        assert!(!source_identity_matches_at(&source, empty_mountpoint));
+        assert!(!source_identity_matches_at(&source, replacement));
+        let replacement_source = Source {
+            id: "uuid:new-volume".into(),
+            kind: MediaSource::SdCard("new-volume".into()),
+            mount_id: Some(58),
+            ..source.clone()
+        };
+        assert!(source_identity_matches_at(&replacement_source, replacement));
+    }
+
+    #[test]
+    fn identity_loss_mid_traversal_disables_pruning() {
+        let root = root("identity-loss");
+        let source = Source {
+            id: "uuid:old-volume".into(),
+            kind: MediaSource::SdCard("old-volume".into()),
+            root: root.clone(),
+            online: true,
+            mount: "/dev/mmcblk0p1".into(),
+            mount_id: Some(40),
+        };
+        let old_path = root.join("removed.flac");
+        let (db, log) = database(&root);
+        seed(&db, &source, &old_path);
+        let checks = AtomicUsize::new(0);
+
+        let stats =
+            scan_sources_with_identity(&db, &[source], &log, &AtomicBool::new(false), |_| {
+                checks.fetch_add(1, Ordering::Relaxed) < 3
+            })
+            .unwrap();
+
+        assert!(!stats.complete);
+        assert_eq!(tracks(&db).len(), 1);
+        db.stop();
+    }
+
+    #[test]
+    fn writer_rechecks_mount_identity_at_finish_before_pruning() {
+        let root = root("identity-at-finish");
+        let source = Source {
+            id: "uuid:old-volume".into(),
+            kind: MediaSource::SdCard("old-volume".into()),
+            root: root.clone(),
+            online: true,
+            mount: "/dev/mmcblk0p1".into(),
+            mount_id: Some(u64::MAX),
+        };
+        let old_path = root.join("removed.flac");
+        let (db, log) = database(&root);
+        seed(&db, &source, &old_path);
+
+        let stats =
+            scan_sources_with_identity(&db, &[source], &log, &AtomicBool::new(false), |_| true)
+                .unwrap();
+
+        assert!(!stats.complete);
+        assert_eq!(tracks(&db).len(), 1);
+        db.stop();
+    }
+
+    #[test]
+    fn complete_identity_consistent_scan_still_prunes_missing_rows() {
+        let root = root("safe-prune");
+        let source = source("internal", &root);
+        let old_path = root.join("removed.flac");
+        let (db, log) = database(&root);
+        seed(&db, &source, &old_path);
+
+        let stats =
+            scan_sources_with_identity(&db, &[source], &log, &AtomicBool::new(false), |_| true)
+                .unwrap();
+
+        assert!(stats.complete);
+        assert!(tracks(&db).is_empty());
+        db.stop();
+    }
+
+    fn seed_changed_audio(root: &Path) -> (Database, Observer, Source, PathBuf) {
+        let source = source("internal", root);
+        let path = root.join("changed.flac");
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/fixtures/tone.flac");
+        fs::copy(fixture, &path).unwrap();
+        let (db, log) = database(root);
+        seed(&db, &source, &path);
+        (db, log, source, path)
+    }
+
+    #[test]
+    fn batch_failure_keeps_prior_rows_and_never_finishes_scan() {
+        let root = root("batch-failure");
+        let (db, log, source, _) = seed_changed_audio(&root);
+        db.execute_test_sql(
+            "CREATE TRIGGER fail_batch BEFORE INSERT ON tracks WHEN NEW.path LIKE '%changed.flac' BEGIN SELECT RAISE(FAIL, 'injected batch failure'); END;".into(),
+        )
+        .unwrap();
+
+        let error =
+            scan_sources_with_identity(&db, &[source], &log, &AtomicBool::new(false), |_| true)
+                .unwrap_err();
+
+        assert!(error.contains("injected batch failure"));
+        let rows = tracks(&db);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].title, "Prior Valid Row");
+        db.stop();
+    }
+
+    #[test]
+    fn simulated_enospc_batch_failure_keeps_prior_rows() {
+        let root = root("enospc-batch");
+        let (db, log, source, _) = seed_changed_audio(&root);
+        db.execute_test_sql(
+            "CREATE TRIGGER fail_full BEFORE INSERT ON tracks WHEN NEW.path LIKE '%changed.flac' BEGIN SELECT RAISE(FAIL, 'database or disk is full'); END;".into(),
+        )
+        .unwrap();
+
+        let error =
+            scan_sources_with_identity(&db, &[source], &log, &AtomicBool::new(false), |_| true)
+                .unwrap_err();
+
+        assert!(error.to_ascii_lowercase().contains("full"));
+        assert_eq!(tracks(&db).len(), 1);
+        db.stop();
+    }
+
+    #[test]
+    fn finish_failure_does_not_prune_prior_rows() {
+        let root = root("finish-failure");
+        let source = source("internal", &root);
+        let old_path = root.join("removed.flac");
+        let (db, log) = database(&root);
+        seed(&db, &source, &old_path);
+        db.execute_test_sql(
+            "CREATE TRIGGER fail_finish BEFORE UPDATE OF deleted ON tracks WHEN NEW.deleted=1 BEGIN SELECT RAISE(FAIL, 'injected finish failure'); END;".into(),
+        )
+        .unwrap();
+
+        let error =
+            scan_sources_with_identity(&db, &[source], &log, &AtomicBool::new(false), |_| true)
+                .unwrap_err();
+
+        assert!(error.contains("injected finish failure"));
+        assert_eq!(tracks(&db).len(), 1);
+        db.stop();
     }
 }

@@ -172,6 +172,8 @@ pub struct Source {
     pub root: PathBuf,
     pub online: bool,
     pub mount: String,
+    #[serde(default)]
+    pub mount_id: Option<u64>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Track {

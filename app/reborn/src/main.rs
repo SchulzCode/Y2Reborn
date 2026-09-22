@@ -1207,6 +1207,7 @@ fn run() -> Result<(), String> {
             root: model.settings.music_directory.clone(),
             online: true,
             mount: "host-test".into(),
+            mount_id: None,
         }]
     } else {
         storage::sources(&model.settings.music_directory)

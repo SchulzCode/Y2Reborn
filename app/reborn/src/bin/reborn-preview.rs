@@ -87,6 +87,7 @@ fn model(tracks: &[Track], screen: Screen, focus: usize) -> AppModel {
         root: "/data/music".into(),
         online: true,
         mount: "internal".into(),
+        mount_id: None,
     }];
     model
 }

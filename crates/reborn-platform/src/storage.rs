@@ -17,6 +17,7 @@ pub struct Mount {
 fn unescape(s: &str) -> String {
     s.replace("\\040", " ")
         .replace("\\011", "\t")
+        .replace("\\012", "\n")
         .replace("\\134", "\\")
 }
 pub fn parse_mounts(s: &str) -> Vec<Mount> {
@@ -35,14 +36,28 @@ pub fn parse_mounts(s: &str) -> Vec<Mount> {
         })
         .collect()
 }
+pub fn parse_mountinfo(s: &str) -> Vec<(u64, PathBuf)> {
+    s.lines()
+        .filter_map(|line| {
+            let (mount, _) = line.split_once(" - ")?;
+            let fields = mount.split_whitespace().collect::<Vec<_>>();
+            Some((
+                fields.get(0)?.parse().ok()?,
+                unescape(fields.get(4)?).into(),
+            ))
+        })
+        .collect()
+}
 pub fn mounts() -> Vec<Mount> {
     parse_mounts(&fs::read_to_string("/proc/mounts").unwrap_or_default())
 }
 pub fn sources(music: &Path) -> Vec<Source> {
     let m = mounts();
+    let mountinfo =
+        parse_mountinfo(&fs::read_to_string("/proc/self/mountinfo").unwrap_or_default());
     let mut result = vec![];
-    for (path, internal) in [("/data", true), ("/media/sd", false)] {
-        if let Some(m) = m.iter().find(|m| m.path == Path::new(path)) {
+    for (mount_path, internal) in [("/data", true), ("/media/sd", false)] {
+        if let Some(m) = m.iter().find(|m| m.path == Path::new(mount_path)) {
             if !internal && !Path::new(&m.device).exists() {
                 continue;
             }
@@ -59,9 +74,16 @@ pub fn sources(music: &Path) -> Vec<Source> {
                 } else {
                     MediaSource::SdCard(uuid)
                 },
-                root: if internal { music.into() } else { path.into() },
+                root: if internal {
+                    music.into()
+                } else {
+                    mount_path.into()
+                },
                 online: true,
                 mount: m.device.clone(),
+                mount_id: mountinfo
+                    .iter()
+                    .find_map(|(id, path)| (path == Path::new(mount_path)).then_some(*id)),
             });
         }
     }
@@ -134,5 +156,13 @@ mod tests {
             parse_mounts("/dev/a /media/a\\040b ext4 rw 0 0")[0].path,
             Path::new("/media/a b")
         );
+    }
+
+    #[test]
+    fn mountinfo_keeps_mount_generation_and_decodes_mountpoint() {
+        let parsed = parse_mountinfo(
+            "36 25 179:7 / /media/sd\\040card rw,relatime shared:4 - vfat /dev/mmcblk0p1 rw\n",
+        );
+        assert_eq!(parsed, vec![(36, PathBuf::from("/media/sd card"))]);
     }
 }

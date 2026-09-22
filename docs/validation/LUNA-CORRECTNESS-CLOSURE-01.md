@@ -131,15 +131,63 @@ force. No candidate exists yet.
 - **Result:** Release/plan/start/commit/fail ordering is explicit and the
   failure-boundary tests pass. The prior logical state is preserved where safe;
   failed active transitions cannot report `Playing` without a sink.
-- **Commit:** pending.
+- **Commit:** `72f9995` (`Make sink reconfiguration transactional`).
 - **Remaining limitation:** ALSA planning and the bounded worker-open
   acknowledgement remain synchronous on the runtime thread; each stop/open
-  boundary is bounded at two seconds. Actual BlueALSA and wired-device open
-  timing remains `PHYSICAL_QUALIFICATION_PENDING`.
+  boundary is bounded at two seconds. This introduces a bounded wait for the
+  actual sink-open result so settings cannot commit on command enqueue alone.
+  Actual BlueALSA and wired-device open timing remains
+  `PHYSICAL_QUALIFICATION_PENDING`.
 - **Evidence tier:** source inspection + fake sink/worker host tests. No physical
   sink was opened.
 
-## R4–R10
+## R4 — scan identity and pruning safety
+
+**Status: FIXED**
+
+- **Finding and symptom:** A changed file whose FFmpeg metadata open failed was
+  counted as a failure but left the per-source `complete` flag true. Finish
+  could therefore prune the previous valid row. SD scan safety also used only
+  `root.is_dir()`, which remains true when `/media/sd` is an empty unmounted
+  directory or a different filesystem has reused that path.
+- **Current source confirmation:** `scan_sources()` continued after
+  `Decoder::open()` errors without clearing `complete`, and Finish pruned all
+  rows whose `seen` token did not match. The old SD completion guard checked
+  only directory existence.
+- **Implementation:** Decoder-open, metadata, traversal, and directory-entry
+  read failures now make the source incomplete; any such incomplete scan skips
+  pruning. SD `Source` snapshots carry the observed mount ID in addition to the
+  UUID-backed source ID. The scanner verifies the same mount ID at traversal
+  boundaries and again in the database writer immediately before Finish.
+  Traversal uses an open directory descriptor through `/proc/self/fd`, so a
+  replaced path cannot redirect the in-flight walk to a different filesystem.
+  Missing UUID or mount identity fails closed. Finish reports whether pruning
+  actually occurred; batch, finish, and storage-full errors propagate without
+  marking the scan complete.
+- **Files changed:** `crates/reborn-core/src/lib.rs`,
+  `crates/reborn-library/src/lib.rs`, `crates/reborn-platform/src/storage.rs`,
+  `app/reborn/src/main.rs`, `app/reborn/src/bin/reborn-preview.rs`.
+- **Tests added:** Changed-file FFmpeg open failure retains the old row; an SD
+  path that is unmounted or reused with a new mount ID is rejected; mid-scan
+  identity loss and a database-writer identity recheck disable pruning; a safe
+  complete scan still prunes. SQLite trigger fault injection covers batch
+  failure, finish failure, and a simulated `SQLITE_FULL`/ENOSPC message; all
+  preserve prior rows. Mountinfo parsing preserves mount IDs and escaped paths.
+- **Tests run:** `cargo fmt --all -- --check`; `cargo check --workspace --locked`;
+  `cargo test -p reborn-library -p reborn-platform -p reborn-core --locked` —
+  49 passed, 0 failed.
+- **Result:** A scan is prune-safe only after traversal, file metadata, stable
+  source identity, batch persistence, and finish persistence all succeed.
+- **Commit:** pending.
+- **Remaining limitation:** Unclassified decoder-open failures are treated as
+  unsafe even if a file is permanently corrupt; row removal waits for a later
+  identity-consistent successful scan. `/proc/self/mountinfo` and a usable
+  filesystem UUID are required for SD pruning. Physical media removal and card
+  replacement remain `PHYSICAL_QUALIFICATION_PENDING`.
+- **Evidence tier:** source inspection + SQLite/file fault injection + host
+  mountinfo parser tests. No SD card or physical Y2 was accessed.
+
+## R5–R10
 
 Results will be recorded separately as each correction is reviewed and
 committed. No status is claimed yet.
