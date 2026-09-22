@@ -40,8 +40,8 @@ enum DbCommand {
     Sources(Vec<Source>),
     List(Filter, SyncSender<Result<Vec<Track>, String>>),
     Existing(String, SyncSender<Result<BTreeMap<PathBuf, Track>, String>>),
-    Batch(Vec<Track>, i64),
-    Finish(String, i64, bool),
+    Batch(Vec<Track>, i64, SyncSender<Result<(), String>>),
+    Finish(String, i64, bool, SyncSender<Result<(), String>>),
     Test(SyncSender<Result<serde_json::Value, String>>),
     Stop,
 }
@@ -165,7 +165,44 @@ impl Database {
         if let Some(p) = path.parent() {
             fs::create_dir_all(p).map_err(|e| e.to_string())?;
         }
-        let mut c = open(&path)?;
+        let mut recovered = None;
+        let mut c = match open(&path) {
+            Ok(connection) => connection,
+            Err(error) if error.contains("schema is newer") => return Err(error),
+            Err(error) if path.exists() => {
+                let stamp = reborn_observability::wall_ms();
+                let name = path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or("library.db");
+                let quarantined = path.with_file_name(format!("{name}.corrupt-{stamp}"));
+                fs::rename(&path, &quarantined)
+                    .map_err(|rename| format!("{error}; database quarantine failed: {rename}"))?;
+                for suffix in ["-wal", "-shm"] {
+                    let sidecar = PathBuf::from(format!("{}{}", path.display(), suffix));
+                    if sidecar.exists() {
+                        let sidecar_quarantine =
+                            PathBuf::from(format!("{}{}", quarantined.display(), suffix));
+                        fs::rename(&sidecar, sidecar_quarantine).map_err(|rename| {
+                            format!("{error}; database sidecar quarantine failed: {rename}")
+                        })?;
+                    }
+                }
+                recovered = Some((error, quarantined));
+                open(&path)?
+            }
+            Err(error) => return Err(error),
+        };
+        if let Some((error, quarantined)) = recovered {
+            log.emit(
+                Level::Warn,
+                "database",
+                "corrupt_quarantined",
+                "Database was quarantined and recreated; media will be rescanned",
+                None,
+                json!({"error":error,"quarantined":quarantined}),
+            );
+        }
         let (tx, rx) = sync_channel(32);
         thread::Builder::new().name("database".into()).spawn(move||{
  log.health_set("database",HealthState::Ok,true,"schema ready");loop{log.heartbeat("database",15);let msg=match rx.recv_timeout(Duration::from_secs(1)){Ok(m)=>m,Err(RecvTimeoutError::Timeout)=>continue,Err(_)=>break};let now=Instant::now();let result:Result<(),String>=match msg{
@@ -173,8 +210,8 @@ impl Database {
  DbCommand::Sources(sources)=>(||{let tx=c.transaction().map_err(err)?;tx.execute("UPDATE sources SET online=0",[]).map_err(err)?;for s in sources{tx.execute("INSERT INTO sources(id,root,online) VALUES(?1,?2,?3) ON CONFLICT(id) DO UPDATE SET root=excluded.root,online=excluded.online",params![s.id,s.root.to_string_lossy(),s.online]).map_err(err)?;}tx.commit().map_err(err)})(),
  DbCommand::List(f,reply)=>{let _=reply.try_send(list(&c,&f));Ok(())},
  DbCommand::Existing(id,reply)=>{let value=(||{let mut q=c.prepare(&format!("{SELECT} WHERE t.source_id=?1 LIMIT 250000")).map_err(err)?;let rows=q.query_map([id],from_row).map_err(err)?;let tracks=rows.collect::<rusqlite::Result<Vec<_>>>().map_err(err)?;Ok(tracks.into_iter().map(|t|(t.path.clone(),t)).collect())})();let _=reply.try_send(value);Ok(())},
- DbCommand::Batch(v,s)=>batch(&mut c,v,s),
- DbCommand::Finish(id,seen,complete)=>{if complete{c.execute("UPDATE tracks SET deleted=1 WHERE source_id=?1 AND seen<>?2",params![id,seen]).map(|_|()).map_err(err)}else{Ok(())}},
+ DbCommand::Batch(v,s,reply)=>{let r=batch(&mut c,v,s);let _=reply.try_send(r.clone());r},
+ DbCommand::Finish(id,seen,complete,reply)=>{let r=if complete{c.execute("UPDATE tracks SET deleted=1 WHERE source_id=?1 AND seen<>?2",params![id,seen]).map(|_|()).map_err(err)}else{Ok(())};let _=reply.try_send(r.clone());r},
  DbCommand::Test(reply)=>{let r=validate(&c);let _=reply.try_send(r);Ok(())}};
  log.gauge("database_query_latency_ms",now.elapsed().as_secs_f64()*1000.);if let Err(e)=result{log.health_set("database",HealthState::Failed,true,&e);log.emit(Level::Error,"database","operation_failed",&e,None,json!({"recovery_attempted":false}));}
  if let Ok(n)=c.query_row("SELECT count(*) FROM tracks WHERE deleted=0",[],|r|r.get::<_,i64>(0)){log.gauge("library_tracks",n as f64);}
@@ -216,7 +253,7 @@ pub fn supported(path: &Path) -> bool {
     path.extension().is_some_and(|e| {
         matches!(
             e.to_string_lossy().to_ascii_lowercase().as_str(),
-            "flac" | "mp3" | "aac" | "m4a" | "ogg" | "opus" | "wav"
+            "flac" | "mp3" | "aac" | "m4a" | "ogg" | "opus" | "wav" | "aiff" | "aif" | "ape" | "wv"
         )
     })
 }
@@ -403,22 +440,38 @@ fn scan_sources(
                 };
                 batch_items.push(track);
                 if batch_items.len() == 64 {
+                    let (reply, result) = sync_channel(1);
                     db.tx
-                        .send(DbCommand::Batch(std::mem::take(&mut batch_items), seen))
+                        .send(DbCommand::Batch(
+                            std::mem::take(&mut batch_items),
+                            seen,
+                            reply,
+                        ))
                         .map_err(|e| e.to_string())?;
+                    result
+                        .recv_timeout(Duration::from_secs(15))
+                        .map_err(|e| e.to_string())??;
                 }
             }
         }
         if !batch_items.is_empty() {
+            let (reply, result) = sync_channel(1);
             db.tx
-                .send(DbCommand::Batch(batch_items, seen))
+                .send(DbCommand::Batch(batch_items, seen, reply))
                 .map_err(|e| e.to_string())?;
+            result
+                .recv_timeout(Duration::from_secs(15))
+                .map_err(|e| e.to_string())??;
         }
         // Never mark files deleted after incomplete traversal or physical removal.
         complete &= source.root.is_dir();
+        let (reply, result) = sync_channel(1);
         db.tx
-            .send(DbCommand::Finish(source.id.clone(), seen, complete))
+            .send(DbCommand::Finish(source.id.clone(), seen, complete, reply))
             .map_err(|e| e.to_string())?;
+        result
+            .recv_timeout(Duration::from_secs(15))
+            .map_err(|e| e.to_string())??;
         stats.complete &= complete;
     }
     // A FIFO database barrier makes scan completion mean writes have completed.
@@ -495,7 +548,36 @@ mod tests {
     #[test]
     fn formats() {
         assert!(supported(Path::new("a.FLAC")));
+        assert!(supported(Path::new("a.AIFF")));
+        assert!(supported(Path::new("a.ape")));
+        assert!(supported(Path::new("a.wv")));
         assert!(!supported(Path::new("a.txt")));
+    }
+    #[test]
+    fn corrupt_database_is_quarantined_before_recreation() {
+        let root = std::env::temp_dir().join(format!("reborn-recovery-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("library.db");
+        fs::write(&path, b"not a sqlite database").unwrap();
+        let log = Observer::new(&root.join("logs")).unwrap();
+        let db = Database::spawn(path.clone(), log).unwrap();
+        let reply = db
+            .test()
+            .unwrap()
+            .recv_timeout(Duration::from_secs(2))
+            .unwrap();
+        assert!(reply.is_ok());
+        assert!(root
+            .read_dir()
+            .unwrap()
+            .filter_map(Result::ok)
+            .any(|entry| entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with("library.db.corrupt-")));
+        db.stop();
+        let _ = fs::remove_dir_all(root);
     }
 }
 

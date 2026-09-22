@@ -8,6 +8,8 @@ use std::{
 
 pub const VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), "-premium.01");
 pub const MAX_QUEUE: usize = 20_000;
+pub const SESSION_SCHEMA_VERSION: u32 = 2;
+pub const SESSION_MAX_BYTES: usize = 8 * 1024 * 1024;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum RadioScan {
@@ -223,12 +225,21 @@ pub enum Screen {
 pub struct NavigationState {
     /// Parent routes only. The current route is authoritative in AppModel::screen.
     pub stack: Vec<Screen>,
+    pub history: Vec<NavigationFrame>,
     pub focus: usize,
     pub scroll: usize,
     pub filter: String,
     pub modal: Option<Modal>,
     pub modal_focus: usize,
     pub context_target: Option<usize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NavigationFrame {
+    pub screen: Screen,
+    pub focus: usize,
+    pub scroll: usize,
+    pub filter: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -618,12 +629,25 @@ impl AppModel {
         use std::io::Read;
         let mut bytes = Vec::new();
         fs::File::open(path)?
-            .take(8 * 1024 * 1024 + 1)
+            .take(SESSION_MAX_BYTES as u64 + 1)
             .read_to_end(&mut bytes)?;
-        if bytes.len() > 8 * 1024 * 1024 {
+        if bytes.len() > SESSION_MAX_BYTES {
             return Err(io::Error::other("state too large"));
         }
-        let mut m: Self = serde_json::from_slice(&bytes)?;
+        #[derive(Deserialize)]
+        struct PersistedSession {
+            schema: u32,
+            model: AppModel,
+        }
+        let mut m = match serde_json::from_slice::<PersistedSession>(&bytes) {
+            Ok(session) => {
+                if session.schema > SESSION_SCHEMA_VERSION {
+                    return Err(io::Error::other("state schema is newer than Reborn"));
+                }
+                session.model
+            }
+            Err(_) => serde_json::from_slice::<Self>(&bytes)?,
+        };
         if m.queue.len() > MAX_QUEUE || (!m.queue.is_empty() && m.queue_position >= m.queue.len()) {
             return Err(io::Error::other("invalid saved queue"));
         }
@@ -653,7 +677,19 @@ impl AppModel {
         Ok(m)
     }
     pub fn checkpoint(&self, path: &Path) -> io::Result<()> {
-        atomic_write(path, &serde_json::to_vec(self)?)
+        #[derive(Serialize)]
+        struct PersistedSession<'a> {
+            schema: u32,
+            model: &'a AppModel,
+        }
+        let bytes = serde_json::to_vec(&PersistedSession {
+            schema: SESSION_SCHEMA_VERSION,
+            model: self,
+        })?;
+        if bytes.len() > SESSION_MAX_BYTES {
+            return Err(io::Error::other("state exceeds bounded write size"));
+        }
+        atomic_write(path, &bytes)
     }
 }
 pub fn atomic_write(path: &Path, bytes: &[u8]) -> io::Result<()> {
@@ -716,6 +752,20 @@ mod tests {
             output_position_ms: 0,
         });
         assert_eq!(m.queue_position, 1);
+    }
+    #[test]
+    fn session_checkpoint_has_explicit_schema_and_matching_bounds() {
+        let path = std::env::temp_dir().join(format!("reborn-session-{}.json", std::process::id()));
+        let mut model = AppModel::default();
+        model
+            .replace_queue(vec![Track::default()], 0)
+            .expect("valid queue");
+        model.checkpoint(&path).unwrap();
+        let value: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        assert_eq!(value["schema"], SESSION_SCHEMA_VERSION);
+        assert!(fs::metadata(&path).unwrap().len() <= SESSION_MAX_BYTES as u64);
+        assert!(AppModel::restore(&path).unwrap().current().is_some());
+        fs::remove_file(path).unwrap();
     }
     #[test]
     fn bluetooth_loss_pauses_only_selected_peer() {

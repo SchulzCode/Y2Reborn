@@ -116,7 +116,7 @@ impl Runtime {
         );
         self.dirty = true;
     }
-    fn checkpoint(&self) {
+    fn checkpoint(&mut self) {
         if let Err(e) = self.model.checkpoint(&self.root.join("state/session.json")) {
             self.log.emit(
                 Level::Warn,
@@ -126,6 +126,8 @@ impl Runtime {
                 None,
                 json!({}),
             );
+        } else {
+            self.dirty = false;
         }
     }
     fn load(&mut self) -> Result<(), String> {
@@ -916,7 +918,22 @@ fn run() -> Result<(), String> {
     reborn_media::initialize_logging(log.clone());
     reborn_audio::initialize_logging(log.clone());
     log.emit(Level::Info,"startup","starting","Reborn Baseline 01",None,json!({"version":reborn_core::VERSION,"ffmpeg":reborn_media::version(),"headless":headless,"process_setup_ms":process_started.elapsed().as_millis()}));
-    let mut model = AppModel::restore(&root.join("state/session.json")).unwrap_or_default();
+    let session_path = root.join("state/session.json");
+    let mut model = match AppModel::restore(&session_path) {
+        Ok(model) => model,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => AppModel::default(),
+        Err(error) => {
+            log.emit(
+                Level::Warn,
+                "core",
+                "restore_failed",
+                "Saved session was rejected; starting with a clean session",
+                None,
+                json!({"path":session_path,"error":error.to_string()}),
+            );
+            AppModel::default()
+        }
+    };
     startup_phase(&log, process_started, "model_restored");
     // Open the display as soon as the process is alive. The first bounded
     // frame below hands KMS to Reborn while storage and library workers start.
@@ -1207,7 +1224,7 @@ fn run() -> Result<(), String> {
         }
         if let Ok(result) = rt.scanner.results.try_recv() {
             match result {
-                Ok(stats) => {
+                Ok(stats) if stats.complete => {
                     rt.model
                         .apply(Event::LibraryScanFinished(reborn_core::ScanSummary {
                             discovered: stats.discovered,
@@ -1223,6 +1240,15 @@ fn run() -> Result<(), String> {
                         .ok();
                     rt.ui.notice =
                         format!("Scan: {} tracks, {} reused", stats.discovered, stats.reused);
+                }
+                Ok(stats) => {
+                    let error = format!(
+                        "scan incomplete; retained existing entries ({} traversal failures)",
+                        stats.failures
+                    );
+                    rt.model.apply(Event::LibraryScanFailed(error.clone()));
+                    log.health_set("scanner", HealthState::Degraded, true, &error);
+                    rt.fail("scanner", error);
                 }
                 Err(e) => {
                     rt.model.apply(Event::LibraryScanFailed(e.clone()));
@@ -1590,8 +1616,10 @@ fn run() -> Result<(), String> {
                 let _ = log.diagnostic(&root.join("diagnostics"), rt.snapshot(), true);
             }
         }
-        if checkpoint.elapsed() > Duration::from_secs(15) {
+        if checkpoint.elapsed() > Duration::from_secs(15) && rt.dirty {
             rt.checkpoint();
+            checkpoint = Instant::now();
+        } else if checkpoint.elapsed() > Duration::from_secs(15) {
             checkpoint = Instant::now();
         }
         if rt.dirty && !rt.model.screen_off && render_time.elapsed() > Duration::from_millis(34) {
