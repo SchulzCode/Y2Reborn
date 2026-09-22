@@ -472,7 +472,7 @@ impl Playback {
         let state = Arc::new(Mutex::new(json!({
             "state":"stopped",
             "canonical_sample_format":"fltp",
-            "output_format":"S32_LE",
+            "output_format":"unknown",
             "gapless":{"enabled":true,"preopened":false},
             "crossfade":{"enabled":false,"duration_ms":0}
         })));
@@ -512,9 +512,8 @@ impl Playback {
                     }
                     let crossfade_enabled = job.dsp.crossfade_ms > 0;
                     /* Crossfade uses S32 as its bounded transition working
-                     * format. The sink worker performs the one final S32 to
-                     * S16 conversion when the currently qualified wired
-                     * profile requires it. */
+                     * format. The sink worker performs the one final
+                     * conversion to the negotiated sink format. */
                     let processing_format = if crossfade_enabled {
                         PcmFormat::S32LE
                     } else {
@@ -1367,6 +1366,13 @@ mod tests {
             output,
             rate,
             format: PcmFormat::S32LE,
+            physical_bits: 32,
+            valid_bits: 32,
+            channels: 2,
+            layout: "stereo".into(),
+            device: "test".into(),
+            codec: None,
+            transport_generation: 0,
             fallback: false,
             fallback_reason: String::new(),
         }

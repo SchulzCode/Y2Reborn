@@ -208,8 +208,8 @@ int rb_media_convert(const uint8_t *input, int frames, int rate, int input_forma
                      int output_format, uint8_t *output, int capacity_frames) {
   if (!input || !output || frames <= 0 || capacity_frames < frames ||
       rate < 8000 || rate > 384000 ||
-      (input_format != 1 && input_format != 2) ||
-      (output_format != 1 && output_format != 2))
+      (input_format != 1 && input_format != 2 && input_format != 3) ||
+      (output_format != 1 && output_format != 2 && output_format != 3))
     return AVERROR(EINVAL);
   enum AVSampleFormat in_fmt = format_from_int(input_format);
   enum AVSampleFormat out_fmt = format_from_int(output_format);
@@ -277,7 +277,7 @@ int rb_media_crossfade(const uint8_t *a, const uint8_t *b, int frames, int rate,
                        int *written_frames) {
   if (!a || !b || !output || !written_frames || frames <= 0 ||
       capacity_frames < frames || rate < 8000 || rate > 384000 ||
-      (format != 1 && format != 2))
+      (format != 1 && format != 2 && format != 3))
     return AVERROR(EINVAL);
   *written_frames = 0;
   AVFilterGraph *graph = NULL;
@@ -765,7 +765,8 @@ int rb_media_open(const char *path, int rate, int output_format,
   m->output_rate = rate;
   m->output_fmt = format_from_int(output_format);
   m->output_bytes = av_get_bytes_per_sample(m->output_fmt) * 2;
-  if (rate < 8000 || rate > 384000 || (output_format != 1 && output_format != 2)) {
+  if (rate < 8000 || rate > 384000 ||
+      (output_format != 1 && output_format != 2 && output_format != 3)) {
     ret = AVERROR(EINVAL);
     goto fail;
   }

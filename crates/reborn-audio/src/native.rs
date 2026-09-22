@@ -1,5 +1,5 @@
 use super::{valid_address, AudioSink, Parameters, SinkSpec};
-use reborn_core::{AudioOutput, PcmFormat};
+use reborn_core::{AudioOutput, BluetoothPcm, PcmFormat};
 use reborn_observability::{Level, Observer};
 use serde_json::json;
 use std::{
@@ -28,6 +28,7 @@ unsafe extern "C" {
         rate: u32,
         preferred_format: u32,
         wired: c_int,
+        strict_format: c_int,
         params: *mut RawParams,
     ) -> c_int;
     fn rb_sink_open(
@@ -64,14 +65,15 @@ fn text(b: &[c_char]) -> String {
 fn native_format(format: PcmFormat) -> u32 {
     match format {
         PcmFormat::S16LE => 1,
+        PcmFormat::S24LE => 3,
         PcmFormat::S32LE => 2,
     }
 }
 fn format(value: u32) -> PcmFormat {
-    if value == 1 {
-        PcmFormat::S16LE
-    } else {
-        PcmFormat::S32LE
+    match value {
+        1 => PcmFormat::S16LE,
+        3 => PcmFormat::S24LE,
+        _ => PcmFormat::S32LE,
     }
 }
 fn parameters(raw: &RawParams, planned: Option<&SinkSpec>) -> Parameters {
@@ -129,25 +131,61 @@ impl AlsaSink {
         id: u64,
     ) -> Result<(SinkSpec, Parameters), String> {
         let (device, wired) = output_name(output)?;
-        Self::plan_named(&device, output.clone(), rate, wired, log, id)
+        if !wired {
+            return Err("Bluetooth sink requires an observed BlueALSA PCM object".into());
+        }
+        Self::plan_named(
+            &device,
+            output.clone(),
+            rate,
+            wired,
+            PcmFormat::S32LE,
+            false,
+            None,
+            log,
+            id,
+        )
+    }
+    pub fn plan_bluetooth(
+        output: &AudioOutput,
+        pcm: &BluetoothPcm,
+        log: Observer,
+        id: u64,
+    ) -> Result<(SinkSpec, Parameters), String> {
+        let (device, wired) = output_name(output)?;
+        if wired {
+            return Err("Bluetooth PCM observation cannot plan a wired sink".into());
+        }
+        if pcm.channels != Some(2) {
+            return Err("Bluetooth PCM must negotiate stereo for the audio sink".into());
+        }
+        let rate = pcm.negotiated_rate()?;
+        let preferred = pcm.negotiated_format()?;
+        Self::plan_named(
+            &device,
+            output.clone(),
+            rate,
+            wired,
+            preferred,
+            true,
+            Some(pcm),
+            log,
+            id,
+        )
     }
     fn plan_named(
         device: &str,
         output: AudioOutput,
         rate: u32,
         wired: bool,
+        preferred: PcmFormat,
+        strict_format: bool,
+        observed: Option<&BluetoothPcm>,
         log: Observer,
         id: u64,
     ) -> Result<(SinkSpec, Parameters), String> {
         let name = CString::new(device).map_err(|_| "NUL in PCM device")?;
         let mut raw: RawParams = unsafe { std::mem::zeroed() };
-        // Wired is deliberately planned with S32 first. The Y2Linux
-        // qualification profile can return an explicit S16 fallback.
-        let preferred = if wired {
-            PcmFormat::S32LE
-        } else {
-            PcmFormat::S16LE
-        };
         // SAFETY: synchronous probe receives a live device name and output storage.
         let r = unsafe {
             rb_alsa_plan(
@@ -155,6 +193,7 @@ impl AlsaSink {
                 rate,
                 native_format(preferred),
                 i32::from(wired),
+                i32::from(strict_format),
                 &mut raw,
             )
         };
@@ -170,10 +209,24 @@ impl AlsaSink {
             return Err(error(r));
         }
         let actual = format(raw.format);
+        if strict_format && actual != preferred {
+            return Err(format!(
+                "ALSA sink changed observed Bluetooth PCM format from {} to {}",
+                preferred.as_str(),
+                actual.as_str()
+            ));
+        }
         let spec = SinkSpec {
             output,
             rate: raw.rate,
             format: actual,
+            physical_bits: actual.physical_bits(),
+            valid_bits: actual.valid_bits(),
+            channels: raw.channels as u8,
+            layout: "stereo".into(),
+            device: device.into(),
+            codec: observed.and_then(|pcm| pcm.codec.clone()),
+            transport_generation: observed.map_or(0, |pcm| pcm.transport_generation),
             fallback: raw.fallback != 0,
             fallback_reason: text(&raw.fallback_reason),
         };
@@ -204,7 +257,14 @@ impl AlsaSink {
         Self::open_spec(&spec, log, id)
     }
     pub fn open_spec(spec: &SinkSpec, log: Observer, id: u64) -> Result<Self, String> {
-        let (device, wired) = output_name(&spec.output)?;
+        let (device, wired) = if spec.device.is_empty() {
+            output_name(&spec.output)?
+        } else {
+            (
+                spec.device.clone(),
+                matches!(spec.output, AudioOutput::Wired),
+            )
+        };
         Self::open_named(&device, spec.rate, spec.format, wired, Some(spec), log, id)
     }
     pub fn open_named(

@@ -19,6 +19,13 @@ pub struct SinkSpec {
     pub output: AudioOutput,
     pub rate: u32,
     pub format: PcmFormat,
+    pub physical_bits: u8,
+    pub valid_bits: u8,
+    pub channels: u8,
+    pub layout: String,
+    pub device: String,
+    pub codec: Option<String>,
+    pub transport_generation: u64,
     pub fallback: bool,
     pub fallback_reason: String,
 }

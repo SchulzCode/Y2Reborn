@@ -93,14 +93,21 @@ static int wired_profile_allows(int format, unsigned rate) {
   size_t n = fread(json, 1, sizeof(json) - 1, file);
   fclose(file);
   json[n] = 0;
-  const char *format_name = format == 2 ? "S32_LE" : "S16_LE";
+  const char *format_name = format == 3 ? "S24_LE" : format == 2 ? "S32_LE" : "S16_LE";
   char rate_name[16];
   snprintf(rate_name, sizeof(rate_name), "%u", rate);
   return profile_section_has(json, "\"qualified_formats\"", format_name) &&
          profile_section_has(json, "\"qualified_rates\"", rate_name);
 }
 static snd_pcm_format_t pcm_format(unsigned format) {
-  return format == 2 ? SND_PCM_FORMAT_S32_LE : SND_PCM_FORMAT_S16_LE;
+  switch (format) {
+  case 1:
+    return SND_PCM_FORMAT_S16_LE;
+  case 3:
+    return SND_PCM_FORMAT_S24_LE;
+  default:
+    return SND_PCM_FORMAT_S32_LE;
+  }
 }
 static int test_candidate(snd_pcm_t *pcm, unsigned rate, unsigned format) {
   snd_pcm_hw_params_t *p;
@@ -118,7 +125,8 @@ static int test_candidate(snd_pcm_t *pcm, unsigned rate, unsigned format) {
   return snd_pcm_hw_params_test_rate(pcm, p, rate, 0);
 }
 int rb_alsa_plan(const char *name, unsigned requested_rate,
-                 unsigned preferred_format, int wired, RbParams *params) {
+                 unsigned preferred_format, int wired, int strict_format,
+                 RbParams *params) {
   if (!name || !params || requested_rate < 8000 || requested_rate > 384000)
     return -EINVAL;
   memset(params, 0, sizeof(*params));
@@ -127,7 +135,9 @@ int rb_alsa_plan(const char *name, unsigned requested_rate,
   int r = snd_pcm_open(&pcm, name, SND_PCM_STREAM_PLAYBACK, SND_PCM_NONBLOCK);
   if (r < 0)
     return r;
-  unsigned candidates[2] = {preferred_format == 1 ? 1 : 2, 1};
+  unsigned candidates[2] = {preferred_format, strict_format ? 0u : 1u};
+  if (!strict_format && preferred_format == 1)
+    candidates[1] = 2;
   if (candidates[0] == candidates[1])
     candidates[1] = 0;
   unsigned selected = 0;
@@ -155,10 +165,10 @@ int rb_alsa_plan(const char *name, unsigned requested_rate,
   params->period = 512;
   params->buffer = 4096;
   params->hardware_mixer_gain_cdb = wired ? -2400 : INT32_MIN;
-  params->fallback = selected != (preferred_format == 1 ? 1u : 2u);
+  params->fallback = selected != preferred_format;
   if (params->fallback)
     snprintf(params->fallback_reason, sizeof(params->fallback_reason),
-             wired ? "preferred S32_LE is not physically qualified for this rate"
+             wired && preferred_format == 2 ? "preferred S32_LE is not physically qualified for this rate"
                    : "preferred sink format unavailable; selected ALSA fallback");
   return 0;
 }

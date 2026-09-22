@@ -9,7 +9,7 @@ use dbus::{
     message::MatchRule,
     Message, Path as DbusPath,
 };
-use reborn_core::{atomic_write, RadioScan};
+use reborn_core::{atomic_write, BluetoothPcm, RadioScan};
 use reborn_observability::{HealthState, Level, Observer};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -38,7 +38,7 @@ pub struct Status {
     pub powered: bool,
     pub discovering: bool,
     pub bluealsa: bool,
-    pub pcms: Vec<serde_json::Value>,
+    pub pcms: Vec<BluetoothPcm>,
     pub devices: Vec<Device>,
     pub pending: Option<Pairing>,
     pub error: Option<String>,
@@ -46,7 +46,7 @@ pub struct Status {
     pub scan: RadioScan,
 }
 impl Status {
-    pub fn playback_rate(&self, address: &str) -> Result<u32, String> {
+    pub fn playback_pcm(&self, address: &str) -> Result<BluetoothPcm, String> {
         let device = self
             .devices
             .iter()
@@ -55,17 +55,19 @@ impl Status {
         if !self.bluealsa {
             return Err("BlueALSA unavailable".into());
         }
-        let pcm = self
-            .pcms
+        self.pcms
             .iter()
-            .find(|p| {
-                p["device"] == device.path && p["mode"] == "sink" && p["transport"] == "A2DP-source"
-            })
-            .ok_or("BlueALSA playback PCM not ready; retry after connection completes")?;
-        match (pcm["sampling"].as_u64(), pcm["channels"].as_u64()) {
-            (Some(rate @ (44100 | 48000)), Some(2)) => Ok(rate as u32),
-            _ => Err("Bluetooth PCM must negotiate stereo 44.1 or 48 kHz for Baseline 01".into()),
+            .find(|pcm| pcm.is_a2dp_playback_for(&device.path))
+            .cloned()
+            .ok_or("BlueALSA playback PCM not ready; retry after connection completes".into())
+    }
+
+    pub fn playback_rate(&self, address: &str) -> Result<u32, String> {
+        let pcm = self.playback_pcm(address)?;
+        if pcm.channels != Some(2) {
+            return Err("Bluetooth PCM must negotiate stereo for Baseline 01".into());
         }
+        pcm.negotiated_rate()
     }
 }
 #[derive(Clone, Serialize, Deserialize)]
@@ -93,7 +95,7 @@ struct Pending {
     display: Pairing,
     started: Instant,
 }
-type Operations = Arc<Mutex<HashMap<u32, (u64, Instant, String)>>>;
+type Operations = Arc<Mutex<HashMap<u32, (u64, Instant, String, String)>>>;
 type Objects = HashMap<DbusPath<'static>, HashMap<String, PropMap>>;
 fn objects(c: &Connection) -> Result<Objects, String> {
     c.with_proxy("org.bluez", "/", Duration::from_secs(2))
@@ -110,6 +112,12 @@ fn text(p: &PropMap, k: &str) -> String {
 }
 fn yes(p: &PropMap, k: &str) -> bool {
     p.get(k).and_then(|v| v.0.as_i64()).unwrap_or(0) != 0
+}
+fn pcm_generation(object: &str) -> u64 {
+    object.bytes().fold(0xcbf29ce484222325, |hash, byte| {
+        hash.wrapping_mul(0x100000001b3)
+            .wrapping_add(u64::from(byte))
+    })
 }
 fn status(c: &Connection) -> Result<(String, Status), String> {
     let mut state = Status::default();
@@ -148,12 +156,43 @@ fn status(c: &Connection) -> Result<(String, Status), String> {
         )
         .method_call("org.freedesktop.DBus", "NameHasOwner", ("org.bluealsa",));
     state.bluealsa = reply.is_ok_and(|r| r.0);
-    // BlueALSA 4.3 exposes PCMs through ObjectManager, not the obsolete GetPCMs method.
+    // BlueALSA 5 exposes PCM objects through ObjectManager. Its negotiated
+    // properties are Rate and Format; Sampling was the incompatible v4 name.
     let pcms: Result<Objects, _> = c
         .with_proxy("org.bluealsa", "/org/bluealsa", Duration::from_secs(1))
         .get_managed_objects();
     if let Ok(pcms) = pcms {
-        state.pcms=pcms.into_iter().filter_map(|(path,mut interfaces)| interfaces.remove("org.bluealsa.PCM1").map(|p|(path,p))).take(16).map(|(path,p)|json!({"object":path.to_string(),"device":text(&p,"Device"),"transport":text(&p,"Transport"),"mode":text(&p,"Mode"),"codec":text(&p,"Codec"),"sampling":p.get("Sampling").and_then(|v|v.0.as_u64()),"channels":p.get("Channels").and_then(|v|v.0.as_u64())})).collect();
+        state.pcms = pcms
+            .into_iter()
+            .filter_map(|(path, mut interfaces)| {
+                interfaces.remove("org.bluealsa.PCM1").map(|p| (path, p))
+            })
+            .take(16)
+            .map(|(path, p)| {
+                let object = path.to_string();
+                BluetoothPcm {
+                    object: object.clone(),
+                    device: text(&p, "Device"),
+                    transport: text(&p, "Transport"),
+                    mode: text(&p, "Mode"),
+                    codec: (!text(&p, "Codec").is_empty()).then(|| text(&p, "Codec")),
+                    format: p
+                        .get("Format")
+                        .and_then(|v| v.0.as_u64())
+                        .and_then(|value| u16::try_from(value).ok()),
+                    rate: p
+                        .get("Rate")
+                        .and_then(|v| v.0.as_u64())
+                        .and_then(|value| u32::try_from(value).ok()),
+                    channels: p
+                        .get("Channels")
+                        .and_then(|v| v.0.as_u64())
+                        .and_then(|value| u8::try_from(value).ok()),
+                    running: p.get("Running").and_then(|v| v.0.as_i64()).map(|v| v != 0),
+                    transport_generation: pcm_generation(&object),
+                }
+            })
+            .collect();
     }
     state.devices.sort_by(|a, b| a.name.cmp(&b.name));
     state.devices.truncate(128);
@@ -267,9 +306,25 @@ impl Bluetooth {
                     let operations:Operations=Arc::new(Mutex::new(HashMap::new()));
                     for kind in [dbus::MessageType::MethodReturn,dbus::MessageType::Error] {
                         let ops=operations.clone();let observer=log.clone();let mut rule=MatchRule::new();rule.msg_type=Some(kind);
-                        c.start_receive(rule,Box::new(move|mut msg,_|{
-                            if let Some(serial)=msg.get_reply_serial(){if let Ok(mut ops)=ops.lock(){if let Some((id,_,method))=ops.remove(&serial){
-                                match msg.as_result(){Ok(_)=>observer.emit(Level::Info,"bluetooth","operation_completed","BlueZ operation completed",Some(id),json!({"method":method})),Err(e)=>{observer.add("bluetooth_errors",1.);observer.emit(Level::Error,"bluetooth","operation_failed",&dbus_error(e),Some(id),json!({"interface":"org.bluez.Device1","method":method,"recovery_attempted":false}));}}
+                        c.start_receive(rule,Box::new(move|mut msg,connection|{
+                            if let Some(serial)=msg.get_reply_serial(){if let Ok(mut ops)=ops.lock(){if let Some((id,_,method,path))=ops.remove(&serial){
+                                match msg.as_result(){
+                                    Ok(_) => {
+                                        let mut trusted = None;
+                                        if method == "Pair" {
+                                            let result: Result<(), dbus::Error> = connection
+                                                .with_proxy("org.bluez", path.as_str(), Duration::from_secs(5))
+                                                .set("org.bluez.Device1", "Trusted", true);
+                                            trusted = Some(result.is_ok());
+                                            if let Err(e) = result {
+                                                observer.add("bluetooth_errors", 1.);
+                                                observer.emit(Level::Error,"bluetooth","trust_failed",&dbus_error(e),Some(id),json!({"method":"Pair","path":path,"recovery_attempted":false}));
+                                            }
+                                        }
+                                        observer.emit(Level::Info,"bluetooth","operation_completed","BlueZ operation completed",Some(id),json!({"method":method,"trusted":trusted}));
+                                    },
+                                    Err(e)=>{observer.add("bluetooth_errors",1.);observer.emit(Level::Error,"bluetooth","operation_failed",&dbus_error(e),Some(id),json!({"interface":"org.bluez.Device1","method":method,"recovery_attempted":false}));}
+                                }
                             }}}true
                         }));
                     }
@@ -356,7 +411,7 @@ impl Bluetooth {
                             break;
                         }
                         let mut changed = false;
-                        if let Ok(mut ops)=operations.lock(){ops.retain(|_,(id,start,method)|{if start.elapsed()>Duration::from_secs(70){log.add("bluetooth_errors",1.);log.emit(Level::Error,"bluetooth","operation_timeout","BlueZ operation deadline exceeded",Some(*id),json!({"method":method}));false}else{true}});}
+                        if let Ok(mut ops)=operations.lock(){ops.retain(|_,(id,start,method,_)|{if start.elapsed()>Duration::from_secs(70){log.add("bluetooth_errors",1.);log.emit(Level::Error,"bluetooth","operation_timeout","BlueZ operation deadline exceeded",Some(*id),json!({"method":method}));false}else{true}});}
                         if refresh.elapsed() > Duration::from_secs(2) {
                             match status(&c) {
                                 Ok((a, mut s)) => {
@@ -509,14 +564,14 @@ impl Bluetooth {
                                         // Send asynchronous method calls on the Agent's own connection so callbacks are dispatched by this worker.
                                         let message = Message::new_method_call(
                                             "org.bluez",
-                                            path,
+                                            &path,
                                             "org.bluez.Device1",
                                             member,
                                         )
                                         .map_err(|_| "invalid D-Bus path".to_string());
                                         message.and_then(|m| {
                                             c.send(m)
-                                                .map(|serial| {if let Ok(mut ops)=operations.lock(){if ops.len()<16{ops.insert(serial,(id,Instant::now(),member.into()));}}})
+                                                .map(|serial| {if let Ok(mut ops)=operations.lock(){if ops.len()<16{ops.insert(serial,(id,Instant::now(),member.into(),path.clone()));}}})
                                                 .map_err(|_| "D-Bus send failed".into())
                                         })
                                     }
@@ -857,9 +912,15 @@ mod tests {
                 audio: true,
                 ..Default::default()
             }],
-            pcms: vec![
-                json!({"device":"/org/bluez/hci0/dev_12_34_56_78_90_AB", "transport":"A2DP-source", "mode":"sink", "channels":2, "sampling":44100}),
-            ],
+            pcms: vec![BluetoothPcm {
+                device: "/org/bluez/hci0/dev_12_34_56_78_90_AB".into(),
+                transport: "A2DP-source".into(),
+                mode: "sink".into(),
+                format: Some(0x8210),
+                rate: Some(44100),
+                channels: Some(2),
+                ..Default::default()
+            }],
             ..Default::default()
         }
     }
@@ -867,22 +928,23 @@ mod tests {
     fn selects_negotiated_rate_for_exact_peer_and_direction() {
         let mut s = connected();
         assert_eq!(s.playback_rate("12:34:56:78:90:ab").unwrap(), 44100);
-        s.pcms[0]["sampling"] = json!(48000);
+        s.pcms[0].rate = Some(48000);
         assert_eq!(s.playback_rate("12:34:56:78:90:AB").unwrap(), 48000);
-        s.pcms[0]["device"] = json!("/org/bluez/hci0/dev_other");
+        s.pcms[0].device = "/org/bluez/hci0/dev_other".into();
         assert!(s.playback_rate("12:34:56:78:90:AB").is_err());
         s = connected();
-        s.pcms[0]["mode"] = json!("source");
+        s.pcms[0].mode = "source".into();
         assert!(s.playback_rate("12:34:56:78:90:AB").is_err());
         s = connected();
-        s.pcms[0]["transport"] = json!("HFP-AG");
+        s.pcms[0].transport = "HFP-AG".into();
         assert!(s.playback_rate("12:34:56:78:90:AB").is_err());
     }
     #[test]
     fn unavailable_and_unsupported_pcm_never_silently_change_rate() {
-        for (field, value) in [("sampling", json!(96000)), ("channels", json!(1))] {
+        for (rate, channels) in [(Some(96000), Some(2)), (Some(44100), Some(1))] {
             let mut s = connected();
-            s.pcms[0][field] = value;
+            s.pcms[0].rate = rate;
+            s.pcms[0].channels = channels;
             assert!(s.playback_rate("12:34:56:78:90:AB").is_err());
         }
         let mut s = connected();
@@ -891,5 +953,20 @@ mod tests {
         s = connected();
         s.devices[0].connected = false;
         assert!(s.playback_rate("12:34:56:78:90:AB").is_err());
+    }
+    #[test]
+    fn bluealsa_pcm_format_is_typed_and_unknown_is_not_sbc() {
+        let mut s = connected();
+        assert_eq!(
+            s.pcms[0].negotiated_format().unwrap(),
+            reborn_core::PcmFormat::S16LE
+        );
+        s.pcms[0].format = Some(0x8418);
+        assert_eq!(
+            s.pcms[0].negotiated_format().unwrap(),
+            reborn_core::PcmFormat::S24LE
+        );
+        s.pcms[0].format = None;
+        assert!(s.pcms[0].negotiated_format().is_err());
     }
 }

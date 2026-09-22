@@ -135,24 +135,37 @@ impl Runtime {
         if !track.path.is_file() {
             return Err("track source unavailable".into());
         }
-        let requested_rate = match &self.model.output {
-            AudioOutput::Wired if track.sample_rate >= 8_000 => track.sample_rate,
-            _ => self.output_rate()?,
+        let output = self.model.output.clone();
+        let bluetooth_pcm = match &output {
+            AudioOutput::Bluetooth(address) => Some(self.bt_state.playback_pcm(address)?),
+            AudioOutput::Wired => None,
+        };
+        let requested_rate = match bluetooth_pcm.as_ref() {
+            Some(pcm) => pcm.negotiated_rate()?,
+            None if track.sample_rate >= 8_000 => track.sample_rate,
+            None => self.output_rate()?,
         };
         /* ALSA planning opens the named PCM to probe its actual parameters.
          * Release the worker's exclusive handle first so reconfiguration is
          * ordered and cannot race an in-flight sink owner. */
         self.playback.stop_and_wait(self.model.generation)?;
-        let (spec, _planned) = match reborn_audio::AlsaSink::plan(
-            &self.model.output,
-            requested_rate,
-            self.log.clone(),
-            self.log.correlation(),
-        ) {
+        let plan = |rate| match bluetooth_pcm.as_ref() {
+            Some(pcm) => reborn_audio::AlsaSink::plan_bluetooth(
+                &output,
+                pcm,
+                self.log.clone(),
+                self.log.correlation(),
+            ),
+            None => reborn_audio::AlsaSink::plan(
+                &output,
+                rate,
+                self.log.clone(),
+                self.log.correlation(),
+            ),
+        };
+        let (spec, _planned) = match plan(requested_rate) {
             Ok(plan) => plan,
-            Err(error)
-                if matches!(&self.model.output, AudioOutput::Wired) && requested_rate != 44_100 =>
-            {
+            Err(error) if matches!(&output, AudioOutput::Wired) && requested_rate != 44_100 => {
                 self.log.emit(
                     Level::Warn,
                     "audio",
@@ -161,12 +174,7 @@ impl Runtime {
                     Some(self.log.correlation()),
                     json!({"source_rate":requested_rate,"selected_rate":44100,"reason":error}),
                 );
-                reborn_audio::AlsaSink::plan(
-                    &self.model.output,
-                    44_100,
-                    self.log.clone(),
-                    self.log.correlation(),
-                )?
+                plan(44_100)?
             }
             Err(error) => return Err(error),
         };
@@ -1337,12 +1345,8 @@ fn run() -> Result<(), String> {
                     let connection = s
                         .pcms
                         .iter()
-                        .find(|pcm| {
-                            pcm["device"] == device.path
-                                && pcm["mode"] == "sink"
-                                && pcm["transport"] == "A2DP-source"
-                        })
-                        .and_then(|pcm| pcm["codec"].as_str())
+                        .find(|pcm| pcm.is_a2dp_playback_for(&device.path))
+                        .and_then(|pcm| pcm.codec.as_deref())
                         .filter(|codec| !codec.is_empty())
                         .map(|codec| format!("Connected: {} · {}", device.name, codec))
                         .unwrap_or_else(|| format!("Connected: {}", device.name));

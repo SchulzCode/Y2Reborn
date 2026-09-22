@@ -50,6 +50,8 @@ pub enum AudioOutput {
 pub enum PcmFormat {
     #[serde(rename = "S16_LE")]
     S16LE,
+    #[serde(rename = "S24_LE")]
+    S24LE,
     #[default]
     #[serde(rename = "S32_LE")]
     S32LE,
@@ -58,6 +60,7 @@ impl PcmFormat {
     pub const fn bytes_per_sample(self) -> usize {
         match self {
             Self::S16LE => 2,
+            Self::S24LE => 4,
             Self::S32LE => 4,
         }
     }
@@ -67,7 +70,67 @@ impl PcmFormat {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::S16LE => "S16_LE",
+            Self::S24LE => "S24_LE",
             Self::S32LE => "S32_LE",
+        }
+    }
+    pub const fn physical_bits(self) -> u8 {
+        match self {
+            Self::S16LE => 16,
+            Self::S24LE | Self::S32LE => 32,
+        }
+    }
+    pub const fn valid_bits(self) -> u8 {
+        match self {
+            Self::S16LE => 16,
+            Self::S24LE => 24,
+            Self::S32LE => 32,
+        }
+    }
+}
+
+/// A read-only observation of one BlueALSA PCM object. The format and rate
+/// come from the negotiated PCM object, while `codec` is only descriptive.
+/// Keeping the observation typed prevents a requested codec from being
+/// mistaken for the transport that is actually active.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct BluetoothPcm {
+    pub object: String,
+    pub device: String,
+    pub transport: String,
+    pub mode: String,
+    pub codec: Option<String>,
+    pub format: Option<u16>,
+    pub rate: Option<u32>,
+    pub channels: Option<u8>,
+    pub running: Option<bool>,
+    pub transport_generation: u64,
+}
+impl BluetoothPcm {
+    pub fn is_a2dp_playback_for(&self, device: &str) -> bool {
+        self.device == device && self.mode == "sink" && self.transport == "A2DP-source"
+    }
+
+    pub fn negotiated_format(&self) -> Result<PcmFormat, String> {
+        match self.format {
+            Some(0x8210) => Ok(PcmFormat::S16LE),
+            Some(0x8418) => Ok(PcmFormat::S24LE),
+            Some(0x8420) => Ok(PcmFormat::S32LE),
+            Some(0x8318) => {
+                Err("packed 24-bit Bluetooth PCM is not supported by the sink membrane".into())
+            }
+            Some(value) => Err(format!("unsupported BlueALSA PCM format 0x{value:04x}")),
+            None => Err("BlueALSA PCM format is not observed yet".into()),
+        }
+    }
+
+    pub fn negotiated_rate(&self) -> Result<u32, String> {
+        match self.rate {
+            Some(rate @ (44_100 | 48_000)) => Ok(rate),
+            Some(rate) => Err(format!(
+                "Bluetooth PCM rate {rate} Hz is outside the qualified baseline"
+            )),
+            None => Err("BlueALSA PCM rate is not observed yet".into()),
         }
     }
 }

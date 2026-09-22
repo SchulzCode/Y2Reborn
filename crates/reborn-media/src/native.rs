@@ -319,10 +319,12 @@ pub fn convert_pcm(
             rate as c_int,
             match input_format {
                 PcmFormat::S16LE => 1,
+                PcmFormat::S24LE => 3,
                 PcmFormat::S32LE => 2,
             },
             match output_format {
                 PcmFormat::S16LE => 1,
+                PcmFormat::S24LE => 3,
                 PcmFormat::S32LE => 2,
             },
             output.as_mut_ptr(),
@@ -360,6 +362,7 @@ pub fn crossfade_pcm(
             rate as c_int,
             match format {
                 PcmFormat::S16LE => 1,
+                PcmFormat::S24LE => 3,
                 PcmFormat::S32LE => 2,
             },
             output.as_mut_ptr(),
@@ -560,6 +563,7 @@ impl Decoder {
                 spec.rate as c_int,
                 match spec.format {
                     PcmFormat::S16LE => 1,
+                    PcmFormat::S24LE => 3,
                     PcmFormat::S32LE => 2,
                 },
                 &raw_dsp,
@@ -607,10 +611,10 @@ impl Decoder {
                 track: meta.track,
                 disc: meta.disc,
                 artwork: meta.artwork != 0,
-                output_format: if meta.output_format == 1 {
-                    PcmFormat::S16LE
-                } else {
-                    PcmFormat::S32LE
+                output_format: match meta.output_format {
+                    1 => PcmFormat::S16LE,
+                    3 => PcmFormat::S24LE,
+                    _ => PcmFormat::S32LE,
                 },
                 resampling: meta.resampling != 0,
                 format_conversion: meta.format_conversion != 0,
@@ -860,6 +864,15 @@ mod tests {
             i16::MAX
         );
         assert_eq!(i16::from_le_bytes(output[8..10].try_into().unwrap()), 0);
+        let s24 = convert_pcm(
+            &vec![0; 4 * PcmFormat::S32LE.bytes_per_frame()],
+            48_000,
+            PcmFormat::S32LE,
+            PcmFormat::S24LE,
+        )
+        .unwrap();
+        assert_eq!(s24.len(), 4 * PcmFormat::S24LE.bytes_per_frame());
+        assert!(s24.iter().all(|sample| *sample == 0));
     }
     #[test]
     fn malformed_is_error() {
