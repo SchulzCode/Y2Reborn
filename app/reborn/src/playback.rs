@@ -1819,7 +1819,6 @@ mod tests {
         )
         .unwrap();
         playback.stop_and_wait(2).unwrap();
-        let started = Instant::now();
         playback
             .begin_start_with_gapless(LoadRequest {
                 track: track(),
@@ -1834,7 +1833,8 @@ mod tests {
                 id: 1,
             })
             .unwrap();
-        assert!(started.elapsed() < Duration::from_millis(100));
+        // The opener is still held behind `release_rx`; reaching this point
+        // proves begin_start returned without waiting for the worker result.
         assert!(entered_rx.recv_timeout(Duration::from_millis(100)).is_ok());
         assert!(playback.has_pending_start());
         assert!(playback.poll_start().is_none());
