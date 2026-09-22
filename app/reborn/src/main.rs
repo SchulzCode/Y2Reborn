@@ -42,9 +42,15 @@ struct Runtime {
     headless: bool,
     last_activity: Instant,
     query: Option<Receiver<Result<Vec<Track>, String>>>,
+    action_depth: usize,
+    action_before: Option<AppModel>,
+    action_dirty_before: Option<DirtyState>,
+    reconfiguration_attempted: bool,
+    sink_release_started: bool,
+    transition_generation: Option<u64>,
 }
 
-#[derive(Default)]
+#[derive(Default, Clone, Copy)]
 struct DirtyState {
     render: bool,
     persistence: bool,
@@ -81,7 +87,108 @@ impl DirtyState {
     }
 }
 
+fn run_sink_reconfiguration<P>(
+    playback: &mut playback::Playback,
+    generation: u64,
+    plan: impl FnOnce() -> Result<P, String>,
+    start: impl FnOnce(&mut playback::Playback, P) -> Result<(), String>,
+) -> Result<(), String> {
+    playback.stop_and_wait(generation)?;
+    let plan = plan()?;
+    start(playback, plan)
+}
+
+fn failed_reconfiguration_model(
+    mut previous: AppModel,
+    error: &str,
+    sink_release_started: bool,
+    failed_generation: Option<u64>,
+) -> AppModel {
+    if !sink_release_started {
+        return previous;
+    }
+    let was_active = matches!(
+        previous.playback,
+        PlaybackState::Playing | PlaybackState::Buffering
+    );
+    let had_current = previous.current().is_some();
+    previous.playback = if was_active && had_current {
+        PlaybackState::Error
+    } else if !had_current {
+        PlaybackState::Stopped
+    } else {
+        previous.playback
+    };
+    previous.last_error = Some(error.to_owned());
+    previous.generation = failed_generation
+        .map(|generation| generation.wrapping_add(1))
+        .unwrap_or_else(|| previous.generation.wrapping_add(1));
+    previous
+}
+
 impl Runtime {
+    fn with_model_action(
+        &mut self,
+        action: impl FnOnce(&mut Self) -> Result<(), String>,
+    ) -> Result<(), String> {
+        let outermost = self.action_depth == 0;
+        if outermost {
+            self.action_before = Some(self.model.clone());
+            self.action_dirty_before = Some(self.dirty);
+            self.reconfiguration_attempted = false;
+            self.sink_release_started = false;
+            self.transition_generation = None;
+        }
+        self.action_depth += 1;
+        let result = action(self);
+        self.action_depth -= 1;
+        if outermost {
+            let before = self.action_before.take().expect("outer action snapshot");
+            let dirty_before = self
+                .action_dirty_before
+                .take()
+                .expect("outer action dirty snapshot");
+            let attempted = self.reconfiguration_attempted;
+            let release_started = self.sink_release_started;
+            let generation = self.transition_generation;
+            self.reconfiguration_attempted = false;
+            self.sink_release_started = false;
+            self.transition_generation = None;
+            if let Err(error) = &result {
+                if attempted {
+                    self.restore_failed_reconfiguration(
+                        before,
+                        dirty_before,
+                        error,
+                        release_started,
+                        generation,
+                    );
+                }
+            }
+        }
+        result
+    }
+
+    fn restore_failed_reconfiguration(
+        &mut self,
+        previous: AppModel,
+        dirty_before: DirtyState,
+        error: &str,
+        sink_release_started: bool,
+        transition_generation: Option<u64>,
+    ) {
+        if !sink_release_started {
+            self.model = previous;
+            self.dirty = dirty_before;
+            return;
+        }
+        self.model = failed_reconfiguration_model(previous, error, true, transition_generation);
+        self.playback.stop(self.model.generation);
+        self.art = false;
+        self.dirty.mark_both();
+        self.checkpoint();
+    }
+
     fn play_index(&mut self, index: usize, force_shuffle: bool) -> Result<(), String> {
         self.play_members(
             index,
@@ -171,6 +278,7 @@ impl Runtime {
         }
     }
     fn load(&mut self) -> Result<(), String> {
+        self.reconfiguration_attempted = true;
         let track = self.model.current().cloned().ok_or("queue is empty")?;
         if !track.path.is_file() {
             return Err("track source unavailable".into());
@@ -185,39 +293,8 @@ impl Runtime {
             None if track.sample_rate >= 8_000 => track.sample_rate,
             None => self.output_rate()?,
         };
-        /* ALSA planning opens the named PCM to probe its actual parameters.
-         * Release the worker's exclusive handle first so reconfiguration is
-         * ordered and cannot race an in-flight sink owner. */
-        self.playback.stop_and_wait(self.model.generation)?;
-        let plan = |rate| match bluetooth_pcm.as_ref() {
-            Some(pcm) => reborn_audio::AlsaSink::plan_bluetooth(
-                &output,
-                pcm,
-                self.log.clone(),
-                self.log.correlation(),
-            ),
-            None => reborn_audio::AlsaSink::plan(
-                &output,
-                rate,
-                self.log.clone(),
-                self.log.correlation(),
-            ),
-        };
-        let (spec, _planned) = match plan(requested_rate) {
-            Ok(plan) => plan,
-            Err(error) if matches!(&output, AudioOutput::Wired) && requested_rate != 44_100 => {
-                self.log.emit(
-                    Level::Warn,
-                    "audio",
-                    "qualified_rate_fallback",
-                    "Source rate is not in the current wired qualification profile",
-                    Some(self.log.correlation()),
-                    json!({"source_rate":requested_rate,"selected_rate":44100,"reason":error}),
-                );
-                plan(44_100)?
-            }
-            Err(error) => return Err(error),
-        };
+        let generation = self.model.generation.wrapping_add(1);
+        self.transition_generation = Some(generation);
         let entry_id = self
             .model
             .current_entry_id()
@@ -247,22 +324,87 @@ impl Runtime {
             eq_bands: self.model.settings.eq_bands.clone(),
             crossfade_ms: self.model.settings.crossfade_ms,
         };
-        self.model.invalidate();
-        self.model.playback = PlaybackState::Buffering;
-        self.art = false;
-        self.dirty.mark_both();
-        self.playback.load_with_gapless(playback::LoadRequest {
+        let request_parts = (
             track,
             entry_id,
             queue,
             queue_entry_ids,
-            position: self.model.position_ms,
-            spec,
-            generation: self.model.generation,
+            self.model.position_ms,
+            generation,
             dsp,
-            gapless_enabled: self.model.settings.gapless_enabled,
-            id: self.log.correlation(),
-        })
+            self.model.settings.gapless_enabled,
+            self.log.correlation(),
+        );
+        let log = self.log.clone();
+        let correlation = self.log.correlation();
+        let plan_output = output.clone();
+        self.sink_release_started = true;
+        let playback = &mut self.playback;
+        run_sink_reconfiguration(
+            playback,
+            generation,
+            || {
+                let plan = |rate| match bluetooth_pcm.as_ref() {
+                    Some(pcm) => reborn_audio::AlsaSink::plan_bluetooth(
+                        &plan_output,
+                        pcm,
+                        log.clone(),
+                        correlation,
+                    ),
+                    None => {
+                        reborn_audio::AlsaSink::plan(&plan_output, rate, log.clone(), correlation)
+                    }
+                };
+                match plan(requested_rate) {
+                    Ok((spec, _planned)) => Ok(spec),
+                    Err(error)
+                        if matches!(&plan_output, AudioOutput::Wired)
+                            && requested_rate != 44_100 =>
+                    {
+                        log.emit(
+                            Level::Warn,
+                            "audio",
+                            "qualified_rate_fallback",
+                            "Source rate is not in the current wired qualification profile",
+                            Some(correlation),
+                            json!({"source_rate":requested_rate,"selected_rate":44100,"reason":error}),
+                        );
+                        plan(44_100).map(|(spec, _planned)| spec)
+                    }
+                    Err(error) => Err(error),
+                }
+            },
+            move |playback, spec| {
+                let (
+                    track,
+                    entry_id,
+                    queue,
+                    queue_entry_ids,
+                    position,
+                    generation,
+                    dsp,
+                    gapless_enabled,
+                    id,
+                ) = request_parts;
+                playback.start_with_gapless(playback::LoadRequest {
+                    track,
+                    entry_id,
+                    queue,
+                    queue_entry_ids,
+                    position,
+                    spec,
+                    generation,
+                    dsp,
+                    gapless_enabled,
+                    id,
+                })
+            },
+        )?;
+        self.model.generation = generation;
+        self.model.playback = PlaybackState::Buffering;
+        self.art = false;
+        self.dirty.mark_both();
+        Ok(())
     }
     fn output_rate(&self) -> Result<u32, String> {
         match &self.model.output {
@@ -298,6 +440,9 @@ impl Runtime {
     }
 
     fn finish_track(&mut self) -> Result<(), String> {
+        self.with_model_action(Self::finish_track_inner)
+    }
+    fn finish_track_inner(&mut self) -> Result<(), String> {
         match self.model.settings.repeat {
             reborn_core::RepeatMode::Track => {
                 self.model.position_ms = 0;
@@ -336,6 +481,9 @@ impl Runtime {
         );
         self.model.output = out;
         self.dirty.mark_both();
+        if active {
+            self.load()?
+        }
         self.log.emit(
             Level::Info,
             "audio",
@@ -344,14 +492,14 @@ impl Runtime {
             Some(self.log.correlation()),
             json!({"output":self.model.output}),
         );
-        if active {
-            self.load()?
-        }
         self.checkpoint();
         self.dirty.mark_render();
         Ok(())
     }
     fn effect(&mut self, e: Effect) -> Result<(), String> {
+        self.with_model_action(|runtime| runtime.effect_inner(e))
+    }
+    fn effect_inner(&mut self, e: Effect) -> Result<(), String> {
         self.dirty.mark_render();
         match e {
             Effect::None => {}
@@ -796,6 +944,9 @@ impl Runtime {
         json!({"status":self.status(),"health":self.log.health(),"metrics":self.log.metrics(),"recent_errors":self.log.events(20,None,Some(Level::Warn),None),"resource_usage":fs::read_to_string("/proc/self/status").unwrap_or_default(),"kernel_events":kernel_events()})
     }
     fn play_control(&mut self, a: PlaybackAction) -> Result<(), String> {
+        self.with_model_action(|runtime| runtime.play_control_inner(a))
+    }
+    fn play_control_inner(&mut self, a: PlaybackAction) -> Result<(), String> {
         self.dirty.mark_render();
         match a {
             PlaybackAction::Play(id) => {
@@ -1137,6 +1288,12 @@ fn run() -> Result<(), String> {
         headless,
         last_activity: Instant::now(),
         query: None,
+        action_depth: 0,
+        action_before: None,
+        action_dirty_before: None,
+        reconfiguration_attempted: false,
+        sink_release_started: false,
+        transition_generation: None,
     };
     startup_phase(&log, process_started, "runtime_ready");
     let last_snapshot = Arc::new(Mutex::new(json!({"starting":true})));
@@ -1883,5 +2040,268 @@ mod runtime_dirty_tests {
         dirty.checkpoint_failed();
 
         assert!(dirty.checkpoint_due());
+    }
+}
+
+#[cfg(test)]
+mod runtime_reconfiguration_tests {
+    use super::{failed_reconfiguration_model, run_sink_reconfiguration};
+    use crate::playback::Playback;
+    use reborn_audio::{AudioSink, Parameters, SinkSpec};
+    use reborn_core::{
+        AppModel, AudioOutput, EqBand, PcmFormat, PlaybackState, QueueEntryId, ReplayGainMode,
+        Track,
+    };
+    use reborn_media::DspConfig;
+    use reborn_observability::Observer;
+    use std::{
+        path::PathBuf,
+        sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc,
+        },
+    };
+
+    struct CountingSink {
+        active: Arc<AtomicUsize>,
+    }
+    impl AudioSink for CountingSink {
+        fn parameters(&self) -> Parameters {
+            Parameters {
+                rate: 44_100,
+                period: 512,
+                buffer: 4096,
+                format: PcmFormat::S32LE,
+                channels: 2,
+                hardware_mixer_gain_db: None,
+                device: "transaction-test".into(),
+                fallback: false,
+                fallback_reason: String::new(),
+            }
+        }
+        fn write(&mut self, pcm: &[u8]) -> Result<usize, String> {
+            Ok(pcm.len() / 8)
+        }
+        fn discard(&mut self) -> Result<(), String> {
+            Ok(())
+        }
+        fn delay(&self) -> u64 {
+            0
+        }
+    }
+    impl Drop for CountingSink {
+        fn drop(&mut self) {
+            self.active.fetch_sub(1, Ordering::AcqRel);
+        }
+    }
+
+    fn active_model() -> AppModel {
+        let first = Track {
+            id: 1,
+            path: PathBuf::from("/music/first.flac"),
+            ..Default::default()
+        };
+        let second = Track {
+            id: 2,
+            path: PathBuf::from("/music/second.flac"),
+            ..Default::default()
+        };
+        let mut model = AppModel::default();
+        model.playback = PlaybackState::Playing;
+        model.queue = vec![first, second];
+        model.queue_entry_ids = vec![QueueEntryId(11), QueueEntryId(12)];
+        model.queue_position = 0;
+        model.position_ms = 12_345;
+        model.generation = 7;
+        model.output = AudioOutput::Wired;
+        model.settings.volume = 42;
+        model.settings.replay_gain = ReplayGainMode::Off;
+        model.settings.eq_enabled = false;
+        model.settings.eq_bands = vec![EqBand::default()];
+        model
+    }
+
+    fn test_spec() -> SinkSpec {
+        SinkSpec {
+            output: AudioOutput::Wired,
+            rate: 44_100,
+            format: PcmFormat::S32LE,
+            physical_bits: 32,
+            valid_bits: 32,
+            channels: 2,
+            layout: "stereo".into(),
+            device: "transaction-test".into(),
+            codec: None,
+            transport_generation: 0,
+            fallback: false,
+            fallback_reason: String::new(),
+        }
+    }
+
+    #[test]
+    fn plan_failure_after_release_never_starts_or_keeps_the_old_sink() {
+        let root = std::env::temp_dir().join(format!("reborn-plan-failure-{}", std::process::id()));
+        let log = Observer::new(&root).unwrap();
+        let open_count = Arc::new(AtomicUsize::new(0));
+        let factory_count = open_count.clone();
+        let peak = Arc::new(AtomicUsize::new(0));
+        let factory_peak = peak.clone();
+        let mut playback = Playback::with_sink(
+            log,
+            root,
+            Box::new(move |_, _, _| {
+                let active = factory_count.fetch_add(1, Ordering::AcqRel) + 1;
+                factory_peak.fetch_max(active, Ordering::AcqRel);
+                Ok(Box::new(CountingSink {
+                    active: factory_count.clone(),
+                }))
+            }),
+        )
+        .unwrap();
+        playback
+            .load(
+                Track::default(),
+                vec![],
+                0,
+                test_spec(),
+                1,
+                DspConfig::with_volume(42),
+                1,
+            )
+            .unwrap();
+        assert_eq!(open_count.load(Ordering::Acquire), 1);
+        let mut started = false;
+        let error = run_sink_reconfiguration(
+            &mut playback,
+            2,
+            || Err::<SinkSpec, _>("injected sink plan failure".into()),
+            |_, _| {
+                started = true;
+                Ok(())
+            },
+        )
+        .unwrap_err();
+
+        assert!(error.contains("injected sink plan failure"));
+        assert!(!started);
+        assert_eq!(open_count.load(Ordering::Acquire), 0);
+        playback.shutdown(3).unwrap();
+    }
+
+    #[test]
+    fn new_sink_opens_only_after_old_sink_release_acknowledges() {
+        let root = std::env::temp_dir().join(format!("reborn-plan-start-{}", std::process::id()));
+        let log = Observer::new(&root).unwrap();
+        let active = Arc::new(AtomicUsize::new(0));
+        let factory_active = active.clone();
+        let peak = Arc::new(AtomicUsize::new(0));
+        let factory_peak = peak.clone();
+        let mut playback = Playback::with_sink(
+            log,
+            root,
+            Box::new(move |_, _, _| {
+                let count = factory_active.fetch_add(1, Ordering::AcqRel) + 1;
+                factory_peak.fetch_max(count, Ordering::AcqRel);
+                Ok(Box::new(CountingSink {
+                    active: factory_active.clone(),
+                }))
+            }),
+        )
+        .unwrap();
+        playback
+            .load(
+                Track::default(),
+                vec![],
+                0,
+                test_spec(),
+                1,
+                DspConfig::with_volume(42),
+                1,
+            )
+            .unwrap();
+        assert_eq!(active.load(Ordering::Acquire), 1);
+        let track = Track {
+            id: 3,
+            path: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/fixtures/tone.flac"),
+            ..Default::default()
+        };
+
+        run_sink_reconfiguration(
+            &mut playback,
+            2,
+            || Ok(test_spec()),
+            move |playback, spec| {
+                playback.start_with_gapless(crate::playback::LoadRequest {
+                    track,
+                    entry_id: QueueEntryId(3),
+                    queue: vec![],
+                    queue_entry_ids: vec![],
+                    position: 0,
+                    spec,
+                    generation: 2,
+                    dsp: DspConfig::with_volume(42),
+                    gapless_enabled: true,
+                    id: 2,
+                })
+            },
+        )
+        .unwrap();
+
+        assert_eq!(active.load(Ordering::Acquire), 1);
+        assert_eq!(peak.load(Ordering::Acquire), 1);
+        playback.shutdown(3).unwrap();
+        assert_eq!(active.load(Ordering::Acquire), 0);
+    }
+
+    #[test]
+    fn output_seek_volume_replaygain_and_eq_failures_restore_prior_model() {
+        let previous = active_model();
+        let transition_generation = 10;
+        let mut intended = previous.clone();
+        intended.output = AudioOutput::Bluetooth("12:34:56:78:90:AB".into());
+        intended.queue_position = 1;
+        intended.position_ms = 54_321;
+        intended.settings.volume = 80;
+        intended.settings.replay_gain = ReplayGainMode::Track;
+        intended.settings.eq_enabled = true;
+        assert_ne!(intended.output, previous.output);
+        assert_ne!(intended.settings.volume, previous.settings.volume);
+
+        let restored = failed_reconfiguration_model(
+            previous.clone(),
+            "injected start failure",
+            true,
+            Some(transition_generation),
+        );
+        assert_eq!(restored.output, previous.output);
+        assert_eq!(restored.settings.volume, previous.settings.volume);
+        assert_eq!(restored.settings.replay_gain, previous.settings.replay_gain);
+        assert_eq!(restored.settings.eq_enabled, previous.settings.eq_enabled);
+        assert_eq!(restored.queue_position, previous.queue_position);
+        assert_eq!(restored.position_ms, previous.position_ms);
+        assert_eq!(restored.queue[0].id, previous.queue[0].id);
+        assert_eq!(restored.playback, PlaybackState::Error);
+        assert_eq!(
+            restored.last_error.as_deref(),
+            Some("injected start failure")
+        );
+        assert_eq!(restored.generation, transition_generation + 1);
+    }
+
+    #[test]
+    fn pre_release_failure_preserves_the_still_running_model() {
+        let previous = active_model();
+        let restored = failed_reconfiguration_model(
+            previous.clone(),
+            "transport observation unavailable",
+            false,
+            None,
+        );
+
+        assert_eq!(restored.playback, PlaybackState::Playing);
+        assert_eq!(restored.output, previous.output);
+        assert_eq!(restored.settings.volume, previous.settings.volume);
+        assert_eq!(restored.generation, previous.generation);
+        assert_eq!(restored.last_error, previous.last_error);
     }
 }

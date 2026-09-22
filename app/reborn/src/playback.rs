@@ -59,6 +59,7 @@ enum SinkCommand {
         generation: u64,
         spec: SinkSpec,
         id: u64,
+        reply: SyncSender<Result<(), String>>,
     },
     Stop(Option<SyncSender<()>>),
 }
@@ -81,13 +82,41 @@ pub struct Playback {
     decode: SyncSender<DecodeCommand>,
     sink: SyncSender<SinkCommand>,
     pub events: Receiver<PlaybackEvent>,
+    #[cfg(test)]
+    event_sender: SyncSender<PlaybackEvent>,
     epoch: Arc<AtomicU64>,
     cancel: Option<Cancel>,
+    sink_released: bool,
     state: Arc<Mutex<serde_json::Value>>,
     observer: Observer,
 }
 fn emit(tx: &SyncSender<PlaybackEvent>, e: Event) {
     let _ = tx.send(PlaybackEvent::Core(e));
+}
+fn send_before_deadline<T>(
+    sender: &SyncSender<T>,
+    mut item: T,
+    deadline: Instant,
+    unavailable: &str,
+    timed_out: &str,
+) -> Result<(), String> {
+    loop {
+        if Instant::now() >= deadline {
+            return Err(timed_out.into());
+        }
+        match sender.try_send(item) {
+            Ok(()) => return Ok(()),
+            Err(TrySendError::Disconnected(_)) => return Err(unavailable.into()),
+            Err(TrySendError::Full(returned)) => {
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                if remaining.is_zero() {
+                    return Err(timed_out.into());
+                }
+                item = returned;
+                thread::sleep(remaining.min(Duration::from_millis(1)));
+            }
+        }
+    }
 }
 fn send_stream_item(
     tx: &SyncSender<Stream>,
@@ -450,7 +479,7 @@ fn publish_artwork(
         });
     }
 }
-type SinkFactory =
+pub(crate) type SinkFactory =
     Box<dyn Fn(&SinkSpec, Observer, u64) -> Result<Box<dyn AudioSink>, String> + Send>;
 impl Playback {
     pub fn spawn(log: Observer, cache: PathBuf) -> Result<Self, String> {
@@ -462,11 +491,17 @@ impl Playback {
             }),
         )
     }
-    fn with_sink(log: Observer, cache: PathBuf, factory: SinkFactory) -> Result<Self, String> {
+    pub(crate) fn with_sink(
+        log: Observer,
+        cache: PathBuf,
+        factory: SinkFactory,
+    ) -> Result<Self, String> {
         let (dt, dr) = sync_channel::<DecodeCommand>(4);
         let (st, sr) = sync_channel::<SinkCommand>(8);
         let (pt, pr) = sync_channel::<Stream>(8);
         let (et, er) = sync_channel(64);
+        #[cfg(test)]
+        let event_sender = et.clone();
         let epoch = Arc::new(AtomicU64::new(0));
         let buffered = Arc::new(AtomicU64::new(0));
         let state = Arc::new(Mutex::new(json!({
@@ -934,6 +969,7 @@ impl Playback {
                                 generation: g,
                                 spec,
                                 id,
+                                reply,
                             } => {
                                 sink = None;
                                 pending = None;
@@ -968,16 +1004,11 @@ impl Playback {
                                         }
                                         sink = Some(s);
                                         al.health_set("audio", HealthState::Ok, true, "sink ready");
+                                        let _ = reply.try_send(Ok(()));
                                     }
                                     Err(e) => {
                                         al.health_set("audio", HealthState::Failed, true, &e);
-                                        emit(
-                                            &et,
-                                            Event::PlaybackError {
-                                                generation,
-                                                message: e,
-                                            },
-                                        );
+                                        let _ = reply.try_send(Err(e));
                                     }
                                 }
                                 last_progress = Instant::now();
@@ -1182,8 +1213,11 @@ impl Playback {
             decode: dt,
             sink: st,
             events: er,
+            #[cfg(test)]
+            event_sender,
             epoch,
             cancel: None,
+            sink_released: true,
             state,
             observer: state_observer,
         })
@@ -1214,7 +1248,12 @@ impl Playback {
             id,
         })
     }
+    #[cfg(test)]
     pub fn load_with_gapless(&mut self, request: LoadRequest) -> Result<(), String> {
+        self.stop_and_wait(request.generation)?;
+        self.start_with_gapless(request)
+    }
+    pub(crate) fn start_with_gapless(&mut self, request: LoadRequest) -> Result<(), String> {
         let LoadRequest {
             track,
             entry_id,
@@ -1230,16 +1269,38 @@ impl Playback {
         if !(8000..=384_000).contains(&spec.rate) {
             return Err("unsupported PCM rate".into());
         }
-        self.stop(generation);
+        if !self.sink_released {
+            return Err("audio sink release acknowledgement required before open".into());
+        }
         let cancel = Cancel::new()?;
-        self.cancel = Some(cancel.clone());
-        self.sink
-            .try_send(SinkCommand::Open {
-                generation,
-                spec: spec.clone(),
-                id,
-            })
-            .map_err(|_| "audio command queue full")?;
+        let (reply, opened) = sync_channel(1);
+        let deadline = Instant::now() + Duration::from_secs(2);
+        self.sink_released = false;
+        let opened_result = (|| {
+            send_before_deadline(
+                &self.sink,
+                SinkCommand::Open {
+                    generation,
+                    spec: spec.clone(),
+                    id,
+                    reply,
+                },
+                deadline,
+                "audio worker unavailable",
+                "audio open deadline exceeded",
+            )?;
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            match opened.recv_timeout(remaining) {
+                Ok(result) => result,
+                Err(RecvTimeoutError::Timeout) => Err("audio open deadline exceeded".into()),
+                Err(RecvTimeoutError::Disconnected) => Err("audio worker unavailable".into()),
+            }
+        })();
+        if let Err(error) = opened_result {
+            cancel.cancel();
+            self.invalidate_start(generation);
+            return Err(error);
+        }
         self.decode
             .try_send(DecodeCommand::Load(Box::new(Job {
                 track,
@@ -1252,9 +1313,21 @@ impl Playback {
                 position,
                 generation,
                 id,
-                cancel,
+                cancel: cancel.clone(),
             })))
-            .map_err(|_| "playback command queue full".into())
+            .map_err(|_| {
+                cancel.cancel();
+                self.invalidate_start(generation);
+                "playback command queue full".to_string()
+            })?;
+        self.cancel = Some(cancel);
+        Ok(())
+    }
+    fn invalidate_start(&mut self, generation: u64) {
+        let invalidated = generation.wrapping_add(1);
+        self.epoch.store(invalidated, Ordering::Release);
+        let _ = self.sink.try_send(SinkCommand::Stop(None));
+        let _ = self.decode.try_send(DecodeCommand::Stop);
     }
     pub fn stop(&mut self, generation: u64) {
         self.epoch.store(generation, Ordering::Release);
@@ -1265,17 +1338,35 @@ impl Playback {
         let _ = self.decode.try_send(DecodeCommand::Stop);
     }
     pub fn stop_and_wait(&mut self, generation: u64) -> Result<(), String> {
+        self.stop_and_wait_with_timeout(generation, Duration::from_secs(2))
+    }
+    fn stop_and_wait_with_timeout(
+        &mut self,
+        generation: u64,
+        timeout: Duration,
+    ) -> Result<(), String> {
+        let deadline = Instant::now() + timeout;
         self.epoch.store(generation, Ordering::Release);
         if let Some(c) = self.cancel.take() {
             c.cancel();
         }
         let (tx, rx) = sync_channel(1);
-        self.sink
-            .send(SinkCommand::Stop(Some(tx)))
-            .map_err(|_| "audio worker unavailable")?;
+        send_before_deadline(
+            &self.sink,
+            SinkCommand::Stop(Some(tx)),
+            deadline,
+            "audio worker unavailable",
+            "audio sink release deadline exceeded",
+        )?;
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        let result = rx
+            .recv_timeout(remaining)
+            .map_err(|_| "audio sink release deadline exceeded".to_string());
+        if result.is_ok() {
+            self.sink_released = true;
+        }
         let _ = self.decode.try_send(DecodeCommand::Stop);
-        rx.recv_timeout(Duration::from_secs(2))
-            .map_err(|_| "audio sink release deadline exceeded".into())
+        result
     }
     pub fn shutdown(&mut self, generation: u64) -> Result<(), String> {
         self.stop(generation);
@@ -1304,6 +1395,7 @@ mod tests {
     use super::*;
     use reborn_audio::Parameters;
     use reborn_core::{AudioOutput, PcmFormat};
+    use std::sync::atomic::AtomicBool;
     struct Sink {
         frames: Arc<AtomicU64>,
         fail: bool,
@@ -1378,6 +1470,182 @@ mod tests {
         }
     }
     #[test]
+    fn open_failure_is_synchronous_and_never_reports_started() {
+        let root = std::env::temp_dir().join(format!(
+            "reborn-open-failure-{}-{}",
+            std::process::id(),
+            Instant::now().elapsed().as_nanos()
+        ));
+        let log = Observer::new(&root).unwrap();
+        let mut playback = Playback::with_sink(
+            log,
+            root,
+            Box::new(|_, _, _| Err("injected sink open failure".into())),
+        )
+        .unwrap();
+
+        let error = playback
+            .load(
+                track(),
+                vec![],
+                0,
+                spec(AudioOutput::Wired, 44_100),
+                1,
+                DspConfig::with_volume(35),
+                1,
+            )
+            .unwrap_err();
+
+        assert!(error.contains("injected sink open failure"));
+        assert!(playback.events.try_recv().is_err());
+        playback.shutdown(2).unwrap();
+    }
+
+    #[test]
+    fn stop_send_deadline_covers_a_full_command_queue() {
+        let root = std::env::temp_dir().join(format!(
+            "reborn-stop-full-{}-{}",
+            std::process::id(),
+            std::thread::current().name().unwrap_or("test")
+        ));
+        let log = Observer::new(&root).unwrap();
+        let (sink, sink_rx) = sync_channel(1);
+        sink.try_send(SinkCommand::Stop(None)).unwrap();
+        let (decode, _decode_rx) = sync_channel(1);
+        let (event_sender, events) = sync_channel(64);
+        let mut playback = Playback {
+            decode,
+            sink,
+            events,
+            #[cfg(test)]
+            event_sender,
+            epoch: Arc::new(AtomicU64::new(0)),
+            cancel: None,
+            sink_released: false,
+            state: Arc::new(Mutex::new(json!({}))),
+            observer: log,
+        };
+        let start = Instant::now();
+        let error = playback
+            .stop_and_wait_with_timeout(1, Duration::from_millis(40))
+            .unwrap_err();
+
+        assert!(error.contains("deadline"));
+        assert!(start.elapsed() < Duration::from_millis(250));
+        drop(sink_rx);
+    }
+
+    #[test]
+    fn stop_with_unavailable_worker_fails_without_blocking() {
+        let root = std::env::temp_dir().join(format!("reborn-stop-gone-{}", std::process::id()));
+        let log = Observer::new(&root).unwrap();
+        let (sink, sink_rx) = sync_channel(1);
+        drop(sink_rx);
+        let (decode, _decode_rx) = sync_channel(1);
+        let (event_sender, events) = sync_channel(64);
+        let mut playback = Playback {
+            decode,
+            sink,
+            events,
+            #[cfg(test)]
+            event_sender,
+            epoch: Arc::new(AtomicU64::new(0)),
+            cancel: None,
+            sink_released: false,
+            state: Arc::new(Mutex::new(json!({}))),
+            observer: log,
+        };
+        let start = Instant::now();
+
+        assert_eq!(
+            playback
+                .stop_and_wait_with_timeout(1, Duration::from_secs(1))
+                .unwrap_err(),
+            "audio worker unavailable"
+        );
+        assert!(start.elapsed() < Duration::from_millis(250));
+    }
+
+    struct SignalingFailureSink(Arc<AtomicBool>);
+    impl AudioSink for SignalingFailureSink {
+        fn parameters(&self) -> Parameters {
+            Parameters {
+                rate: 44_100,
+                period: 512,
+                buffer: 4096,
+                format: PcmFormat::S32LE,
+                channels: 2,
+                hardware_mixer_gain_db: None,
+                device: "test".into(),
+                fallback: false,
+                fallback_reason: String::new(),
+            }
+        }
+        fn write(&mut self, _pcm: &[u8]) -> Result<usize, String> {
+            self.0.store(true, Ordering::Release);
+            Err("injected sink write failure".into())
+        }
+        fn discard(&mut self) -> Result<(), String> {
+            Ok(())
+        }
+        fn delay(&self) -> u64 {
+            0
+        }
+    }
+
+    #[test]
+    fn full_event_queue_cannot_extend_the_release_deadline() {
+        let root = std::env::temp_dir().join(format!("reborn-events-full-{}", std::process::id()));
+        let log = Observer::new(&root).unwrap();
+        let attempted = Arc::new(AtomicBool::new(false));
+        let sink_attempted = attempted.clone();
+        let mut playback = Playback::with_sink(
+            log,
+            root,
+            Box::new(move |_, _, _| Ok(Box::new(SignalingFailureSink(sink_attempted.clone())))),
+        )
+        .unwrap();
+        for _ in 0..64 {
+            playback
+                .event_sender
+                .try_send(PlaybackEvent::Core(Event::Position {
+                    generation: 0,
+                    ms: 0,
+                }))
+                .unwrap();
+        }
+        playback
+            .load(
+                track(),
+                vec![],
+                0,
+                spec(AudioOutput::Wired, 44_100),
+                1,
+                DspConfig::with_volume(35),
+                1,
+            )
+            .unwrap();
+        let wait_until = Instant::now() + Duration::from_secs(3);
+        while !attempted.load(Ordering::Acquire) {
+            assert!(Instant::now() < wait_until, "sink write did not start");
+            thread::sleep(Duration::from_millis(2));
+        }
+
+        let start = Instant::now();
+        let error = playback
+            .stop_and_wait_with_timeout(2, Duration::from_millis(40))
+            .unwrap_err();
+        assert!(error.contains("deadline"));
+        assert!(start.elapsed() < Duration::from_millis(250));
+
+        while playback.events.try_recv().is_ok() {}
+        playback
+            .stop_and_wait_with_timeout(3, Duration::from_secs(1))
+            .unwrap();
+        playback.shutdown(4).unwrap();
+    }
+
+    #[test]
     fn stop_invalidates_pending_pcm_and_output_switch_reopens() {
         let frames = Arc::new(AtomicU64::new(0));
         let count = frames.clone();
@@ -1411,6 +1679,22 @@ mod tests {
             1,
         )
         .unwrap();
+        let second_open_without_release = p
+            .start_with_gapless(LoadRequest {
+                track: track(),
+                entry_id: QueueEntryId(2),
+                queue: vec![],
+                queue_entry_ids: vec![],
+                position: 0,
+                spec: spec(AudioOutput::Bluetooth("12:34:56:78:90:AB".into()), 48_000),
+                generation: 2,
+                dsp: DspConfig::with_volume(35),
+                gapless_enabled: true,
+                id: 2,
+            })
+            .unwrap_err();
+        assert!(second_open_without_release.contains("release acknowledgement"));
+        assert_eq!(opened.load(Ordering::Relaxed), 1);
         thread::sleep(Duration::from_millis(60));
         assert!(frames.load(Ordering::Relaxed) > 0);
         p.stop(2);

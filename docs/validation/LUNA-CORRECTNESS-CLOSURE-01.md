@@ -85,14 +85,61 @@ force. No candidate exists yet.
   reborn-core -p reborn-media -p reborn-audio` — 32 passed, 0 failed.
 - **Result:** Nonzero and extreme sample packing, conversion, stereo order,
   frame accounting, ALSA mapping, and fail-closed behavior pass on the host.
-- **Commit:** pending.
+- **Commit:** `f90f9fb` (`Fix signed 24-bit PCM container conversion`).
 - **Remaining limitation:** No optional Bluetooth codec was enabled. No Y2
   sample playback or high-resolution wired behavior is claimed;
   `PHYSICAL_QUALIFICATION_PENDING`.
 - **Evidence tier:** source inspection + host native-library tests + local ALSA
   format-width query + official ALSA documentation.
 
-## R3–R10
+## R3 — transactional sink reconfiguration
+
+**Status: FIXED**
+
+- **Finding and symptom:** Reconfiguration released the old sink, but planning
+  or opening the replacement could fail after callers had already changed
+  output, queue, playback position, or DSP settings. The open command was
+  fire-and-forget, and the release's two-second timeout began only after a
+  blocking command-channel send.
+- **Current source confirmation:** `Runtime::load()` previously planned after
+  release but mutated `Buffering` state and submitted the replacement without
+  waiting for the sink actor's factory result. `Playback::stop_and_wait()` used
+  blocking `send()` before calling `recv_timeout(2s)`.
+- **Implementation:** Reconfiguration now runs release acknowledgement,
+  sink planning, acknowledged worker open, decoder start enqueue, and only then
+  model commit. The sink actor has a direct one-slot open-result reply; start
+  failure invalidates its generation and queues release. A sink-open guard
+  refuses a second open until the prior release is acknowledged. The two-second
+  release deadline now covers retrying a full command queue and waiting for the
+  release reply. Runtime action snapshots restore output, settings, queue,
+  selection, and position on failure; after release starts, active playback is
+  reported as `Error`, stale generations are invalidated, and the restored
+  state is checkpointed. Planning/open failure never commits candidate output
+  or settings.
+- **Files changed:** `app/reborn/src/main.rs`, `app/reborn/src/playback.rs`.
+- **Tests added:** Runtime tests inject plan failure after releasing a live fake
+  sink, verify no replacement start, and verify single sink ownership on a
+  successful replacement. Model recovery tests cover output, queue selection,
+  seek position, volume, ReplayGain, and EQ rollback, plus pre-release failure.
+  Playback tests inject sink-open failure, a full command queue, a disconnected
+  receiver, and a full event queue that stalls the actor; they assert synchronous
+  open failure, no `TrackStarted`, bounded release, and successful recovery once
+  the stalled queue drains. Existing output-switch coverage now also verifies
+  the sink actor rejects a second open without release acknowledgement.
+- **Tests run:** `cargo fmt --all -- --check`; `cargo check -p reborn --locked`;
+  `cargo test -p reborn --bin reborn --locked` — 21 passed, 0 failed.
+- **Result:** Release/plan/start/commit/fail ordering is explicit and the
+  failure-boundary tests pass. The prior logical state is preserved where safe;
+  failed active transitions cannot report `Playing` without a sink.
+- **Commit:** pending.
+- **Remaining limitation:** ALSA planning and the bounded worker-open
+  acknowledgement remain synchronous on the runtime thread; each stop/open
+  boundary is bounded at two seconds. Actual BlueALSA and wired-device open
+  timing remains `PHYSICAL_QUALIFICATION_PENDING`.
+- **Evidence tier:** source inspection + fake sink/worker host tests. No physical
+  sink was opened.
+
+## R4–R10
 
 Results will be recorded separately as each correction is reviewed and
 committed. No status is claimed yet.
