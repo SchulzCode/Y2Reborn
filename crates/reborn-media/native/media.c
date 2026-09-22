@@ -29,6 +29,7 @@
 #include <libswscale/swscale.h>
 #include <libswscale/version.h>
 #include <errno.h>
+#include <ctype.h>
 #include <math.h>
 #include <stdarg.h>
 #include <stdatomic.h>
@@ -131,8 +132,9 @@ typedef struct {
   enum AVSampleFormat output_fmt;
   int decoder_eof, source_eof, source_null_sent, filter_eof, output_drained;
   int first_frame;
+  int seek_pending;
   uint64_t skip_start, skip_end, packets, frames, corrupt_packets;
-  int64_t position, seek_target;
+  int64_t position, seek_target, seek_trim_remaining;
   uint8_t *pending;
   size_t pending_frames, pending_offset, pending_capacity;
   double applied_gain_db, headroom_db;
@@ -145,18 +147,52 @@ static const char *tag(RbMedia *m, const char *key) {
     e = av_dict_get(m->f->streams[m->stream]->metadata, key, NULL, 0);
   return e ? e->value : "";
 }
-static double number_tag(const char *s) {
-  return s && *s ? strtod(s, NULL) : 0.0;
+static int parse_tag_number(const char *s, double minimum, double maximum,
+                            double *value) {
+  if (!s || !*s || !value)
+    return 0;
+  errno = 0;
+  char *end = NULL;
+  double parsed = strtod(s, &end);
+  if (end == s || errno == ERANGE || !isfinite(parsed) || parsed < minimum ||
+      parsed > maximum)
+    return 0;
+  while (*end && isspace((unsigned char)*end))
+    end++;
+  /* ReplayGain gain tags conventionally carry a human-readable "dB"
+   * suffix. Accept that suffix, while still rejecting any other trailing
+   * text. */
+  if (strncasecmp(end, "db", 2) == 0) {
+    end += 2;
+    while (*end && isspace((unsigned char)*end))
+      end++;
+  }
+  if (*end)
+    return 0;
+  *value = parsed;
+  return 1;
+}
+static int gain_tag_value(RbMedia *m, const char *upper, const char *lower,
+                          double *value) {
+  if (parse_tag_number(tag(m, upper), -60.0, 60.0, value))
+    return 1;
+  return parse_tag_number(tag(m, lower), -60.0, 60.0, value);
+}
+static int peak_tag_value(RbMedia *m, const char *upper, const char *lower,
+                          double *value) {
+  if (parse_tag_number(tag(m, upper), 0.0, 16.0, value))
+    return 1;
+  return parse_tag_number(tag(m, lower), 0.0, 16.0, value);
 }
 static double gain_tag(RbMedia *m, const char *upper, const char *lower) {
-  double v = number_tag(tag(m, upper));
-  return v != 0.0 ? v : number_tag(tag(m, lower));
+  double value = 0.0;
+  (void)gain_tag_value(m, upper, lower, &value);
+  return value;
 }
 static double peak_tag(RbMedia *m, const char *upper, const char *lower) {
-  double v = number_tag(tag(m, upper));
-  if (v == 0.0)
-    v = number_tag(tag(m, lower));
-  return v > 0.0 ? v : 0.0;
+  double value = 0.0;
+  (void)peak_tag_value(m, upper, lower, &value);
+  return value;
 }
 static void text(char *dst, size_t n, const char *src) {
   snprintf(dst, n, "%s", src ? src : "");
@@ -435,8 +471,17 @@ static int make_filter_graph(RbMedia *m) {
     peak = peak_tag(m, "REPLAYGAIN_TRACK_PEAK", "replaygain_track_peak");
     rg_name = "track";
   } else if (m->dsp.replay_gain_mode == 2) {
-    rg = gain_tag(m, "REPLAYGAIN_ALBUM_GAIN", "replaygain_album_gain");
-    peak = peak_tag(m, "REPLAYGAIN_ALBUM_PEAK", "replaygain_album_peak");
+    int have_album_gain =
+        gain_tag_value(m, "REPLAYGAIN_ALBUM_GAIN", "replaygain_album_gain", &rg);
+    int have_album_peak =
+        peak_tag_value(m, "REPLAYGAIN_ALBUM_PEAK", "replaygain_album_peak", &peak);
+    /* Album tags are preferred independently. If either is absent or invalid,
+     * use the corresponding track tag rather than treating a malformed album
+     * value as a gain command. This keeps zero dB a valid explicit value. */
+    if (!have_album_gain)
+      (void)gain_tag_value(m, "REPLAYGAIN_TRACK_GAIN", "replaygain_track_gain", &rg);
+    if (!have_album_peak)
+      (void)peak_tag_value(m, "REPLAYGAIN_TRACK_PEAK", "replaygain_track_peak", &peak);
     rg_name = "album";
   }
   double user = m->dsp.volume > 0
@@ -471,7 +516,7 @@ static int make_filter_graph(RbMedia *m) {
   /* The limiter is also an FFmpeg graph stage so EQ peaks cannot wrap during
    * the final integer conversion. */
   used += snprintf(chain + used, sizeof(chain) - (size_t)used,
-                   ",alimiter=limit=0.98:latency=1");
+                   ",alimiter=limit=0.98:latency=1:level=0");
   if (used <= 0 || (size_t)used >= sizeof(chain))
     return AVERROR(EINVAL);
   snprintf(m->filter_description, sizeof(m->filter_description),
@@ -512,6 +557,14 @@ static int source_to_canonical(RbMedia *m, AVFrame *frame) {
                   ? frame->nb_samples
                   : (int)m->skip_start;
   m->skip_start -= (uint64_t)start;
+  if (m->seek_trim_remaining > 0 && start < frame->nb_samples) {
+    int64_t remaining = frame->nb_samples - start;
+    int64_t trim = m->seek_trim_remaining < remaining
+                       ? m->seek_trim_remaining
+                       : remaining;
+    start += (int)trim;
+    m->seek_trim_remaining -= trim;
+  }
   int available = frame->nb_samples - start;
   if (skip_end > (uint32_t)available)
     skip_end = (uint32_t)available;
@@ -559,8 +612,10 @@ static int source_to_canonical(RbMedia *m, AVFrame *frame) {
   canonical->nb_samples = r;
   if (r > 0)
     r = av_buffersrc_add_frame(m->src, canonical);
-  else
-    av_frame_free(&canonical);
+  /* av_buffersrc_add_frame() moves the frame references into the graph but
+   * does not free the caller-owned AVFrame shell. Always release our shell on
+   * both the success and error paths. */
+  av_frame_free(&canonical);
   return r;
 }
 
@@ -568,14 +623,20 @@ static int decode_more(RbMedia *m) {
   int r = avcodec_receive_frame(m->c, m->frame);
   if (r == 0) {
     m->frames++;
-    int result = source_to_canonical(m, m->frame);
     int64_t pts = m->frame->best_effort_timestamp;
     if (pts != AV_NOPTS_VALUE) {
       int64_t decoded = av_rescale_q(pts, m->f->streams[m->stream]->time_base,
                                      (AVRational){1, m->c->sample_rate});
+      if (m->seek_pending) {
+        m->seek_trim_remaining = decoded < m->seek_target
+                                     ? m->seek_target - decoded
+                                     : 0;
+        m->seek_pending = 0;
+      }
       if (decoded >= m->seek_target)
         m->position = decoded;
     }
+    int result = source_to_canonical(m, m->frame);
     av_frame_unref(m->frame);
     return result;
   }
@@ -767,6 +828,8 @@ int rb_media_open(const char *path, int rate, int output_format,
     goto fail;
   }
   m->first_frame = 1;
+  m->seek_pending = 0;
+  m->seek_trim_remaining = 0;
   memset(meta, 0, sizeof(*meta));
   text(meta->title, sizeof(meta->title), tag(m, "title"));
   text(meta->artist, sizeof(meta->artist), tag(m, "artist"));
@@ -865,6 +928,8 @@ int rb_media_seek(RbMedia *m, int64_t ms) {
   m->decoder_eof = m->source_eof = m->source_null_sent = m->filter_eof = 0;
   m->output_drained = 0;
   m->first_frame = 1;
+  m->seek_pending = 1;
+  m->seek_trim_remaining = 0;
   m->skip_start = m->skip_end = 0;
   m->pending_frames = m->pending_offset = 0;
   m->position = av_rescale(ms, m->c->sample_rate, 1000);
