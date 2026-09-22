@@ -7,7 +7,7 @@
     "external PNG",
     "external WebP"
   ],
-  "ffmpeg_required": "9.0.1",
+  "ffmpeg_required": "9.0.2",
   "files": {
     "aac.aac": {
       "bytes": 2614,
@@ -171,6 +171,7 @@
     "frames_per_track": 4096,
     "rate": 44100
   },
+  "generator_ffmpeg_version": "9.0.1",
   "license": "CC0-1.0 for generated files; silent APE/WavPack decoder specimens are checked-in test inputs",
   "metadata_cases": [
     "tagged ReplayGain",

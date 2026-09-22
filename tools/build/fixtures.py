@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate deterministic local Reborn media fixtures with host FFmpeg 9.0.1.
+"""Generate deterministic local Reborn media fixtures with a host FFmpeg.
 
 The APE and WavPack specimens are checked-in, silent, public test inputs. The
 host FFmpeg build cannot encode either format, so this generator validates and
@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shutil
 import struct
 import subprocess
@@ -22,6 +23,15 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 OUT = ROOT / "assets" / "fixtures"
 FFMPEG = os.environ.get("FFMPEG", "ffmpeg")
+TARGET_FFMPEG_VERSION = (ROOT / "FFMPEG_VERSION").read_text().strip()
+
+
+def ffmpeg_version() -> str:
+    output = subprocess.check_output([FFMPEG, "-version"], text=True, stderr=subprocess.STDOUT)
+    match = re.search(r"\bversion\s+([0-9]+(?:\.[0-9]+){1,2})", output.splitlines()[0])
+    if not match:
+        raise RuntimeError(f"cannot read FFmpeg generator version from {FFMPEG!r}")
+    return match.group(1)
 
 
 def run(*args: str) -> None:
@@ -190,11 +200,13 @@ def main() -> None:
                 "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
                 "bytes": path.stat().st_size,
             }
+    generator_version = ffmpeg_version()
     manifest = {
         "schema": "org.y2reborn.audio-fixtures/v2",
         "license": "CC0-1.0 for generated files; silent APE/WavPack decoder specimens are checked-in test inputs",
-        "origin": "deterministic 440 Hz and ramp signals generated locally by FFmpeg 9.0.1",
-        "ffmpeg_required": "9.0.1",
+        "origin": f"deterministic 440 Hz and ramp signals generated locally by FFmpeg {generator_version}",
+        "generator_ffmpeg_version": generator_version,
+        "ffmpeg_required": TARGET_FFMPEG_VERSION,
         "source_combinations": [
             "FLAC 16/44.1", "FLAC 16/48", "FLAC 24/44.1", "FLAC 24/48",
             "FLAC 24/88.2", "FLAC 24/96", "WAV PCM16", "WAV PCM24",

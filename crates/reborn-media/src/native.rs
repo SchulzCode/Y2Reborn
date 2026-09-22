@@ -271,7 +271,7 @@ pub fn initialize_logging(log: Observer) {
         }
     }
 }
-pub const FFMPEG_VERSION: &str = "9.0.1";
+pub const FFMPEG_VERSION: &str = include_str!("../../../FFMPEG_VERSION");
 pub fn version() -> String {
     // This constant is the pinned production FFmpeg ABI. The actual loaded
     // library version is exposed by runtime_components(), which is used by
@@ -1052,7 +1052,8 @@ mod tests {
     #[test]
     fn runtime_manifest_is_json() {
         let components = runtime_components().unwrap();
-        assert!(components["version"].as_str().unwrap().contains("9.0.1"));
+        assert_eq!(version(), FFMPEG_VERSION);
+        assert!(!components["version"].as_str().unwrap().is_empty());
         assert!(components["filters"]
             .as_array()
             .unwrap()

@@ -396,7 +396,7 @@ force. No candidate exists yet.
 - **Result:** Stale object-path-only identity is removed and the application-side
   ALSA plan/open contract is checked; loss or change invalidates the active
   sink.
-- **Commit:** pending.
+- **Commit:** `246dc41` (`Invalidate stale Bluetooth transport plans`).
 - **Remaining limitation:** `bluealsa:` is an ALSA `plug` wrapper, so the app
   can verify the ALSA-facing contract but cannot prove the underlying
   BlueALSA PCM is bit-precise without a private/raw interface. The software
@@ -407,4 +407,62 @@ force. No candidate exists yet.
 
 ## R10 — build, version, and manifest truth
 
-Results will be recorded after packaging identity fixes and validation.
+**Status: PARTIAL**
+
+- **Finding and symptom:** Reborn's product label and ARM checker still
+  reported FFmpeg 9.0.1 / SONAMEs `.101` despite the pinned target being 9.0.2
+  / `.102`. Y2Linux's current package producer and validator still described
+  `Y2PlayerNative`, `implemented=false`, and `/usr/bin/y2player`, although the
+  rootfs installs Reborn.
+- **Current source confirmation:** `reborn-media` hard-coded 9.0.1;
+  `tools/build/qemu-check.py` asserted 9.0.1 and `.101`; the package producer
+  emitted and validator required the obsolete application fields. FFmpeg source
+  acquisition required the archive to be pre-seeded.
+- **Implementation:** Added a single Reborn `FFMPEG_VERSION` source used by
+  runtime reporting, QEMU verification, fixtures, and Y2Linux's pinned source
+  acquisition. The locked build runner now binds the paired Reborn source and
+  forwards the production artifact directory and paired source path, plus the
+  hash-validated owner-firmware input required by the production post-build
+  step. The ARM
+  checker now checks the final loaded runtime and `.102` SONAMEs. The
+  production application receipt names Reborn's actual binaries,
+  shared media library and `/data/reborn` state; rootfs and manifest validation
+  verify those files and reject `/usr/bin/y2player`. Boot-only/system-update
+  receipts preserve or update the installed application identity correctly.
+  When a legacy base lacks a Reborn version field, its retained version is
+  resolved from the exact recorded Reborn source commit; packaging refuses a
+  retained rootfs whose application identity cannot be established. Local
+  review documents remain untracked and are excluded from candidate clean-source
+  checks.
+  FFmpeg acquisition now downloads the official pinned archive to a temporary
+  file, verifies the existing exact SHA256, then atomically installs it. The
+  test harness documents production, retained profile/source-boundary, and host
+  prerequisite classes without deleting historical tests.
+- **Files changed:** Reborn `FFMPEG_VERSION`, `crates/reborn-media/src/native.rs`,
+  `tools/build/qemu-check.py`, `tools/build/fixtures.py`, fixture manifest,
+  current media/dependency docs; Y2Linux production version/package/validator
+  tooling and locked runner, retained source-version resolution, FFmpeg
+  acquisition, Buildroot's paired source mount, production tests and
+  test-profile documentation.
+- **Tests added:** Workspace-version and Reborn application receipt checks;
+  exact retained source-commit version resolution; rejection of unverifiable
+  identity and the stale legacy receipt; verified archive acquisition and
+  checksum-failure cleanup; Reborn root-image path/legacy-binary checks.
+- **Tests run:** `cargo fmt --all -- --check`; `cargo test -p reborn-media
+  --locked` — 20 passed; Y2Linux `tests.test_reborn_receipts`,
+  `tests.test_production_handover`, `tests.test_production_storage` — 26
+  passed before root-image boundary tests; updated suite now passes 30 tests;
+  changed Python modules compiled; the locked build runner smoke test verified
+  its `/build`, `/tmp/Y2Reborn`, and validated owner-firmware mappings; the
+  cached FFmpeg 9.0.2 archive matched its pinned SHA256. Fresh final-gate
+  results will follow.
+- **Result:** Source-level version and product receipts agree with the intended
+  current artifacts; package/build gates remain to be run on the fresh final
+  candidate.
+- **Commit:** Reborn pending; Y2Linux pending.
+- **Remaining limitation:** Target FFmpeg 9.0.2 and package identity still need
+  fresh ARM/QEMU and rootfs/package validation. Historical baseline documents
+  and fixture-generator provenance continue to name FFmpeg 9.0.1 where that is
+  the version actually tested/generated. No hardware was accessed.
+- **Evidence tier:** source inspection + targeted host tests + exact local
+  archive hash verification; ARM/package evidence pending.

@@ -1,7 +1,7 @@
 # Reborn FFmpeg 9 audio stack
 
 Reborn has one media path. `reborn-media` opens the local file with FFmpeg
-9.0.1 `libavformat` and `libavcodec`, converts decoder output once to stereo
+9.0.2 `libavformat` and `libavcodec`, converts decoder output once to stereo
 `AV_SAMPLE_FMT_FLTP`, runs an optional `libavfilter` graph, and uses
 `libswresample` for the final sink rate and sample format. Rust owns only the
 opaque context, cancellation, bounded scheduling and diagnostics; it has no

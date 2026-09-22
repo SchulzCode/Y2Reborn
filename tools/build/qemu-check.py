@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Run installed ARM binaries in the platform's network/device-isolated build shell."""
 import json,pathlib,subprocess,time,os
+ffmpeg_version=(pathlib.Path(__file__).resolve().parents[2]/'FFMPEG_VERSION').read_text().strip()
 base=pathlib.Path('/build/buildroot/target');temp=pathlib.Path('/build/reborn-arm-check');temp.mkdir(exist_ok=True)
 q=['qemu-arm','-cpu','cortex-a7','-L',str(base)]
 sock=temp/'run/control.sock';data=temp/'data'
@@ -17,9 +18,12 @@ try:
   p=subprocess.run(q+[str(base/'usr/bin/rebornctl'),*args,'--socket',str(sock),'--json'],capture_output=True,timeout=60)
   value=json.loads(p.stdout);assert p.returncode==0,(args,p.returncode,value,p.stderr)
   results.append({'command':args,'result':value})
- runtime=results[0]['result']['decoder']['runtime']
- assert '9.0.1' in runtime['version'],runtime
- assert runtime['libraries']=={'libavutil':'61.1.101','libavcodec':'63.1.101','libavformat':'63.1.101','libavfilter':'12.1.101','libswresample':'7.1.101','libswscale':'10.1.101'},runtime
+ final=subprocess.run(q+[str(base/'usr/bin/rebornctl'),'status','--socket',str(sock),'--json'],capture_output=True,timeout=60)
+ final_status=json.loads(final.stdout);assert final.returncode==0,final_status
+ assert final_status['decoder']['ffmpeg']==ffmpeg_version,final_status['decoder']
+ runtime=final_status['decoder']['runtime']
+ assert runtime and ffmpeg_version in runtime['version'],runtime
+ assert runtime['libraries']=={'libavutil':'61.1.102','libavcodec':'63.1.102','libavformat':'63.1.102','libavfilter':'12.1.102','libswresample':'7.1.102','libswscale':'10.1.102'},runtime
  required={
   'demuxers':{'flac','mp3','mov','ogg','wav','aac','aiff','ape','wv'},
   'audio_decoders':{'flac','mp3','mp3float','aac','alac','vorbis','opus','ape','wavpack','pcm_s16le','pcm_s16be','pcm_s24le','pcm_s24be','pcm_s32le','pcm_s32be','pcm_f32le','pcm_f32be'},
