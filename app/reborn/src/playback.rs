@@ -1,5 +1,5 @@
 use reborn_audio::{AlsaSink, AudioSink, SinkSpec};
-use reborn_core::{Event, PcmFormat, Track};
+use reborn_core::{Event, PcmFormat, QueueEntryId, Track};
 use reborn_media::{
     convert_pcm, crossfade_pcm, external_artwork, Cancel, Decoder, DspConfig, OutputSpec, Pcm,
 };
@@ -26,7 +26,9 @@ pub enum PlaybackEvent {
 }
 pub struct LoadRequest {
     pub track: Track,
+    pub entry_id: QueueEntryId,
     pub queue: Vec<Track>,
+    pub queue_entry_ids: Vec<QueueEntryId>,
     pub position: u64,
     pub spec: SinkSpec,
     pub generation: u64,
@@ -36,7 +38,9 @@ pub struct LoadRequest {
 }
 struct Job {
     track: Track,
+    entry_id: QueueEntryId,
     queue: Vec<Track>,
+    queue_entry_ids: Vec<QueueEntryId>,
     spec: SinkSpec,
     dsp: DspConfig,
     gapless_enabled: bool,
@@ -65,6 +69,7 @@ enum Stream {
     },
     Boundary {
         generation: u64,
+        next_entry_id: Option<QueueEntryId>,
         next_track_id: Option<i64>,
         transition_ms: u64,
     },
@@ -499,6 +504,12 @@ impl Playback {
                     let mut tracks = Vec::with_capacity(1 + job.queue.len());
                     tracks.push(job.track.clone());
                     tracks.extend(job.queue.clone());
+                    let mut entry_ids = Vec::with_capacity(1 + job.queue_entry_ids.len());
+                    entry_ids.push(job.entry_id);
+                    entry_ids.extend(job.queue_entry_ids.iter().copied());
+                    if entry_ids.len() != tracks.len() {
+                        return Err("queue entry identity and track schedule diverged".into());
+                    }
                     let crossfade_enabled = job.dsp.crossfade_ms > 0;
                     /* Crossfade uses S32 as its bounded transition working
                      * format. The sink worker performs the one final S32 to
@@ -837,6 +848,7 @@ impl Playback {
                             job.generation,
                             Stream::Boundary {
                                 generation: job.generation,
+                                next_entry_id: Some(entry_ids[next_index]),
                                 next_track_id: Some(tracks[next_index].id),
                                 transition_ms: transition_started.elapsed().as_millis() as u64,
                             },
@@ -1031,6 +1043,7 @@ impl Playback {
                             }
                             Ok(Stream::Boundary {
                                 generation: g,
+                                next_entry_id,
                                 next_track_id,
                                 transition_ms,
                             }) if g == generation => {
@@ -1050,6 +1063,7 @@ impl Playback {
                                     &et,
                                     Event::TrackBoundary {
                                         generation: g,
+                                        next_entry_id,
                                         next_track_id,
                                         output_position_ms: 0,
                                     },
@@ -1187,9 +1201,12 @@ impl Playback {
         dsp: DspConfig,
         id: u64,
     ) -> Result<(), String> {
+        let queue_entry_ids = (2..=queue.len() as u64 + 1).map(QueueEntryId).collect();
         self.load_with_gapless(LoadRequest {
             track,
+            entry_id: QueueEntryId(1),
             queue,
+            queue_entry_ids,
             position,
             spec,
             generation,
@@ -1201,7 +1218,9 @@ impl Playback {
     pub fn load_with_gapless(&mut self, request: LoadRequest) -> Result<(), String> {
         let LoadRequest {
             track,
+            entry_id,
             queue,
+            queue_entry_ids,
             position,
             spec,
             generation,
@@ -1225,7 +1244,9 @@ impl Playback {
         self.decode
             .try_send(DecodeCommand::Load(Box::new(Job {
                 track,
+                entry_id,
                 queue,
+                queue_entry_ids,
                 spec,
                 dsp,
                 gapless_enabled,

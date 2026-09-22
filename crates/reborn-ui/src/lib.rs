@@ -707,15 +707,15 @@ impl Ui {
                     return self.play_first_filtered_shuffled(m, tracks);
                 }
                 if key == "play_next:collection" {
-                    return self
-                        .first_filtered_index(m, tracks)
-                        .map(Effect::PlayNext)
+                    let members = self.filtered_indices(m, tracks);
+                    return (!members.is_empty())
+                        .then_some(Effect::PlayNextCollection(members))
                         .unwrap_or(Effect::None);
                 }
                 if key == "add:collection" {
-                    return self
-                        .first_filtered_index(m, tracks)
-                        .map(Effect::AddToQueue)
+                    let members = self.filtered_indices(m, tracks);
+                    return (!members.is_empty())
+                        .then_some(Effect::AddToQueueCollection(members))
                         .unwrap_or(Effect::None);
                 }
             }
@@ -724,13 +724,9 @@ impl Ui {
                     .strip_prefix("queue:")
                     .and_then(|value| value.parse::<usize>().ok())
                 {
-                    if let Some(track) = m.queue.get(index) {
-                        if let Some(library_index) =
-                            tracks.iter().position(|candidate| candidate.id == track.id)
-                        {
-                            Self::go(m, Screen::NowPlaying, "");
-                            return Effect::Play(library_index);
-                        }
+                    if m.queue.get(index).is_some() {
+                        Self::go(m, Screen::NowPlaying, "");
+                        return Effect::PlayQueue(index);
                     }
                 }
             }
@@ -877,28 +873,64 @@ impl Ui {
         if tracks.get(index).is_none() {
             return Effect::None;
         }
+        let effect = self.play_effect(m, tracks, index, false);
         Self::go(m, Screen::NowPlaying, "");
-        Effect::Play(index)
+        effect
     }
 
     fn play_first_filtered(&mut self, m: &mut AppModel, tracks: &[Track]) -> Effect {
-        let Some(index) = self.first_filtered_index(m, tracks) else {
+        let members = self.filtered_indices(m, tracks);
+        let Some(&index) = members.first() else {
             return Effect::None;
         };
+        let effect = Effect::PlayCollection {
+            selected: index,
+            members,
+            shuffle: false,
+        };
         Self::go(m, Screen::NowPlaying, "");
-        Effect::Play(index)
+        effect
     }
     fn play_first_filtered_shuffled(&mut self, m: &mut AppModel, tracks: &[Track]) -> Effect {
-        let Some(index) = self.first_filtered_index(m, tracks) else {
+        let members = self.filtered_indices(m, tracks);
+        let Some(&index) = members.first() else {
             return Effect::None;
         };
+        let effect = Effect::PlayCollection {
+            selected: index,
+            members,
+            shuffle: true,
+        };
         Self::go(m, Screen::NowPlaying, "");
-        Effect::PlayShuffled(index)
+        effect
     }
-    fn first_filtered_index(&self, m: &AppModel, tracks: &[Track]) -> Option<usize> {
+    fn filtered_indices(&self, m: &AppModel, tracks: &[Track]) -> Vec<usize> {
         tracks
             .iter()
-            .position(|track| track_matches(track, &m.navigation.filter))
+            .enumerate()
+            .filter(|(_, track)| track_matches(track, &m.navigation.filter))
+            .map(|(index, _)| index)
+            .collect()
+    }
+    fn play_effect(
+        &self,
+        m: &AppModel,
+        tracks: &[Track],
+        selected: usize,
+        shuffle: bool,
+    ) -> Effect {
+        let members = self.filtered_indices(m, tracks);
+        if members.len() > 1 || !m.navigation.filter.is_empty() {
+            Effect::PlayCollection {
+                selected,
+                members,
+                shuffle,
+            }
+        } else if shuffle {
+            Effect::PlayShuffled(selected)
+        } else {
+            Effect::Play(selected)
+        }
     }
 
     fn bluetooth_action(&mut self, key: &str) -> Effect {
@@ -1030,8 +1062,22 @@ impl Ui {
                 m.navigation.modal = None;
                 m.navigation.context_target = None;
                 match menu_key.as_str() {
-                    "play" => track_index.map(Effect::Play).unwrap_or(Effect::None),
+                    "play" => track_index
+                        .map(|index| self.play_effect(m, tracks, index, false))
+                        .unwrap_or(Effect::None),
+                    "play_next" if !m.navigation.filter.is_empty() => {
+                        let members = self.filtered_indices(m, tracks);
+                        (!members.is_empty())
+                            .then_some(Effect::PlayNextCollection(members))
+                            .unwrap_or(Effect::None)
+                    }
                     "play_next" => track_index.map(Effect::PlayNext).unwrap_or(Effect::None),
+                    "add_queue" if !m.navigation.filter.is_empty() => {
+                        let members = self.filtered_indices(m, tracks);
+                        (!members.is_empty())
+                            .then_some(Effect::AddToQueueCollection(members))
+                            .unwrap_or(Effect::None)
+                    }
                     "add_queue" => track_index.map(Effect::AddToQueue).unwrap_or(Effect::None),
                     "go_album" => {
                         if let Some(index) = track_index.and_then(|i| tracks.get(i)) {

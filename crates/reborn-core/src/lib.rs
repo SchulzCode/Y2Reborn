@@ -128,6 +128,12 @@ pub struct Track {
     pub artwork: bool,
     pub online: bool,
 }
+
+/* A queue occurrence is a playback identity, not a library identity. Two
+ * occurrences may reference the same Track, so boundary and artwork updates
+ * must be able to address the occurrence that was scheduled. */
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct QueueEntryId(pub u64);
 /// Semantic actions are the only input vocabulary exposed to the product/UI
 /// layer. Linux event types and key codes stop at `reborn-platform::input`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -309,6 +315,8 @@ impl Default for Settings {
 pub struct AppModel {
     pub playback: PlaybackState,
     pub queue: Vec<Track>,
+    #[serde(default)]
+    pub queue_entry_ids: Vec<QueueEntryId>,
     pub queue_position: usize,
     pub position_ms: u64,
     pub output: AudioOutput,
@@ -331,8 +339,16 @@ pub enum Effect {
     None,
     Play(usize),
     PlayShuffled(usize),
+    PlayCollection {
+        selected: usize,
+        members: Vec<usize>,
+        shuffle: bool,
+    },
+    PlayQueue(usize),
     PlayNext(usize),
+    PlayNextCollection(Vec<usize>),
     AddToQueue(usize),
+    AddToQueueCollection(Vec<usize>),
     TogglePlayback,
     NextTrack,
     PreviousTrack,
@@ -341,12 +357,18 @@ pub enum Effect {
     ScanLibrary,
     WifiPower,
     WifiScan,
-    WifiConnect { ssid: String, password: String },
+    WifiConnect {
+        ssid: String,
+        password: String,
+    },
     WifiSaved(u32),
     WifiForget(u32),
     BluetoothPower,
     BluetoothScan,
-    BluetoothDevice { path: String, operation: String },
+    BluetoothDevice {
+        path: String,
+        operation: String,
+    },
     Output(AudioOutput),
     ConfirmPairing(bool),
     ScreenSleep,
@@ -359,7 +381,10 @@ pub enum Effect {
     SetRepeat(RepeatMode),
     SetScreenTimeout(u32),
     QueueRemove(usize),
-    QueueMove { index: usize, delta: i8 },
+    QueueMove {
+        index: usize,
+        delta: i8,
+    },
     ClearQueue,
     RebuildLibrary,
     PowerOff,
@@ -391,6 +416,7 @@ pub enum Event {
     },
     TrackBoundary {
         generation: u64,
+        next_entry_id: Option<QueueEntryId>,
         next_track_id: Option<i64>,
         output_position_ms: u64,
     },
@@ -426,10 +452,80 @@ impl AppModel {
             return Err("invalid queue bounds".into());
         }
         self.queue = tracks;
+        self.queue_entry_ids = (1..=self.queue.len())
+            .map(|id| QueueEntryId(id as u64))
+            .collect();
         self.queue_position = index;
         self.position_ms = 0;
         self.invalidate();
         Ok(())
+    }
+    pub fn current_entry_id(&self) -> Option<QueueEntryId> {
+        self.queue_entry_ids.get(self.queue_position).copied()
+    }
+    pub fn insert_queue_entry(
+        &mut self,
+        index: usize,
+        track: Track,
+    ) -> Result<QueueEntryId, String> {
+        if self.queue.len() >= MAX_QUEUE || index > self.queue.len() {
+            return Err("queue is full or insertion index is invalid".into());
+        }
+        let mut raw = self
+            .queue_entry_ids
+            .iter()
+            .map(|id| id.0)
+            .max()
+            .unwrap_or(0)
+            .saturating_add(1);
+        if raw == 0 {
+            raw = 1;
+        }
+        while self.queue_entry_ids.iter().any(|id| id.0 == raw) {
+            raw = raw.saturating_add(1);
+            if raw == 0 {
+                return Err("queue entry identity exhausted".into());
+            }
+        }
+        let id = QueueEntryId(raw);
+        self.queue.insert(index, track);
+        self.queue_entry_ids.insert(index, id);
+        if index <= self.queue_position && self.queue.len() > 1 {
+            self.queue_position += 1;
+        }
+        Ok(id)
+    }
+    pub fn remove_queue_entry(&mut self, index: usize) -> Option<Track> {
+        if index >= self.queue.len() || index == self.queue_position {
+            return None;
+        }
+        self.queue_entry_ids.remove(index);
+        let track = self.queue.remove(index);
+        if index < self.queue_position {
+            self.queue_position = self.queue_position.saturating_sub(1);
+        }
+        Some(track)
+    }
+    pub fn move_queue_entry(&mut self, index: usize, next: usize) -> bool {
+        if index >= self.queue.len()
+            || next >= self.queue.len()
+            || index == self.queue_position
+            || next == self.queue_position
+        {
+            return false;
+        }
+        self.queue.swap(index, next);
+        self.queue_entry_ids.swap(index, next);
+        true
+    }
+    pub fn clear_future_queue(&mut self) -> bool {
+        let end = self.queue_position.saturating_add(1);
+        if end >= self.queue.len() {
+            return false;
+        }
+        self.queue.truncate(end);
+        self.queue_entry_ids.truncate(end);
+        true
     }
     pub fn invalidate(&mut self) -> u64 {
         self.generation = self.generation.wrapping_add(1);
@@ -456,15 +552,17 @@ impl AppModel {
             }
             Event::TrackBoundary {
                 generation,
+                next_entry_id,
                 next_track_id,
                 output_position_ms,
             } if generation == self.generation => {
-                let next_position = next_track_id.and_then(|id| {
-                    self.queue
-                        .iter()
-                        .position(|track| track.id == id)
-                        .filter(|position| *position > self.queue_position)
-                });
+                let next_position = next_entry_id
+                    .and_then(|id| self.queue_entry_ids.iter().position(|entry| *entry == id))
+                    .or_else(|| {
+                        next_track_id
+                            .and_then(|id| self.queue.iter().position(|track| track.id == id))
+                    })
+                    .filter(|position| *position > self.queue_position);
                 if let Some(next_position) = next_position {
                     self.queue_position = next_position;
                     self.position_ms = output_position_ms;
@@ -529,6 +627,18 @@ impl AppModel {
         if m.queue.len() > MAX_QUEUE || (!m.queue.is_empty() && m.queue_position >= m.queue.len()) {
             return Err(io::Error::other("invalid saved queue"));
         }
+        let ids_valid = m.queue_entry_ids.len() == m.queue.len()
+            && m.queue_entry_ids.iter().all(|id| id.0 != 0)
+            && m.queue_entry_ids.iter().enumerate().all(|(index, id)| {
+                m.queue_entry_ids[..index]
+                    .iter()
+                    .all(|previous| previous != id)
+            });
+        if !ids_valid {
+            m.queue_entry_ids = (1..=m.queue.len())
+                .map(|id| QueueEntryId(id as u64))
+                .collect();
+        }
         m.playback = if m.current().is_some() {
             PlaybackState::Paused
         } else {
@@ -579,6 +689,33 @@ mod tests {
         m.replace_queue(vec![Track::default()], 0).unwrap();
         assert!(!m.step(1));
         assert_eq!(m.queue_position, 0)
+    }
+    #[test]
+    fn duplicate_tracks_keep_distinct_queue_identity() {
+        let mut m = AppModel::default();
+        m.replace_queue(
+            vec![
+                Track {
+                    id: 7,
+                    ..Default::default()
+                },
+                Track {
+                    id: 7,
+                    ..Default::default()
+                },
+            ],
+            0,
+        )
+        .unwrap();
+        assert_ne!(m.queue_entry_ids[0], m.queue_entry_ids[1]);
+        let generation = m.generation;
+        m.apply(Event::TrackBoundary {
+            generation,
+            next_entry_id: Some(m.queue_entry_ids[1]),
+            next_track_id: Some(7),
+            output_position_ms: 0,
+        });
+        assert_eq!(m.queue_position, 1);
     }
     #[test]
     fn bluetooth_loss_pauses_only_selected_peer() {

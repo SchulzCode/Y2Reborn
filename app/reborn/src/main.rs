@@ -2,7 +2,10 @@
 mod diagnostics;
 mod playback;
 use reborn_control::{Command, PlaybackAction, Response};
-use reborn_core::{AppModel, AudioOutput, Effect, Event, PlaybackState, Screen, Source, Track};
+use reborn_core::{
+    AppModel, AudioOutput, Effect, Event, PlaybackState, QueueEntryId, RepeatMode, Screen, Source,
+    Track,
+};
 use reborn_graphics::Renderer;
 use reborn_library::{Database, Filter, Scanner};
 use reborn_observability::{HealthState, Level, Observer};
@@ -42,6 +45,19 @@ struct Runtime {
 }
 impl Runtime {
     fn play_index(&mut self, index: usize, force_shuffle: bool) -> Result<(), String> {
+        self.play_members(
+            index,
+            (0..self.model.library.tracks.len()).collect(),
+            force_shuffle,
+        )
+    }
+
+    fn play_members(
+        &mut self,
+        index: usize,
+        members: Vec<usize>,
+        force_shuffle: bool,
+    ) -> Result<(), String> {
         let selected = self
             .model
             .library
@@ -52,10 +68,18 @@ impl Runtime {
         if !selected.online {
             return Err("media source offline".into());
         }
+        let mut queue = members
+            .into_iter()
+            .filter_map(|member| self.model.library.tracks.get(member).cloned())
+            .filter(|track| track.online)
+            .collect::<Vec<_>>();
+        let selected_position = queue
+            .iter()
+            .position(|track| track.id == selected.id && track.path == selected.path)
+            .ok_or("selected track is not in the playback collection")?;
         let use_shuffle = force_shuffle || self.model.settings.shuffle;
         if use_shuffle {
-            let mut queue = self.model.library.tracks.clone();
-            let selected = queue.remove(index);
+            let selected = queue.remove(selected_position);
             let mut seed = selected.id.unsigned_abs().wrapping_add(index as u64 + 1);
             for i in (1..queue.len()).rev() {
                 seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
@@ -65,8 +89,8 @@ impl Runtime {
             queue.insert(0, selected);
             self.model.replace_queue(queue, 0)?;
         } else {
-            self.model
-                .replace_queue(self.model.library.tracks.clone(), index)?;
+            let selected_index = selected_position;
+            self.model.replace_queue(queue, selected_index)?;
         }
         self.load()
     }
@@ -144,13 +168,28 @@ impl Runtime {
             }
             Err(error) => return Err(error),
         };
-        let queue = self
+        let entry_id = self
             .model
-            .queue
-            .iter()
-            .skip(self.model.queue_position + 1)
-            .cloned()
-            .collect();
+            .current_entry_id()
+            .unwrap_or(QueueEntryId(self.model.queue_position as u64 + 1));
+        let (queue, queue_entry_ids) = if self.model.settings.repeat == RepeatMode::Track {
+            (Vec::new(), Vec::new())
+        } else {
+            (
+                self.model
+                    .queue
+                    .iter()
+                    .skip(self.model.queue_position + 1)
+                    .cloned()
+                    .collect(),
+                self.model
+                    .queue_entry_ids
+                    .iter()
+                    .skip(self.model.queue_position + 1)
+                    .copied()
+                    .collect(),
+            )
+        };
         let dsp = reborn_media::DspConfig {
             volume: self.model.settings.volume,
             replay_gain: self.model.settings.replay_gain,
@@ -164,7 +203,9 @@ impl Runtime {
         self.dirty = true;
         self.playback.load_with_gapless(playback::LoadRequest {
             track,
+            entry_id,
             queue,
+            queue_entry_ids,
             position: self.model.position_ms,
             spec,
             generation: self.model.generation,
@@ -265,6 +306,19 @@ impl Runtime {
             Effect::None => {}
             Effect::Play(index) => self.play_index(index, false)?,
             Effect::PlayShuffled(index) => self.play_index(index, true)?,
+            Effect::PlayCollection {
+                selected,
+                members,
+                shuffle,
+            } => self.play_members(selected, members, shuffle)?,
+            Effect::PlayQueue(index) => {
+                if index >= self.model.queue.len() {
+                    return Err("invalid queue entry".into());
+                }
+                self.model.queue_position = index;
+                self.model.position_ms = 0;
+                self.load()?;
+            }
             Effect::PlayNext(index) => {
                 let track = self
                     .model
@@ -285,9 +339,51 @@ impl Runtime {
                 } else {
                     (self.model.queue_position + 1).min(self.model.queue.len())
                 };
-                self.model.queue.insert(insert_at, track);
+                self.model.insert_queue_entry(insert_at, track)?;
                 if was_empty {
                     self.model.queue_position = 0;
+                    self.load()?;
+                } else if matches!(
+                    self.model.playback,
+                    PlaybackState::Playing | PlaybackState::Buffering
+                ) {
+                    self.load()?;
+                }
+                self.checkpoint();
+            }
+            Effect::PlayNextCollection(members) => {
+                let tracks = members
+                    .into_iter()
+                    .filter_map(|index| self.model.library.tracks.get(index).cloned())
+                    .filter(|track| track.online)
+                    .collect::<Vec<_>>();
+                if tracks.is_empty() {
+                    return Err("collection has no online tracks".into());
+                }
+                let was_empty = self.model.queue.is_empty();
+                if self.model.queue.len().saturating_add(tracks.len()) > reborn_core::MAX_QUEUE {
+                    return Err("queue is full".into());
+                }
+                let mut insert_at = if was_empty {
+                    0
+                } else {
+                    (self.model.queue_position + 1).min(self.model.queue.len())
+                };
+                for track in tracks {
+                    self.model.insert_queue_entry(insert_at, track)?;
+                    insert_at += 1;
+                }
+                self.model.queue_position = if was_empty {
+                    0
+                } else {
+                    self.model.queue_position
+                };
+                if was_empty
+                    || matches!(
+                        self.model.playback,
+                        PlaybackState::Playing | PlaybackState::Buffering
+                    )
+                {
                     self.load()?;
                 }
                 self.checkpoint();
@@ -303,11 +399,44 @@ impl Runtime {
                 if self.model.queue.len() >= reborn_core::MAX_QUEUE {
                     return Err("queue is full".into());
                 }
-                if self.model.queue.is_empty() {
-                    self.model.queue.push(track);
+                let was_empty = self.model.queue.is_empty();
+                let insert_at = self.model.queue.len();
+                self.model.insert_queue_entry(insert_at, track)?;
+                if was_empty {
                     self.model.queue_position = 0;
-                } else {
-                    self.model.queue.push(track);
+                } else if matches!(
+                    self.model.playback,
+                    PlaybackState::Playing | PlaybackState::Buffering
+                ) {
+                    self.load()?;
+                }
+                self.checkpoint();
+            }
+            Effect::AddToQueueCollection(members) => {
+                let tracks = members
+                    .into_iter()
+                    .filter_map(|index| self.model.library.tracks.get(index).cloned())
+                    .filter(|track| track.online)
+                    .collect::<Vec<_>>();
+                if tracks.is_empty() {
+                    return Err("collection has no online tracks".into());
+                }
+                if self.model.queue.len().saturating_add(tracks.len()) > reborn_core::MAX_QUEUE {
+                    return Err("queue is full".into());
+                }
+                let was_empty = self.model.queue.is_empty();
+                let mut insert_at = self.model.queue.len();
+                for track in tracks {
+                    self.model.insert_queue_entry(insert_at, track)?;
+                    insert_at += 1;
+                }
+                if was_empty {
+                    self.model.queue_position = 0;
+                } else if matches!(
+                    self.model.playback,
+                    PlaybackState::Playing | PlaybackState::Buffering
+                ) {
+                    self.load()?;
                 }
                 self.checkpoint();
             }
@@ -534,6 +663,12 @@ impl Runtime {
             }
             Effect::SetRepeat(mode) => {
                 self.model.settings.repeat = mode;
+                if matches!(
+                    self.model.playback,
+                    PlaybackState::Playing | PlaybackState::Buffering
+                ) {
+                    self.load()?;
+                }
                 self.checkpoint();
             }
             Effect::SetScreenTimeout(seconds) => {
@@ -543,10 +678,15 @@ impl Runtime {
             Effect::QueueRemove(index) => {
                 if index == self.model.queue_position {
                     self.ui.notice = "The current track stays in the queue".into();
-                } else if index < self.model.queue.len() {
-                    self.model.queue.remove(index);
-                    if index < self.model.queue_position {
-                        self.model.queue_position = self.model.queue_position.saturating_sub(1);
+                } else if index < self.model.queue.len()
+                    && self.model.remove_queue_entry(index).is_some()
+                {
+                    let active = matches!(
+                        self.model.playback,
+                        PlaybackState::Playing | PlaybackState::Buffering
+                    );
+                    if active {
+                        self.load()?;
                     }
                     self.checkpoint();
                 }
@@ -559,13 +699,24 @@ impl Runtime {
                     && next > self.model.queue_position
                     && next < self.model.queue.len()
                 {
-                    self.model.queue.swap(index, next);
+                    self.model.move_queue_entry(index, next);
+                    if matches!(
+                        self.model.playback,
+                        PlaybackState::Playing | PlaybackState::Buffering
+                    ) {
+                        self.load()?;
+                    }
                     self.checkpoint();
                 }
             }
             Effect::ClearQueue => {
-                if self.model.queue.len() > self.model.queue_position + 1 {
-                    self.model.queue.truncate(self.model.queue_position + 1);
+                if self.model.clear_future_queue() {
+                    if matches!(
+                        self.model.playback,
+                        PlaybackState::Playing | PlaybackState::Buffering
+                    ) {
+                        self.load()?;
+                    }
                     self.checkpoint();
                 }
             }
