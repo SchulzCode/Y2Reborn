@@ -220,7 +220,7 @@ force. No candidate exists yet.
 - **Result:** Only genuine corruption is quarantined; newer and operational
   failures preserve the existing DB, and sidecar handling has rollback plus a
   startup recovery path.
-- **Commit:** `b03b65f` (`Classify database recovery failures safely`).
+- **Commit:** `d61e6fe` (`Classify database recovery failures safely`).
 - **Remaining limitation:** The startup integrity probe reads the SQLite
   database and busy handling may wait up to two seconds. Host fixtures verify
   classification and recovery; target filesystem behavior remains
@@ -228,7 +228,38 @@ force. No candidate exists yet.
 - **Evidence tier:** source inspection + SQLite fault injection + temporary
   filesystem tests. No Y2 storage was accessed.
 
-## R6–R10
+## R6 — crossfade input-window recovery
+
+**Status: FIXED**
+
+- **Finding and symptom:** `read_window()` consumed several next-track decoder
+  blocks into a local vector. If a later decoder read failed, `?` returned the
+  error and dropped that local prefix even though the decoder had advanced.
+- **Current source confirmation:** The previous helper returned
+  `Result<Option<Pcm>, String>` and did not return accumulated PCM on error.
+- **Implementation:** Window failures now carry both the error and any PCM
+  already consumed. The transition recovery drains the old-track suffix first,
+  then queues the consumed next-track prefix before the authoritative boundary;
+  subsequent decoder reads continue after that prefix. The existing
+  `send_stream()` chunking remains the sink write boundary.
+- **Files changed:** `app/reborn/src/playback.rs`.
+- **Tests added:** Injected failure before input, after the first block, after
+  multiple blocks, and one frame short of 5-, 10-, and 15-second windows, with
+  sample-by-sample continuity checks. A recovery-order test verifies the old
+  suffix precedes the new prefix, and a large partial-prefix case verifies
+  every sink chunk stays at or below 524,288 bytes without losing samples.
+- **Tests run:** `cargo fmt --all`; `cargo test -p reborn --bin reborn --locked
+  playback::tests` — 13 passed, 0 failed.
+- **Result:** Every consumed input frame has an owner after a later read error;
+  the old suffix and next prefix remain ordered and sink writes stay bounded.
+- **Commit:** pending.
+- **Remaining limitation:** Fault injection exercises the real window assembly
+  and stream chunker with deterministic PCM; physical 5/10/15-second playback
+  remains `PHYSICAL_QUALIFICATION_PENDING`.
+- **Evidence tier:** source inspection + runtime helper fault injection + host
+  playback tests. No physical output was used.
+
+## R7–R10
 
 Results will be recorded separately as each correction is reviewed and
 committed. No status is claimed yet.

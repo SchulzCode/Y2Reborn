@@ -286,37 +286,75 @@ fn read_pending_or_decoder(
     decoder: &mut Decoder,
     pending: &mut VecDeque<(Pcm, usize)>,
 ) -> Result<Option<Pcm>, String> {
-    if let Some((block, offset)) = pending.pop_front() {
+    if let Some(block) = take_pending_block(pending) {
+        return Ok(Some(block));
+    }
+    decoder.read()
+}
+
+fn take_pending_block(pending: &mut VecDeque<(Pcm, usize)>) -> Option<Pcm> {
+    while let Some((block, offset)) = pending.pop_front() {
         let frame_bytes = block.format.bytes_per_frame();
         let start = offset.saturating_mul(frame_bytes);
         if start >= block.data.len() {
-            return read_pending_or_decoder(decoder, pending);
+            continue;
         }
         let data = block.data[start..].to_vec();
-        return Ok(Some(Pcm {
+        return Some(Pcm {
             position_ms: block.position_ms + offset as u64 * 1000 / u64::from(block.rate),
             packets: block.packets,
             frames: data.len() as u64 / frame_bytes as u64,
             rate: block.rate,
             format: block.format,
             data,
-        }));
+        });
     }
-    decoder.read()
+    None
 }
 
-fn read_window(
-    decoder: &mut Decoder,
+struct WindowReadFailure {
+    partial: Option<Pcm>,
+    error: String,
+}
+
+fn window_pcm(data: Vec<u8>, position_ms: u64, rate: u32, format: PcmFormat) -> Option<Pcm> {
+    let frames = data.len() / format.bytes_per_frame();
+    (frames > 0).then_some(Pcm {
+        data,
+        position_ms,
+        packets: 0,
+        frames: frames as u64,
+        rate,
+        format,
+    })
+}
+
+fn read_window_with(
     pending: &mut VecDeque<(Pcm, usize)>,
     wanted_frames: usize,
-) -> Result<Option<Pcm>, String> {
+    mut read: impl FnMut() -> Result<Option<Pcm>, String>,
+) -> Result<Option<Pcm>, WindowReadFailure> {
     let mut data = Vec::new();
     let mut position_ms = 0;
     let mut rate = 0;
     let mut format = PcmFormat::S32LE;
     let mut frames = 0usize;
     while frames < wanted_frames {
-        let Some(block) = read_pending_or_decoder(decoder, pending)? else {
+        let next = if let Some(block) = take_pending_block(pending) {
+            Ok(Some(block))
+        } else {
+            read()
+        };
+        let next = match next {
+            Ok(next) => next,
+            Err(error) => {
+                return Err(WindowReadFailure {
+                    partial: window_pcm(data, position_ms, rate, format),
+                    error,
+                });
+            }
+        };
+        let Some(block) = next else {
             break;
         };
         if frames == 0 {
@@ -344,14 +382,26 @@ fn read_window(
     if frames == 0 {
         return Ok(None);
     }
-    Ok(Some(Pcm {
-        data,
-        position_ms,
-        packets: 0,
-        frames: frames as u64,
-        rate,
-        format,
-    }))
+    Ok(window_pcm(data, position_ms, rate, format))
+}
+
+fn read_window(
+    decoder: &mut Decoder,
+    pending: &mut VecDeque<(Pcm, usize)>,
+    wanted_frames: usize,
+) -> Result<Option<Pcm>, WindowReadFailure> {
+    read_window_with(pending, wanted_frames, || decoder.read())
+}
+
+fn recover_window_failure(tail: &mut TailWindow, failure: WindowReadFailure) -> Vec<Pcm> {
+    let mut blocks = Vec::with_capacity(2);
+    if let Some(suffix) = tail.take_all() {
+        blocks.push(suffix);
+    }
+    if let Some(partial) = failure.partial {
+        blocks.push(partial);
+    }
+    blocks
 }
 
 fn push_front_block(pending: &mut VecDeque<(Pcm, usize)>, block: Pcm) {
@@ -853,11 +903,11 @@ impl Playback {
                                         Level::Warn,
                                         "playback",
                                         "crossfade_input_failed",
-                                        &e,
+                                        &e.error,
                                         Some(job.id),
-                                        json!({"track_id":tracks[next_index].id,"recovery":"contiguous_boundary"}),
+                                        json!({"track_id":tracks[next_index].id,"recovery":"old_suffix_then_consumed_next_prefix"}),
                                     );
-                                    if let Some(ready) = tail.take_all() {
+                                    for ready in recover_window_failure(&mut tail, e) {
                                         let ready_frames = ready.frames;
                                         send_stream(
                                             &pt,
@@ -1468,6 +1518,135 @@ mod tests {
             fallback: false,
             fallback_reason: String::new(),
         }
+    }
+    fn indexed_pcm(first: usize, frames: usize, rate: u32) -> Pcm {
+        let mut data = Vec::with_capacity(frames * 8);
+        for frame in first..first + frames {
+            let sample = frame as i32;
+            data.extend_from_slice(&sample.to_le_bytes());
+            data.extend_from_slice(&(-sample).to_le_bytes());
+        }
+        Pcm {
+            data,
+            position_ms: first as u64 * 1000 / u64::from(rate),
+            packets: 0,
+            frames: frames as u64,
+            rate,
+            format: PcmFormat::S32LE,
+        }
+    }
+    fn indexed_samples(pcm: &Pcm) -> Vec<i32> {
+        pcm.data
+            .chunks_exact(8)
+            .map(|frame| i32::from_le_bytes(frame[..4].try_into().unwrap()))
+            .collect()
+    }
+
+    #[test]
+    fn partial_crossfade_windows_preserve_consumed_input_at_all_durations() {
+        let rate = 1000;
+        for seconds in [5usize, 10, 15] {
+            let wanted = seconds * rate as usize;
+            let near_end_a = wanted / 2;
+            let near_end_b = wanted / 3;
+            let cases = [
+                Vec::new(),
+                vec![1],
+                vec![3, 7, 13],
+                vec![near_end_a, near_end_b, wanted - 1 - near_end_a - near_end_b],
+            ];
+            for block_sizes in cases {
+                let consumed: usize = block_sizes.iter().sum();
+                let mut next = 0;
+                let mut blocks = VecDeque::new();
+                for size in block_sizes {
+                    blocks.push_back(indexed_pcm(next, size, rate));
+                    next += size;
+                }
+                let mut pending = VecDeque::new();
+                let result = read_window_with(&mut pending, wanted, || {
+                    blocks
+                        .pop_front()
+                        .map(|block| Ok(Some(block)))
+                        .unwrap_or_else(|| Err("injected decoder read failure".into()))
+                });
+                let failure = match result {
+                    Err(failure) => failure,
+                    Ok(_) => panic!("decoder failure after each injected prefix"),
+                };
+
+                assert_eq!(failure.error, "injected decoder read failure");
+                match (consumed, failure.partial) {
+                    (0, None) => {}
+                    (count, Some(partial)) => {
+                        assert_eq!(partial.frames, count as u64);
+                        assert_eq!(
+                            indexed_samples(&partial),
+                            (0..count as i32).collect::<Vec<_>>()
+                        );
+                        assert_eq!(partial.position_ms, 0);
+                    }
+                    _ => panic!("partial consumed PCM was not returned"),
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn failed_window_recovery_keeps_old_suffix_before_next_prefix() {
+        let mut tail = TailWindow::new(1000, PcmFormat::S32LE);
+        assert!(tail.push(indexed_pcm(1000, 4, 1000), 4).is_none());
+        let failure = WindowReadFailure {
+            partial: Some(indexed_pcm(0, 3, 1000)),
+            error: "injected read failure".into(),
+        };
+
+        let recovered = recover_window_failure(&mut tail, failure);
+
+        assert_eq!(recovered.len(), 2);
+        assert_eq!(indexed_samples(&recovered[0]), vec![1000, 1001, 1002, 1003]);
+        assert_eq!(indexed_samples(&recovered[1]), vec![0, 1, 2]);
+    }
+
+    #[test]
+    fn partial_window_recovery_is_chunked_under_sink_write_limit() {
+        let root =
+            std::env::temp_dir().join(format!("reborn-window-chunks-{}", std::process::id()));
+        let log = Observer::new(&root).unwrap();
+        let (tx, rx) = sync_channel(4);
+        let buffered = AtomicU64::new(0);
+        let epoch = AtomicU64::new(9);
+        let frames = MAX_SINK_WRITE_BYTES / 8 + 11;
+        let input = indexed_pcm(0, frames, 1000);
+        let input_samples = indexed_samples(&input);
+        let recovered = recover_window_failure(
+            &mut TailWindow::new(1000, PcmFormat::S32LE),
+            WindowReadFailure {
+                partial: Some(input),
+                error: "injected read failure".into(),
+            },
+        );
+        for block in recovered {
+            send_stream(
+                &tx,
+                &buffered,
+                &epoch,
+                9,
+                Stream::Pcm {
+                    generation: 9,
+                    block,
+                },
+                frames as u64,
+                &log,
+            )
+            .unwrap();
+        }
+        let mut output = Vec::new();
+        while let Ok(Stream::Pcm { block, .. }) = rx.try_recv() {
+            assert!(block.data.len() <= MAX_SINK_WRITE_BYTES);
+            output.extend(indexed_samples(&block));
+        }
+        assert_eq!(output, input_samples);
     }
     #[test]
     fn open_failure_is_synchronous_and_never_reports_started() {
