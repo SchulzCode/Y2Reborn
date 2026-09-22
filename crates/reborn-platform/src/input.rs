@@ -21,6 +21,8 @@ const KEYPAD: &str = "mt6582-keypad";
 
 const EV_KEY: u16 = 1;
 const EV_REL: u16 = 2;
+const EV_SYN: u16 = 0;
+const SYN_DROPPED: u16 = 3;
 const REL_WHEEL: u16 = 8;
 const KEY_UP: u16 = 103;
 const KEY_PAGEUP: u16 = 104;
@@ -133,13 +135,19 @@ impl InputManager {
     }
 
     fn poll_at(&mut self, now: Instant) -> Vec<InputEvent> {
-        let mut events = self.tick_at(now);
+        let mut events = vec![];
         let size = std::mem::size_of::<libc::input_event>();
         let mut raw = Vec::new();
-        for (device, file, pending) in &mut self.files {
+        let mut reopen = Vec::new();
+        for (index, (device, file, pending)) in self.files.iter_mut().enumerate() {
             let mut bytes = [0u8; 1024];
-            if let Ok(n) = file.read(&mut bytes) {
-                pending.extend_from_slice(&bytes[..n]);
+            match file.read(&mut bytes) {
+                Ok(n) => pending.extend_from_slice(&bytes[..n]),
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
+                Err(_) => {
+                    pending.clear();
+                    reopen.push(index);
+                }
             }
             while pending.len() >= size {
                 let offset = size - 8;
@@ -153,8 +161,32 @@ impl InputManager {
         for (device, kind, code, value) in raw {
             events.extend(self.ingest(&device, kind, code, value, now));
         }
+        for index in reopen {
+            let device = self.files[index].0.clone();
+            if let Ok(file) = OpenOptions::new()
+                .read(true)
+                .custom_flags(libc::O_NONBLOCK | libc::O_CLOEXEC)
+                .open(&device.path)
+            {
+                self.files[index].1 = file;
+            }
+            events.extend(self.release_stale_inputs());
+        }
         events.extend(self.tick_at(now));
         events
+    }
+
+    fn release_stale_inputs(&mut self) -> Vec<InputEvent> {
+        let controls = self.pressed.keys().copied().collect::<Vec<_>>();
+        self.pressed.clear();
+        self.wheel = None;
+        controls
+            .into_iter()
+            .map(|control| InputEvent {
+                device: "input-recovery".into(),
+                input: NormalizedInput::Release(control),
+            })
+            .collect()
     }
 
     fn ingest(
@@ -165,6 +197,12 @@ impl InputManager {
         value: i32,
         now: Instant,
     ) -> Vec<InputEvent> {
+        if kind == EV_SYN && code == SYN_DROPPED {
+            return self.release_stale_inputs();
+        }
+        if kind == EV_SYN {
+            return vec![];
+        }
         let Some(input) = map(device, kind, code, value) else {
             return vec![];
         };
@@ -322,10 +360,10 @@ impl ActionRouter {
                 _ => vec![],
             },
             NormalizedInput::LongPress(control) => {
-                self.long_pressed.insert(control);
                 if !screen_on {
                     return vec![];
                 }
+                self.long_pressed.insert(control);
                 match control {
                     PhysicalControl::Select => vec![Action::ContextMenu],
                     PhysicalControl::Back => vec![Action::Home],
@@ -555,5 +593,54 @@ mod tests {
             start + Duration::from_secs(1),
         );
         assert!(router.route(&release[0], true).is_empty());
+    }
+
+    #[test]
+    fn queued_release_is_consumed_before_long_press_aging() {
+        let mut input = InputManager::empty();
+        let start = Instant::now();
+        let _ = input.feed(NAVIGATION_BUTTONS, EV_KEY, 28, 1, start);
+        let release = input.feed(
+            NAVIGATION_BUTTONS,
+            EV_KEY,
+            28,
+            0,
+            start + LONG_PRESS + Duration::from_millis(1),
+        );
+        assert_eq!(
+            release[0].input,
+            NormalizedInput::Release(PhysicalControl::Select)
+        );
+        assert!(input
+            .tick(start + LONG_PRESS + Duration::from_millis(2))
+            .is_empty());
+    }
+
+    #[test]
+    fn syn_dropped_releases_stale_controls_and_screen_off_long_press_is_short() {
+        let mut input = InputManager::empty();
+        let now = Instant::now();
+        let _ = input.feed(NAVIGATION_BUTTONS, EV_KEY, 105, 1, now);
+        let recovered = input.feed("any", EV_SYN, SYN_DROPPED, 0, now);
+        assert_eq!(
+            recovered[0].input,
+            NormalizedInput::Release(PhysicalControl::Previous)
+        );
+        let mut router = ActionRouter::default();
+        let long = InputEvent {
+            device: "timing".into(),
+            input: NormalizedInput::LongPress(PhysicalControl::Next),
+        };
+        assert!(router.route(&long, false).is_empty());
+        let repeat = InputEvent {
+            device: "timing".into(),
+            input: NormalizedInput::Repeat(PhysicalControl::Next),
+        };
+        assert!(router.route(&repeat, false).is_empty());
+        let release = InputEvent {
+            device: "button".into(),
+            input: NormalizedInput::Release(PhysicalControl::Next),
+        };
+        assert_eq!(router.route(&release, false), vec![Action::NextTrack]);
     }
 }

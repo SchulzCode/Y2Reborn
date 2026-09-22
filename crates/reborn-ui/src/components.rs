@@ -763,7 +763,9 @@ fn text(d: &mut Vec<Quad>, x: f32, y: f32, value: &str, scale: f32, tint: u32, d
 
 fn glyph_index(ch: char) -> u8 {
     let codepoint = ch as u32;
-    if codepoint <= u8::MAX as u32 {
+    // The bundled atlas has 128 columns. Keep every lookup inside that
+    // bounded range; unsupported Unicode uses the visible fallback glyph.
+    if codepoint < 128 {
         codepoint as u8
     } else {
         b'?'

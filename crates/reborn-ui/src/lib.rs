@@ -5,7 +5,8 @@ mod screens;
 pub mod theme;
 
 use reborn_core::{
-    Action, AppModel, AudioOutput, ConfirmAction, Modal, RadioScan, RepeatMode, Screen, Track,
+    Action, AppModel, AudioOutput, ConfirmAction, MediaSource, Modal, NavigationFrame, RadioScan,
+    RepeatMode, Screen, Track,
 };
 use reborn_graphics::Quad;
 use std::{
@@ -147,6 +148,12 @@ impl Ui {
     fn go(m: &mut AppModel, screen: Screen, filter: impl Into<String>) {
         if m.screen != screen {
             m.navigation.stack.push(m.screen);
+            m.navigation.history.push(NavigationFrame {
+                screen: m.screen,
+                focus: m.navigation.focus,
+                scroll: m.navigation.scroll,
+                filter: m.navigation.filter.clone(),
+            });
         }
         m.screen = screen;
         m.navigation.focus = usize::from(screen == Screen::NowPlaying);
@@ -167,6 +174,14 @@ impl Ui {
         if m.screen == Screen::TextEntry {
             return;
         }
+        if let Some(previous) = m.navigation.history.pop() {
+            m.navigation.stack.pop();
+            m.screen = previous.screen;
+            m.navigation.focus = previous.focus;
+            m.navigation.scroll = previous.scroll;
+            m.navigation.filter = previous.filter;
+            return;
+        }
         if let Some(previous) = m.navigation.stack.pop() {
             m.screen = previous;
             m.navigation.focus = 0;
@@ -177,6 +192,7 @@ impl Ui {
 
     fn home(m: &mut AppModel) {
         m.navigation.stack.clear();
+        m.navigation.history.clear();
         m.screen = Screen::Home;
         m.navigation.focus = 0;
         m.navigation.scroll = 0;
@@ -221,6 +237,7 @@ impl Ui {
                     .navigation
                     .filter
                     .strip_prefix("album:")
+                    .map(album_filter_label)
                     .unwrap_or("Album");
                 let mut rows = vec![
                     Item::new(format!("Play {name}"), "play:collection"),
@@ -280,10 +297,9 @@ impl Ui {
             Screen::SettingsLibrary => vec![
                 Item::new("Internal Storage", "internal").with_secondary("Music library"),
                 Item::new("SD Card", "sd").with_secondary(
-                    if m.sources
-                        .iter()
-                        .any(|source| source.id == "sd" && source.online)
-                    {
+                    if m.sources.iter().any(|source| {
+                        matches!(source.kind, MediaSource::SdCard(_)) && source.online
+                    }) {
                         "Available"
                     } else {
                         "Not inserted"
@@ -326,6 +342,27 @@ impl Ui {
     }
 
     fn catalog_rows(&self, m: &AppModel, tracks: &[Track]) -> Vec<Item> {
+        if m.screen == Screen::Albums {
+            let mut albums = BTreeSet::new();
+            for track in tracks.iter().filter(|track| track.online) {
+                albums.insert((track.album_artist.clone(), track.album.clone()));
+            }
+            return albums
+                .into_iter()
+                .map(|(artist, album)| {
+                    let label = if album.is_empty() && artist.is_empty() {
+                        "Unknown".into()
+                    } else if artist.is_empty() {
+                        album.clone()
+                    } else if album.is_empty() {
+                        format!("Unknown · {artist}")
+                    } else {
+                        format!("{album} · {artist}")
+                    };
+                    Item::new(label, format!("album:{artist}\u{1f}{album}"))
+                })
+                .collect();
+        }
         let mut values = BTreeSet::new();
         for track in tracks.iter().filter(|track| track.online) {
             let value = match m.screen {
@@ -800,10 +837,9 @@ impl Ui {
             Screen::SettingsLibrary => match key {
                 "internal" => self.flash("Internal storage · library source"),
                 "sd" => self.flash(
-                    if m.sources
-                        .iter()
-                        .any(|source| source.id == "sd" && source.online)
-                    {
+                    if m.sources.iter().any(|source| {
+                        matches!(source.kind, MediaSource::SdCard(_)) && source.online
+                    }) {
                         "SD card available"
                     } else {
                         "Insert an SD card to use it"
@@ -1081,7 +1117,7 @@ impl Ui {
                     "add_queue" => track_index.map(Effect::AddToQueue).unwrap_or(Effect::None),
                     "go_album" => {
                         if let Some(index) = track_index.and_then(|i| tracks.get(i)) {
-                            Self::go(m, Screen::Album, format!("album:{}", index.album));
+                            Self::go(m, Screen::Album, album_filter(index));
                         }
                         Effect::None
                     }
@@ -1214,6 +1250,9 @@ fn track_matches(track: &Track, filter: &str) -> bool {
         return track.artist == value;
     }
     if let Some(value) = filter.strip_prefix("album:") {
+        if let Some((artist, album)) = value.split_once('\u{1f}') {
+            return track.album_artist == artist && track.album == album;
+        }
         return track.album == value;
     }
     if let Some(value) = filter.strip_prefix("folder:") {
@@ -1223,6 +1262,12 @@ fn track_matches(track: &Track, filter: &str) -> bool {
             .is_some_and(|parent| parent.to_string_lossy().starts_with(value));
     }
     true
+}
+fn album_filter(track: &Track) -> String {
+    format!("album:{}\u{1f}{}", track.album_artist, track.album)
+}
+fn album_filter_label(value: &str) -> &str {
+    value.split_once('\u{1f}').map_or(value, |(_, album)| album)
 }
 fn track_info(track: &Track) -> String {
     format!(

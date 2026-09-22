@@ -881,14 +881,17 @@ mod tests {
     }
     #[test]
     fn seek_discards_coarse_demuxer_prefix_before_resampling() {
-        let mut decoder = Decoder::open(&fixture("tone.flac"), 44_100, Cancel::new().unwrap())
-            .unwrap();
+        let mut decoder =
+            Decoder::open(&fixture("tone.flac"), 44_100, Cancel::new().unwrap()).unwrap();
         decoder.seek(500).unwrap();
         let mut frames = 0u64;
         while let Some(block) = decoder.read().unwrap() {
             frames += block.frames;
         }
-        assert!((22_049..=22_051).contains(&frames), "decoded {frames} frames");
+        assert!(
+            (22_049..=22_051).contains(&frames),
+            "decoded {frames} frames"
+        );
     }
     #[test]
     fn runtime_manifest_is_json() {

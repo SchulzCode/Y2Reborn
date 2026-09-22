@@ -3,7 +3,7 @@
 
 use crate::{components, theme, timeout_label, Item, PowerView, RadioView, Ui};
 use components::{fit, progress, time, Canvas};
-use reborn_core::{AppModel, Screen, Track};
+use reborn_core::{AppModel, MediaSource, Screen, Track};
 use reborn_graphics::Quad;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -383,17 +383,25 @@ fn library_rail(c: &mut Canvas, m: &AppModel) {
     }
     c.rect(22.0, 248.0, 108.0, 1.0, theme::color::SURFACE_BORDER);
     c.icon("storage", 24.0, 254.0, 22.0, theme::color::TEXT_SECONDARY);
+    let internal_online = m
+        .sources
+        .iter()
+        .any(|source| matches!(source.kind, MediaSource::Internal) && source.online);
     c.text(
         54.0,
         254.0,
-        "Internal",
+        "Y2DATA",
         theme::type_scale::SECONDARY,
         theme::color::TEXT_SECONDARY,
     );
     c.text(
         54.0,
         271.0,
-        "128 GB",
+        if internal_online {
+            "Available"
+        } else {
+            "Unavailable"
+        },
         theme::type_scale::DECORATIVE,
         theme::color::TEXT_MUTED,
     );
@@ -634,11 +642,12 @@ fn draw_artist(c: &mut Canvas, _ui: &Ui, m: &AppModel, tracks: &[Track], has_art
     }
     let mut artist_albums = Vec::new();
     for track in &artist_tracks {
-        if !artist_albums.iter().any(|album| album == &track.album) {
-            artist_albums.push(track.album.clone());
+        let identity = (track.album_artist.clone(), track.album.clone());
+        if !artist_albums.iter().any(|album| album == &identity) {
+            artist_albums.push(identity);
         }
     }
-    for (index, album) in artist_albums.iter().take(2).enumerate() {
+    for (index, (album_artist, album)) in artist_albums.iter().take(2).enumerate() {
         let x = 284.0 + index as f32 * 90.0;
         c.artwork(x, 190.0, 78.0, has_art);
         c.text(
@@ -655,7 +664,9 @@ fn draw_artist(c: &mut Canvas, _ui: &Ui, m: &AppModel, tracks: &[Track], has_art
                 "{} tracks",
                 artist_tracks
                     .iter()
-                    .filter(|track| &track.album == album)
+                    .filter(|track| {
+                        track.album_artist == *album_artist && track.album == *album
+                    })
                     .count()
             ),
             theme::type_scale::DECORATIVE,
@@ -669,6 +680,7 @@ fn draw_album(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], has_art: 
         .navigation
         .filter
         .strip_prefix("album:")
+        .map(crate::album_filter_label)
         .unwrap_or("Album");
     c.artwork(16.0, 44.0, 104.0, has_art);
     c.display(
@@ -1566,6 +1578,9 @@ fn track_matches(track: &Track, filter: &str) -> bool {
         return track.artist == value;
     }
     if let Some(value) = filter.strip_prefix("album:") {
+        if let Some((artist, album)) = value.split_once('\u{1f}') {
+            return track.album_artist == artist && track.album == album;
+        }
         return track.album == value;
     }
     if let Some(value) = filter.strip_prefix("folder:") {
