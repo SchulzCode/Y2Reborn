@@ -59,6 +59,9 @@ enum DecodeCommand {
     Load(Box<Job>),
     Stop,
 }
+// Keep the sink specification inline in the bounded command channel; avoid an
+// extra allocation in this already bounded, infrequent control path.
+#[allow(clippy::large_enum_variant)]
 enum SinkCommand {
     Shutdown(SyncSender<()>),
     Open {

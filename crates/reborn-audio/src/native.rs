@@ -229,6 +229,8 @@ impl AlsaSink {
             id,
         )
     }
+    // This boundary keeps the explicit ALSA probe/transport parameters together.
+    #[allow(clippy::too_many_arguments)]
     fn plan_named(
         device: &str,
         output: AudioOutput,

@@ -1360,10 +1360,8 @@ fn run() -> Result<(), String> {
         return Err("internal music must live under Y2DATA".into());
     }
     fs::create_dir_all(&model.settings.music_directory).map_err(|e| e.to_string())?;
-    if !headless && storage::sd_present() {
-        if !storage::platform_manages_media() {
-            let _ = storage::mount_sd();
-        }
+    if !headless && storage::sd_present() && !storage::platform_manages_media() {
+        let _ = storage::mount_sd();
     }
     model.sources = if headless {
         vec![Source {
@@ -2042,10 +2040,8 @@ fn run() -> Result<(), String> {
             rt.power = next_power;
             if !headless {
                 let sd = storage::sd_present();
-                if sd && !last_sd {
-                    if !storage::platform_manages_media() {
-                        let _ = storage::mount_sd();
-                    }
+                if sd && !last_sd && !storage::platform_manages_media() {
+                    let _ = storage::mount_sd();
                 }
                 if !sd && last_sd {
                     rt.pause();
@@ -2283,10 +2279,12 @@ mod artwork_presentation_tests {
             id: 4,
             ..Default::default()
         };
-        let mut model = AppModel::default();
-        model.generation = 7;
-        model.queue = vec![track.clone(), track];
-        model.queue_entry_ids = vec![QueueEntryId(21), QueueEntryId(22)];
+        let mut model = AppModel {
+            generation: 7,
+            queue: vec![track.clone(), track],
+            queue_entry_ids: vec![QueueEntryId(21), QueueEntryId(22)],
+            ..Default::default()
+        };
 
         assert!(artwork_matches_current(&model, 7, QueueEntryId(21), 4));
         assert!(!artwork_matches_current(&model, 7, QueueEntryId(22), 4));
@@ -2508,14 +2506,16 @@ mod runtime_reconfiguration_tests {
             path: PathBuf::from("/music/second.flac"),
             ..Default::default()
         };
-        let mut model = AppModel::default();
-        model.playback = PlaybackState::Playing;
-        model.queue = vec![first, second];
-        model.queue_entry_ids = vec![QueueEntryId(11), QueueEntryId(12)];
-        model.queue_position = 0;
-        model.position_ms = 12_345;
-        model.generation = 7;
-        model.output = AudioOutput::Wired;
+        let mut model = AppModel {
+            playback: PlaybackState::Playing,
+            queue: vec![first, second],
+            queue_entry_ids: vec![QueueEntryId(11), QueueEntryId(12)],
+            queue_position: 0,
+            position_ms: 12_345,
+            generation: 7,
+            output: AudioOutput::Wired,
+            ..Default::default()
+        };
         model.settings.volume = 42;
         model.settings.replay_gain = ReplayGainMode::Off;
         model.settings.eq_enabled = false;

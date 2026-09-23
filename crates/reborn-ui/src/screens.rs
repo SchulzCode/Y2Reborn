@@ -1522,7 +1522,7 @@ fn draw_boot() -> Vec<Quad> {
     c.finish()
 }
 
-fn visible_rows<'a>(rows: &'a [Item], focus: usize, visible: usize) -> Vec<(usize, &'a Item)> {
+fn visible_rows(rows: &[Item], focus: usize, visible: usize) -> Vec<(usize, &Item)> {
     let start = list_start(rows, focus, visible);
     rows.iter()
         .enumerate()

@@ -808,15 +808,19 @@ impl Ui {
                 }
                 if key == "play_next:collection" {
                     let members = self.filtered_indices(m, tracks);
-                    return (!members.is_empty())
-                        .then_some(Effect::PlayNextCollection(members))
-                        .unwrap_or(Effect::None);
+                    return if members.is_empty() {
+                        Effect::None
+                    } else {
+                        Effect::PlayNextCollection(members)
+                    };
                 }
                 if key == "add:collection" {
                     let members = self.filtered_indices(m, tracks);
-                    return (!members.is_empty())
-                        .then_some(Effect::AddToQueueCollection(members))
-                        .unwrap_or(Effect::None);
+                    return if members.is_empty() {
+                        Effect::None
+                    } else {
+                        Effect::AddToQueueCollection(members)
+                    };
                 }
             }
             Screen::Queue => {
@@ -1168,15 +1172,19 @@ impl Ui {
                     "album_shuffle" => self.play_first_filtered_shuffled(m, tracks),
                     "album_next" | "artist_next" => {
                         let members = self.filtered_indices(m, tracks);
-                        (!members.is_empty())
-                            .then_some(Effect::PlayNextCollection(members))
-                            .unwrap_or(Effect::None)
+                        if members.is_empty() {
+                            Effect::None
+                        } else {
+                            Effect::PlayNextCollection(members)
+                        }
                     }
                     "album_queue" | "artist_queue" => {
                         let members = self.filtered_indices(m, tracks);
-                        (!members.is_empty())
-                            .then_some(Effect::AddToQueueCollection(members))
-                            .unwrap_or(Effect::None)
+                        if members.is_empty() {
+                            Effect::None
+                        } else {
+                            Effect::AddToQueueCollection(members)
+                        }
                     }
                     "artist_play" => self.play_first_filtered(m, tracks),
                     "artist_shuffle" => self.play_first_filtered_shuffled(m, tracks),
@@ -1365,10 +1373,10 @@ fn crossfade_label(ms: u32) -> String {
 }
 pub(crate) fn timeout_label(seconds: u32) -> String {
     match seconds {
-        0 => "Never".into(),
-        15 => "15 sec".into(),
-        30 => "30 sec".into(),
-        60 => "1 min".into(),
+        0 => "Never",
+        15 => "15 sec",
+        30 => "30 sec",
+        60 => "1 min",
         120 => "2 min",
         value => return format!("{value} sec"),
     }
@@ -1638,8 +1646,10 @@ mod tests {
     }
     #[test]
     fn forgetting_radio_entries_requires_confirmation_and_emits_service_effect() {
-        let mut ui = Ui::default();
-        ui.saved_networks = vec![Item::new("Saved: Studio", "saved:7")];
+        let mut ui = Ui {
+            saved_networks: vec![Item::new("Saved: Studio", "saved:7")],
+            ..Default::default()
+        };
         let mut app = model(Screen::Wifi);
         app.navigation.focus = 2;
         ui.action(&mut app, &[], Action::ContextMenu);

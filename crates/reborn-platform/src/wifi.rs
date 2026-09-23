@@ -606,9 +606,9 @@ fn run(log: Observer, rx: Receiver<Command>, et: SyncSender<Status>, paths: Path
             "wifi",
             if !current.available {
                 HealthState::Unavailable
-            } else if current.error.is_some() {
-                HealthState::Degraded
-            } else if current.state == "COMPLETED" && current.readiness != "Online" {
+            } else if current.error.is_some()
+                || (current.state == "COMPLETED" && current.readiness != "Online")
+            {
                 HealthState::Degraded
             } else {
                 HealthState::Ok

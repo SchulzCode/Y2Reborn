@@ -433,8 +433,10 @@ mod tests {
         let log = Observer::new(&root).unwrap();
         let copy = address.clone();
         let player = Player::spawn_with(log, move || connect(&copy)).unwrap();
-        let mut model = AppModel::default();
-        model.playback = PlaybackState::Playing;
+        let mut model = AppModel {
+            playback: PlaybackState::Playing,
+            ..Default::default()
+        };
         player.publish(&model);
         let owner = registration.recv_timeout(Duration::from_secs(5)).unwrap();
         requests.send((owner.clone(), "Pause".into())).unwrap();

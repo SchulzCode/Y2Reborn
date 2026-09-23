@@ -42,7 +42,7 @@ pub fn parse_mountinfo(s: &str) -> Vec<(u64, PathBuf)> {
             let (mount, _) = line.split_once(" - ")?;
             let fields = mount.split_whitespace().collect::<Vec<_>>();
             Some((
-                fields.get(0)?.parse().ok()?,
+                fields.first()?.parse().ok()?,
                 unescape(fields.get(4)?).into(),
             ))
         })
