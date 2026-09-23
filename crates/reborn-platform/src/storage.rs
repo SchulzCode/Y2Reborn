@@ -63,6 +63,19 @@ pub fn sources(music: &Path) -> Vec<Source> {
             }
             let uuid =
                 super::filesystem_uuid(&m.device).unwrap_or_else(|| format!("device:{}", m.device));
+            let observed_mount = mountinfo
+                .iter()
+                .find_map(|(id, path)| (path == Path::new(mount_path)).then_some(*id));
+            if !internal && Path::new("/etc/y2linux/capabilities.json").exists() {
+                let claim = fs::read_to_string("/run/y2/media-mount.json")
+                    .ok()
+                    .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok());
+                let boot =
+                    fs::read_to_string("/proc/sys/kernel/random/boot_id").unwrap_or_default();
+                if !sd_claim_matches(claim.as_ref(), &uuid, observed_mount, boot.trim()) {
+                    continue;
+                }
+            }
             result.push(Source {
                 id: if internal {
                     "internal".into()
@@ -81,13 +94,27 @@ pub fn sources(music: &Path) -> Vec<Source> {
                 },
                 online: true,
                 mount: m.device.clone(),
-                mount_id: mountinfo
-                    .iter()
-                    .find_map(|(id, path)| (path == Path::new(mount_path)).then_some(*id)),
+                mount_id: observed_mount,
             });
         }
     }
     result
+}
+fn sd_claim_matches(
+    claim: Option<&serde_json::Value>,
+    uuid: &str,
+    mount: Option<u64>,
+    boot: &str,
+) -> bool {
+    claim.is_some_and(|c| {
+        c["schema"].as_u64() == Some(1)
+            && !boot.is_empty()
+            && c["boot_id"].as_str() == Some(boot)
+            && c["uuid"].as_str() == Some(uuid)
+            && mount.is_some()
+            && c["mount_id"].as_u64() == mount
+            && c["state"].as_str() == Some("Ready")
+    })
 }
 pub fn data_ready() -> bool {
     mounts()
@@ -164,5 +191,34 @@ mod tests {
             "36 25 179:7 / /media/sd\\040card rw,relatime shared:4 - vfat /dev/mmcblk0p1 rw\n",
         );
         assert_eq!(parsed, vec![(36, PathBuf::from("/media/sd card"))]);
+    }
+    #[test]
+    fn new_platform_requires_matching_card_claim_and_boot() {
+        let claim = serde_json::json!({"schema":1,"state":"Ready","uuid":"card-one","boot_id":"boot-one","mount_id":42});
+        assert!(sd_claim_matches(
+            Some(&claim),
+            "card-one",
+            Some(42),
+            "boot-one"
+        ));
+        assert!(!sd_claim_matches(
+            Some(&claim),
+            "card-two",
+            Some(42),
+            "boot-one"
+        ));
+        assert!(!sd_claim_matches(
+            Some(&claim),
+            "card-one",
+            Some(43),
+            "boot-one"
+        ));
+        assert!(!sd_claim_matches(
+            Some(&claim),
+            "card-one",
+            Some(42),
+            "boot-two"
+        ));
+        assert!(!sd_claim_matches(None, "card-one", Some(42), "boot-one"));
     }
 }

@@ -130,6 +130,16 @@ pub struct Ui {
 const LETTERS: &[u8] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 !@#$%^&*()-_=+[]{};:'\",.<>/?\\|`~";
 
 impl Ui {
+    /// Borrow the authoritative library for one synchronous semantic action.
+    /// Restore it before the caller executes effects; never clone every Track
+    /// merely to satisfy disjoint borrowing of navigation and the library.
+    pub fn model_action(&mut self, model: &mut AppModel, action: Action) -> Effect {
+        let tracks = std::mem::take(&mut model.library.tracks);
+        let effect = self.action(model, &tracks, action);
+        model.library.tracks = tracks;
+        effect
+    }
+
     pub fn flash(&mut self, message: impl Into<String>) {
         self.notice = message.into();
         self.notice_until = Some(Instant::now() + Duration::from_millis(1600));
@@ -395,10 +405,22 @@ impl Ui {
     }
 
     fn filtered_track_rows(&self, m: &AppModel, tracks: &[Track]) -> Vec<Item> {
+        self.track_rows_page(m, tracks, 0, usize::MAX)
+    }
+
+    pub(crate) fn track_rows_page(
+        &self,
+        m: &AppModel,
+        tracks: &[Track],
+        offset: usize,
+        limit: usize,
+    ) -> Vec<Item> {
         tracks
             .iter()
             .enumerate()
             .filter(|(_, track)| track_matches(track, &m.navigation.filter))
+            .skip(offset)
+            .take(limit)
             .map(|(index, track)| {
                 Item::new(
                     if track.title.is_empty() {
@@ -719,12 +741,27 @@ impl Ui {
     }
 
     fn move_focus(&mut self, m: &mut AppModel, tracks: &[Track], delta: i32) {
-        let rows = if m.navigation.modal.is_some() {
-            self.modal_rows(m, tracks)
+        let count = if m.navigation.modal.is_some() {
+            self.modal_rows(m, tracks).len()
         } else {
-            self.rows(m, tracks)
+            match m.screen {
+                Screen::Tracks | Screen::Artist | Screen::Album => {
+                    let actions = match m.screen {
+                        Screen::Artist => 1,
+                        Screen::Album => 4,
+                        _ => 0,
+                    };
+                    actions
+                        + tracks
+                            .iter()
+                            .filter(|t| track_matches(t, &m.navigation.filter))
+                            .count()
+                }
+                Screen::Queue => m.queue.len(),
+                _ => self.rows(m, tracks).len(),
+            }
         };
-        let Some(last) = rows.len().checked_sub(1) else {
+        let Some(last) = count.checked_sub(1) else {
             return;
         };
         let focus = if m.navigation.modal.is_some() {
@@ -1558,6 +1595,46 @@ mod tests {
             Some(Modal::Confirm(ConfirmAction::RebuildLibrary))
         );
         assert_eq!(app.navigation.modal_focus, 0);
+    }
+    #[test]
+    fn large_filtered_pages_keep_catalog_identity_and_visible_focus() {
+        let tracks: Vec<_> = (0..20_000)
+            .map(|i| Track {
+                id: i,
+                title: format!("Track {i}"),
+                artist: if i % 2 == 0 {
+                    "Even".into()
+                } else {
+                    "Odd".into()
+                },
+                online: true,
+                ..Track::default()
+            })
+            .collect();
+        let mut ui = Ui::default();
+        let mut app = model(Screen::Tracks);
+        app.navigation.filter = "artist:Odd".into();
+        app.navigation.focus = 9998;
+        ui.action(&mut app, &tracks, Action::WheelClockwise(8));
+        assert_eq!(app.navigation.focus, 9999);
+        let page = ui.track_rows_page(&app, &tracks, 9997, 5);
+        assert_eq!(
+            page.iter().map(|r| r.key.as_str()).collect::<Vec<_>>(),
+            vec!["track:19995", "track:19997", "track:19999"]
+        );
+        assert_eq!(
+            focus_target_count(&ui.draw(&app, &tracks, "ok", false, PowerView::default())),
+            1
+        );
+        app.navigation.modal = Some(Modal::Confirm(ConfirmAction::ClearQueue));
+        ui.action(&mut app, &tracks, Action::WheelClockwise(8));
+        assert_eq!(app.navigation.modal_focus, 1);
+        assert_eq!(app.navigation.focus, 9999);
+        let original_ptr = tracks.as_ptr();
+        app.library.tracks = tracks;
+        ui.model_action(&mut app, Action::Back);
+        assert_eq!(app.library.tracks.len(), 20_000);
+        assert_eq!(app.library.tracks.as_ptr(), original_ptr);
     }
     #[test]
     fn forgetting_radio_entries_requires_confirmation_and_emits_service_effect() {

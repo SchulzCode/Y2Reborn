@@ -20,3 +20,24 @@ the real-schema/count/existing-DB refusal case. `cargo build -p reborn --bin
 reborn-bench --release --locked`: passed fresh host release build. ARM, target
 performance and physical qualification remain pending. Host workload results
 and subsequent integration changes are recorded below as they are completed.
+
+Host runs completed 1k/10k/20k synthetic database and scanner workloads with no
+failures. Raw output is in Y2Linux `out/platform-v1-host-measurements/`. At 20k,
+initial synthetic-WAV scan was 11.705 s; unchanged scan was 0.411 s. These are
+x86 host filesystem/cache results during an unrelated ARM build, not Y2 budgets.
+No SQLite schema, index, cache or durability policy was tuned from these numbers.
+
+Measured wheel row generation at 1k/10k/20k had medians 0.129370 / 1.333516 /
+2.712791 ms. The focused correction counts matches without allocating each row,
+formats only the visible song page, and temporarily borrows the model's library
+for semantic input instead of cloning every Track. After a fresh release build,
+wheel medians were 0.002074 / 0.016462 / 0.032904 ms. UI output remains bounded by
+the existing visible layout, with original catalog indices retained. Queue and
+SQLite remain authoritative; no cache hierarchy or ORM was added.
+
+`cargo test -p reborn-ui -p reborn --bin reborn --lib --locked`: 13 UI and 27
+runtime tests passed. New 20k filtered-page test checks visible focus, final row
+identity, modal bounds and restoration of the exact library allocation. New
+platform images also require a matching SD mount claim/UUID/boot before an SD
+source is advertised, while older images retain the existing compatibility path.
+ARM and physical latency/UI/card qualification are still pending.

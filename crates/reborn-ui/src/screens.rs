@@ -236,7 +236,28 @@ fn draw_home(c: &mut Canvas, ui: &Ui, m: &AppModel, has_art: bool) {
 fn draw_library(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], has_art: bool) {
     library_rail(c, m);
     let x = theme::layout::CONTENT_X;
-    let rows = ui.rows(m, tracks);
+    // Song lists format only their visible page; SQLite-backed track identity
+    // and selection indices are retained, without caching another catalog.
+    let (row_count, page_start, rows) = if m.screen == Screen::Tracks {
+        let count = tracks
+            .iter()
+            .filter(|t| track_matches(t, &m.navigation.filter))
+            .count();
+        let visible = theme::layout::LIST_VISIBLE;
+        let start = m
+            .navigation
+            .focus
+            .saturating_sub(visible.saturating_sub(2))
+            .min(count.saturating_sub(visible));
+        (
+            count,
+            Some(start),
+            ui.track_rows_page(m, tracks, start, visible),
+        )
+    } else {
+        let rows = ui.rows(m, tracks);
+        (rows.len(), None, rows)
+    };
     let title = match m.screen {
         Screen::Music => "Music",
         Screen::Albums => "Albums",
@@ -255,7 +276,7 @@ fn draw_library(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], has_art
     c.text(
         432.0,
         48.0,
-        &format!("{}", rows.len()),
+        &format!("{}", row_count),
         theme::type_scale::MICRO,
         theme::color::TEXT_MUTED,
     );
@@ -317,15 +338,21 @@ fn draw_library(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], has_art
         }
         return;
     }
-    for (position, row) in visible_rows(&rows, m.navigation.focus, theme::layout::LIST_VISIBLE) {
+    let shown = if page_start.is_some() {
+        rows.iter().enumerate().collect()
+    } else {
+        visible_rows(&rows, m.navigation.focus, theme::layout::LIST_VISIBLE)
+    };
+    let start = page_start
+        .unwrap_or_else(|| list_start(&rows, m.navigation.focus, theme::layout::LIST_VISIBLE));
+    for (position, row) in shown {
         components::list_row(
             c,
             row,
             x,
             76.0 + position as f32 * theme::layout::ROW_H,
             308.0,
-            position + list_start(&rows, m.navigation.focus, theme::layout::LIST_VISIBLE)
-                == m.navigation.focus,
+            position + start == m.navigation.focus,
             components::row_icon(&row.key),
         );
     }

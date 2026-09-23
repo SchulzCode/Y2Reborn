@@ -1529,8 +1529,7 @@ fn run() -> Result<(), String> {
                     if !rt.model.screen_off || matches!(action, reborn_core::Action::ScreenWake) {
                         rt.last_activity = Instant::now();
                     }
-                    let library = rt.model.library.tracks.clone();
-                    let effect = rt.ui.action(&mut rt.model, &library, action);
+                    let effect = rt.ui.model_action(&mut rt.model, action);
                     if let Err(e) = rt.effect(effect) {
                         rt.fail("ui", e)
                     }
