@@ -1,4 +1,5 @@
 #![forbid(unsafe_code)]
+pub mod benchmark;
 use reborn_core::{MediaSource, Source, Track};
 use reborn_media::{Cancel, Decoder};
 use reborn_observability::{HealthState, Level, Observer};
