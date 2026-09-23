@@ -1,9 +1,9 @@
 # Luna correctness closure 01
 
-Date: 2026-09-22. Software-only closure record for the finite findings in the
-latest independent review. No physical Y2 was accessed, paired, configured,
-flashed, or tested. This record distinguishes host/source evidence from
-physical qualification.
+Started: 2026-09-22. Final candidate evidence updated: 2026-09-23. This is a
+software-only closure record for the finite findings in the latest independent
+review. No physical Y2 was accessed, paired, configured, flashed, or tested.
+This record distinguishes host/source evidence from physical qualification.
 
 ## Starting state and boundary
 
@@ -131,11 +131,16 @@ force. No candidate exists yet.
   the sink actor rejects a second open without release acknowledgement.
 - **Tests run:** `cargo fmt --all -- --check`; `cargo check -p reborn --locked`;
   fresh-target `cargo test -p reborn --bin reborn --locked` — 27 passed, 0
-  failed after the nonblocking-open correction.
+  failed after the nonblocking-open correction. The full workspace run exposed
+  scheduler sensitivity in a 100-ms wall-clock assertion; it was replaced with
+  a held-worker barrier that directly proves the caller returns before open
+  completes, and the full workspace run then passed.
 - **Result:** Release/plan/start/commit/fail ordering is explicit and the
   failure-boundary tests pass. The prior logical state is preserved where safe;
   failed active transitions cannot report `Playing` without a sink.
-- **Commit:** `72f9995` (`Make sink reconfiguration transactional`).
+- **Commit:** `72f9995` (`Make sink reconfiguration transactional`),
+  `9b72382` (`Keep sink-open waits off the runtime loop`), and `dde3c53`
+  (`Make async sink test scheduler independent`).
 - **Remaining limitation:** Sink release acknowledgement and ALSA planning
   remain synchronous on the runtime thread; release stays bounded at two
   seconds, including command-queue backpressure. The worker-open acknowledgement
@@ -256,9 +261,18 @@ force. No candidate exists yet.
 - **Result:** Every consumed input frame has an owner after a later read error;
   the old suffix and next prefix remain ordered and sink writes stay bounded.
 - **Commit:** `48ddaaa` (`Preserve crossfade input after read errors`).
+- **Memory inspection:** `TailWindow`, the next-track window and the mixed PCM
+  can coexist, at up to three stereo S32 windows (`3 × seconds × rate × 8`
+  bytes). The eight-slot PCM channel plus one worker and one producer chunk add
+  at most about 5 MiB at the 524,288-byte sink-write cap. Static live-PCM
+  estimates are about 10.0/15.1/20.1 MiB for 5/10/15 seconds at 44.1 kHz and
+  16.0/27.0/38.0 MiB at 96 kHz; decoder/filter allocations are additional.
+  This is a source-based bound estimate, not target RSS measurement. The fix
+  does not add another whole-window copy beyond the retained inputs and mix
+  result, and chunking remains bounded.
 - **Remaining limitation:** Fault injection exercises the real window assembly
-  and stream chunker with deterministic PCM; physical 5/10/15-second playback
-  remains `PHYSICAL_QUALIFICATION_PENDING`.
+  and stream chunker with deterministic PCM; measured target peak memory and
+  physical 5/10/15-second playback remain `PHYSICAL_QUALIFICATION_PENDING`.
 - **Evidence tier:** source inspection + runtime helper fault injection + host
   playback tests. No physical output was used.
 
@@ -410,7 +424,7 @@ force. No candidate exists yet.
 
 ## R10 — build, version, and manifest truth
 
-**Status: PARTIAL**
+**Status: FIXED**
 
 - **Finding and symptom:** Reborn's product label and ARM checker still
   reported FFmpeg 9.0.1 / SONAMEs `.101` despite the pinned target being 9.0.2
@@ -441,31 +455,92 @@ force. No candidate exists yet.
   file, verifies the existing exact SHA256, then atomically installs it. The
   test harness documents production, retained profile/source-boundary, and host
   prerequisite classes without deleting historical tests.
-- **Files changed:** Reborn `FFMPEG_VERSION`, `crates/reborn-media/src/native.rs`,
-  `tools/build/qemu-check.py`, `tools/build/fixtures.py`, fixture manifest,
-  current media/dependency docs; Y2Linux production version/package/validator
-  tooling and locked runner, retained source-version resolution, FFmpeg
-  acquisition, Buildroot's paired source mount, production tests and
-  test-profile documentation.
+- **Files changed:** Reborn `FFMPEG_VERSION`,
+  `assets/fixtures/manifest.json`, `crates/reborn-media/src/native.rs`,
+  `docs/architecture/dependencies.json`,
+  `docs/architecture/reborn-audio-stack-ffmpeg9.md`, `tools/build/fixtures.py`,
+  and `tools/build/qemu-check.py`; Y2Linux
+  `buildroot/package/reborn/reborn.mk`, `tests/README.md`,
+  `tests/test_reborn_receipts.py`, `tools/build/run.py`, and
+  `tools/production/{application.py,boot_update.py,build.py,ffmpeg9.py,package.py,system_update.py,tests.sh,validate.py}`.
 - **Tests added:** Workspace-version and Reborn application receipt checks;
   exact retained source-commit version resolution; rejection of unverifiable
   identity and the stale legacy receipt; verified archive acquisition and
-  checksum-failure cleanup; Reborn root-image path/legacy-binary checks.
-- **Tests run:** `cargo fmt --all -- --check`; `cargo test -p reborn-media
-  --locked` — 20 passed; Y2Linux `tests.test_reborn_receipts`,
-  `tests.test_production_handover`, `tests.test_production_storage` — 26
-  passed before root-image boundary tests; updated suite now passes 30 tests;
-  changed Python modules compiled; the locked build runner smoke test verified
-  its `/build`, `/tmp/Y2Reborn`, and validated owner-firmware mappings; the
-  cached FFmpeg 9.0.2 archive matched its pinned SHA256. Fresh final-gate
-  results will follow.
-- **Result:** Source-level version and product receipts agree with the intended
-  current artifacts; package/build gates remain to be run on the fresh final
-  candidate.
-- **Commit:** Reborn pending; Y2Linux pending.
-- **Remaining limitation:** Target FFmpeg 9.0.2 and package identity still need
-  fresh ARM/QEMU and rootfs/package validation. Historical baseline documents
-  and fixture-generator provenance continue to name FFmpeg 9.0.1 where that is
-  the version actually tested/generated. No hardware was accessed.
-- **Evidence tier:** source inspection + targeted host tests + exact local
-  archive hash verification; ARM/package evidence pending.
+  checksum-failure cleanup; Reborn root-image path/legacy-binary checks; locked
+  source-mount resolution.
+- **Tests run:** `cargo fmt --all -- --check`,
+  `cargo check --workspace --locked`, and fresh-target
+  `cargo test --workspace --locked` — 143 passed, 0 failed. Y2Linux's locked
+  `tools/production/tests.sh` passed 67 + 38 tests, QEMU shell syntax, ARM ABI
+  and ALSA utility checks. The final ARM QEMU runtime checker passed all 8
+  software checks and reported FFmpeg 9.0.2; generated-component/ELF
+  verification passed with the exact `.102` library versions, selected
+  components, no encoders/muxers/network protocols/CLI and correct media
+  membrane linkage. Direct ARM ELF inspection confirms hard-float Reborn,
+  ALSA/SQLite, BlueZ/BlueALSA/libsbc and FFmpeg linkage without non-empty
+  RPATH/RUNPATH. Package `validate.py` passed rootfs, ELF, ownership, manifest,
+  fallback and preserve-data checks; all 24 `SHA256SUMS` entries verify.
+- **Result:** Version and product receipts match the built rootfs. The locked
+  production test run also exposed and closed a source-path assumption: the
+  FFmpeg receipt loader now honors the runner's `/tmp/Y2Reborn` mount through
+  `Y2_REBORN_SOURCE`. The preserving update selects only BOOTIMG and ANDROID
+  and carries no Y2DATA image. All software/package gates pass.
+- **Commits:** Reborn `20eb29b` (`Align FFmpeg and Reborn build receipts`);
+  Y2Linux `609212a` (`Make Reborn build and package receipts truthful`) and
+  `df1bccf` (`Honor locked Reborn source mount in receipts`). Final Y2Linux
+  candidate/audit HEAD is recorded below.
+- **Remaining limitation:** Historical baseline documents and fixture
+  provenance continue to name FFmpeg 9.0.1 where that is the version actually
+  tested/generated. Runtime build-configuration strings retain toolchain
+  provenance paths, but inspected target ELFs are ARM EABI hard-float, use no
+  host libraries, and contain no non-empty host search path. Physical
+  qualification remains pending.
+- **Evidence tier:** fresh host workspace tests + fresh ARMv7 production
+  package build + QEMU runtime and component/ELF checks + rootfs/package/hash
+  verification. No physical evidence is claimed.
+
+## Final candidate identity and gates
+
+Candidate package:
+`/home/luca/Dokumente/Code/Y2Linux/out/y2linux-reborn-correctness-closure-01/`.
+The packaged software sources are Y2Linux `5f6b4468fb43605ca1da679420823afa72cea73f`
+and Y2Reborn `dde3c537cec66b3b2f70a032584cb054bdb3037e`. Y2Reborn's final
+validation-document commit follows package creation and changes no compiled
+code; the manifest's `reborn_source_commit` therefore names the exact compiled
+code commit. The package identity is kernel `6.18.0-y2linux-gpu-02`, Buildroot
+`2025.02.18`, Reborn `0.1.0` (release `0.1.0-premium.3`), FFmpeg `9.0.2`,
+BlueZ `5.87`, BlueALSA `5.0.0`, and libsbc `2.2`.
+
+| Artifact | SHA-256 |
+| --- | --- |
+| `BOOTIMG.img` | `34482a2d65c303ac7099f2ea31e1f8104a4d57792767b62081b83c8761abfe1e` |
+| `Y2ROOT.img` | `ac03708e57489033438627055f8b0b170511fbd38674bc84fdb4674e70faf774` |
+| `manifest.json` | `d5b8ec6bf4a2173266f784ece134e48f70c664e129db9be55a440ba624926134` |
+| `SHA256SUMS` | `031728b5a5da7d4abe312ee98647504941d0a199bfa6e6414ebbfe3a31016cbf` |
+
+The final review gate found no additional source of truth, no new synchronous
+UI wait (sink-open waits are polled; the existing release boundary is bounded
+to two seconds), no weakened fail-closed path, no broadened hardware scope, and
+no protected-storage, power, or kernel-policy changes. User-visible changes
+are limited to truthful error/buffering states, single-track intent in
+filtered contexts, and cancellation after input loss. R9B remains the one
+software limitation: ALSA `plug` hides the underlying BlueALSA PCM contract, so
+the application validates only its ALSA-facing negotiated contract and makes
+no bit-precision claim. All physical Y2 checks remain pending.
+
+## Owner-run physical qualification checklist — not performed
+
+1. Verify the recorded package hashes against every included file.
+2. Preserve a tested fallback and confirm its BOOTIMG/Y2ROOT pair.
+3. Use `MT6582_preserve_data_scatter.txt` from this package.
+4. Select only `BOOTIMG` and `ANDROID`; never select Y2DATA/USRDATA, preloader,
+   LK, NVRAM, PROTECT, calibration, or factory regions.
+5. Boot this exact candidate and confirm the installed build/source markers.
+
+Then qualify, in order: boot/rescue; UI; buttons/wheel; wired playback;
+pause/resume; volume; seek; next/previous; duplicate queue entries/live edits;
+ReplayGain; gapless; 5/10/15-second crossfade; screen-off playback; SD
+insert/remove; Wi-Fi scan; WPA association; DHCP; DNS; reconnect; Bluetooth
+fresh pairing; trust; SBC playback; Bluetooth reconnect; Wi-Fi + SBC coexistence;
+and long-playback RSS/XRUN behavior. Charging, suspend and power qualification
+remain separately scoped and require their own safety procedure.
