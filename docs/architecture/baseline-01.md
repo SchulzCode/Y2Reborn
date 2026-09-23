@@ -1,5 +1,10 @@
 # Reborn Baseline 01 architecture and operator contract
 
+Historical Baseline 01 architecture. Later fixes and platform integration are
+recorded in [correctness closure](../validation/LUNA-CORRECTNESS-CLOSURE-01.md)
+and [Platform v1 integration](../validation/PLATFORM-V1-INTEGRATION.md); those
+records supersede the initial dependency versions and pending-work statements.
+
 Reborn is a native Linux application. Platform entry: Y2Linux `16b2fb8`, retained
 GPU-01 graphics/audio evidence, then owner-confirmed and pinned-SSH-observed
 GPU-02 (`6.18.0-y2linux-gpu-02`, root `Y2LINUX-GPU-02`). The read-only capture is
@@ -253,3 +258,41 @@ API references used during implementation: [FFmpeg send/receive](https://ffmpeg.
 [wpa_supplicant control](https://w1.fi/wpa_supplicant/devel/ctrl_iface_page.html),
 [BlueZ Agent1](https://bluez.readthedocs.io/en/latest/agent-api/). The pinned
 Buildroot and installed native headers determine the compiled ABI.
+
+## Historical Android reference
+
+Preserved from the September 8, 2026 planning assessment. The Android reference
+was `/home/luca/Dokumente/Code/Y2Player` at
+`870f2b33e49129990bc0a98eeb34d58ed42542b6`, clean when inspected. Ignored firmware
+and captures are not authenticated by that source revision. Paths in this section
+refer to that repository; these are behavioral references, not Reborn capabilities.
+
+The Android player is an API-19 HOME launcher with a custom drawn, wheel-oriented
+480 × 360 interface. Its `AppContainer.kt`, `core/state/`, `queue/`, `input/`,
+`library/`, `playback/` and tests capture useful behavior and ownership boundaries.
+
+Useful references include explicit queue ordering and shuffle passes; seek,
+previous and repeat rules; gapless/crossfade cancellation; ReplayGain fallback
+and peak handling; volume transition safety; route-loss pause; storage removal
+and USB export coordination; incremental metadata scanning; lazy bounded artwork;
+audiobook progress; playlists; backup/import; search; screen-off controls;
+listening history; and themes. At that revision, `RELEASE_2.5.md` documented
+search, hardware-dependent FM, alphabet navigation and expanded timers, while
+the README still described 2.3 and denied search and the old input map denied
+acceleration. Resolve behavior against the dated source/tests and release record.
+
+`docs/ARCHITECTURE.md` and `docs/PLAYBACK_ENGINE.md` described one audio owner
+thread, bounded/coalescing commands, two decoder handles for transitions,
+explicit decoded/submitted/played accounting, cancellation and persistent PCM
+buffers. The inspected FFmpeg engine used a fixed 44,100-Hz `PcmFormat`; C decoding
+and metadata crossed JNI, DSP stayed float until PCM16 AudioTrack output, and
+SQLite indexed the library. Native persistence and tests are designed separately.
+
+The original native blueprint proposed a Rust state/action/reducer/effect core,
+a C decoder/DSP ABI, independent output sinks and standard Linux adapters.
+JNI, Android services, wake locks, AudioTrack, vendor HAL interfaces and permission
+workarounds remain historical context. Its Last.fm, modern Bluetooth, LVGL/DRM
+and direct-ALSA targets were proposals, not inherited capabilities; the current
+Reborn implementation uses its documented FFmpeg/ALSA/DRM/GLES architecture.
+Platform hardware evidence and the original Y2E research specifications are
+maintained in [Y2Linux's evidence baseline](https://github.com/SchulzCode/Y2Linux/blob/main/docs/planning/M0-evidence-and-recovery.md).

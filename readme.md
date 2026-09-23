@@ -79,3 +79,9 @@ hardware and cannot supply physical first-frame or playback qualification.
 The Platform v1 candidate is packaged by Y2Linux, preserving Y2DATA. Follow its
 owner qualification plan before returning to general application feature work;
 unsupported platform capabilities remain explicit rather than inferred by Reborn.
+
+Platform research and the original Y2E task specifications live in
+[Y2Linux's evidence baseline](https://github.com/SchulzCode/Y2Linux/blob/main/docs/planning/M0-evidence-and-recovery.md).
+The obsolete planning copies have been removed here; their useful
+[Android behavior reference](docs/architecture/baseline-01.md#historical-android-reference)
+is retained with the application architecture.
