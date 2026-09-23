@@ -1241,6 +1241,12 @@ fn startup_phase(log: &Observer, started: Instant, phase: &str) {
 fn run() -> Result<(), String> {
     let process_started = Instant::now();
     let args = std::env::args().skip(1).collect::<Vec<_>>();
+    if args.iter().any(|s| s == "--default-settings") {
+        let value = json!({"session_schema":reborn_core::SESSION_SCHEMA_VERSION,
+            "settings":reborn_core::Settings::default()});
+        writeln!(std::io::stdout(), "{value}").map_err(|e| e.to_string())?;
+        return Ok(());
+    }
     if args.iter().any(|s| s == "--version") {
         let _ = writeln!(std::io::stdout(), "{}", reborn_core::VERSION);
         return Ok(());
@@ -1253,6 +1259,9 @@ fn run() -> Result<(), String> {
         return Ok(());
     }
     let headless = args.iter().any(|s| s == "--headless");
+    if !headless && Path::new("/data/system/platform/maintenance-pending").exists() {
+        return Err("owner maintenance is incomplete; resume through y2-platform reset".into());
+    }
     if !headless && !storage::data_ready() {
         return Err("Y2DATA is not ready; refusing mutable data on Y2ROOT".into());
     }
