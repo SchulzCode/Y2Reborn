@@ -1455,6 +1455,18 @@ fn run() -> Result<(), String> {
         active_transport_generation: None,
     };
     startup_phase(&log, process_started, "runtime_ready");
+    if first_frame_presented && !headless {
+        if let Err(error) = reborn_platform::contract::application_ready() {
+            log.emit(
+                Level::Warn,
+                "platform",
+                "readiness",
+                &error,
+                None,
+                json!({}),
+            );
+        }
+    }
     let last_snapshot = Arc::new(Mutex::new(json!({"starting":true})));
     let watcher = last_snapshot.clone();
     let wl = log.clone();
@@ -2129,6 +2141,18 @@ fn run() -> Result<(), String> {
                     let _ = log.diagnostic(&root.join("diagnostics"), rt.snapshot(), true);
                 } else if !first_frame_presented {
                     first_frame_presented = true;
+                    if !headless {
+                        if let Err(error) = reborn_platform::contract::application_ready() {
+                            log.emit(
+                                Level::Warn,
+                                "platform",
+                                "readiness",
+                                &error,
+                                None,
+                                json!({}),
+                            );
+                        }
+                    }
                     log.emit(
                         Level::Info,
                         "startup",
