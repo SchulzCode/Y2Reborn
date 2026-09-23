@@ -66,3 +66,8 @@ Previous actions; only the current BlueZ owner can invoke them. Two host tests
 pass, including private D-Bus registration, authorized control, unauthorized
 sender rejection and unchanged metadata until the actual model changes. No
 remote playback or physical radio qualification is claimed; ARM build pending.
+
+Bluetooth user actions now share the platform reconnect operation lock. Pending
+connect/power intents inhibit automatic recovery; successful explicit completion
+re-arms it. Client timeout or D-Bus loss stays inhibited until owner retry.
+34 platform tests pass; ARM/image validation follows in the next build.

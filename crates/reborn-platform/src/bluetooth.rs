@@ -100,7 +100,44 @@ struct Pending {
     display: Pairing,
     started: Instant,
 }
-type Operations = Arc<Mutex<HashMap<u32, (u64, Instant, String, String)>>>;
+type Operations = Arc<Mutex<HashMap<u32, (u64, Instant, String, String, Option<std::fs::File>)>>>;
+
+fn user_intent(operation: &str) -> Result<Option<std::fs::File>, String> {
+    if !Path::new("/etc/y2linux/platform-contract").exists() {
+        return Ok(None);
+    }
+    use std::os::unix::fs::OpenOptionsExt;
+    let lock = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open("/run/y2/bt-operation.lock")
+        .map_err(|e| e.to_string())?;
+    lock.try_lock().map_err(|_| {
+        "Platform Bluetooth operation in progress; retry after it completes".to_string()
+    })?;
+    write_intent(match operation {
+        "connect" => "connect_pending",
+        "power_on" => "power_pending",
+        _ => operation,
+    })?;
+    Ok(Some(lock))
+}
+fn write_intent(operation: &str) -> Result<(), String> {
+    let boot =
+        std::fs::read_to_string("/proc/sys/kernel/random/boot_id").map_err(|e| e.to_string())?;
+    let now = crate::native::monotonic_seconds().ok_or("monotonic clock unavailable")?;
+    let now = (now * 1e6) as u64;
+    let text = format!(
+        "[intent]\nversion=1\nboot_id={}\nsequence={now}\noperation={operation}\ndeadline_us={}\n",
+        boot.trim(),
+        now + 30_000_000
+    );
+    atomic_write(Path::new("/run/y2/bt-control.ini"), text.as_bytes()).map_err(|e| e.to_string())
+}
+
 type Objects = HashMap<DbusPath<'static>, HashMap<String, PropMap>>;
 fn objects(c: &Connection) -> Result<Objects, String> {
     c.with_proxy("org.bluez", "/", Duration::from_secs(2))
@@ -309,9 +346,17 @@ fn power_at(
     persist: bool,
     preference: &Path,
 ) -> Result<(), String> {
-    c.with_proxy("org.bluez", adapter, Duration::from_secs(15))
-        .set("org.bluez.Adapter1", "Powered", on)
-        .map_err(dbus_error)?;
+    let lease = user_intent(if on { "power_on" } else { "power_off" })?;
+    let result = c
+        .with_proxy("org.bluez", adapter, Duration::from_secs(15))
+        .set("org.bluez.Adapter1", "Powered", on);
+    if result.is_err() && lease.is_some() {
+        let _ = write_intent("uncertain");
+    }
+    result.map_err(dbus_error)?;
+    if lease.is_some() {
+        write_intent(if on { "power_on" } else { "power_off" })?;
+    }
     if persist {
         atomic_write(preference, if on { b"1\n" } else { b"0\n" }).map_err(|e| e.to_string())?;
     }
@@ -392,9 +437,10 @@ impl Bluetooth {
                     for kind in [dbus::MessageType::MethodReturn,dbus::MessageType::Error] {
                         let ops=operations.clone();let observer=log.clone();let mut rule=MatchRule::new();rule.msg_type=Some(kind);
                         c.start_receive(rule,Box::new(move|mut msg,connection|{
-                            if let Some(serial)=msg.get_reply_serial(){if let Ok(mut ops)=ops.lock(){if let Some((id,_,method,path))=ops.remove(&serial){
+                            if let Some(serial)=msg.get_reply_serial(){if let Ok(mut ops)=ops.lock(){if let Some((id,_,method,path,lease))=ops.remove(&serial){
                                 match msg.as_result(){
                                     Ok(_) => {
+                                        if method == "Connect" && lease.is_some() { let _=write_intent("connect"); }
                                         let mut trusted = None;
                                         if method == "Pair" {
                                             let result: Result<(), dbus::Error> = connection
@@ -586,6 +632,7 @@ impl Bluetooth {
                     let mut operation_error = None;
                     loop {
                         if c.process(Duration::from_millis(20)).is_err() {
+                            if operations.lock().map(|ops| ops.values().any(|op| op.4.is_some())).unwrap_or(false) { let _ = write_intent("uncertain"); }
                             current.available = false;
                             current.error = Some("Bluetooth service disconnected".into());
                             if current.scan.active() { current.scan = RadioScan::Failed { message: "Bluetooth service disconnected".into() }; }
@@ -593,7 +640,7 @@ impl Bluetooth {
                             break;
                         }
                         let mut changed = false;
-                        if let Ok(mut ops)=operations.lock(){ops.retain(|_,(id,start,method,_)|{if start.elapsed()>Duration::from_secs(70){log.add("bluetooth_errors",1.);log.emit(Level::Error,"bluetooth","operation_timeout","BlueZ operation deadline exceeded",Some(*id),json!({"method":method}));false}else{true}});}
+                        if let Ok(mut ops)=operations.lock(){ops.retain(|_,(id,start,method,_,lease)|{if start.elapsed()>Duration::from_secs(70){if lease.is_some(){let _=write_intent("uncertain");}log.add("bluetooth_errors",1.);log.emit(Level::Error,"bluetooth","operation_timeout","BlueZ operation deadline exceeded",Some(*id),json!({"method":method}));false}else{true}});}
                         if refresh.elapsed() > Duration::from_secs(2) {
                             match status(&c) {
                                 Ok((a, mut s)) => {
@@ -745,6 +792,7 @@ impl Bluetooth {
                                     if !current.devices.iter().any(|d| d.path == path) {
                                         Err("unknown discovered Bluetooth device".into())
                                     } else if member == "RemoveDevice" {
+                                        let r = user_intent("forget").and_then(|_lease| {
                                         let r: Result<(), _> = c
                                             .with_proxy(
                                                 "org.bluez",
@@ -757,6 +805,7 @@ impl Bluetooth {
                                                 (DbusPath::from(path),),
                                             );
                                         r.map_err(dbus_error)
+                                        }); r
                                     } else {
                                         // Send asynchronous method calls on the Agent's own connection so callbacks are dispatched by this worker.
                                         let message = Message::new_method_call(
@@ -767,8 +816,9 @@ impl Bluetooth {
                                         )
                                         .map_err(|_| "invalid D-Bus path".to_string());
                                         message.and_then(|m| {
+                                            let lease=user_intent(match member {"Pair"=>"pair","Disconnect"=>"disconnect",_=>"connect"})?;
                                             c.send(m)
-                                                .map(|serial| {if let Ok(mut ops)=operations.lock(){if ops.len()<16{ops.insert(serial,(id,Instant::now(),member.into(),path.clone()));}}})
+                                                .map(|serial| {if let Ok(mut ops)=operations.lock(){if ops.len()<16{ops.insert(serial,(id,Instant::now(),member.into(),path.clone(),lease));}}})
                                                 .map_err(|_| "D-Bus send failed".into())
                                         })
                                     }
