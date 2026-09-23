@@ -41,3 +41,11 @@ identity, modal bounds and restoration of the exact library allocation. New
 platform images also require a matching SD mount claim/UUID/boot before an SD
 source is advertised, while older images retain the existing compatibility path.
 ARM and physical latency/UI/card qualification are still pending.
+
+
+Power integration: normal shutdown requests use the platform socket when its
+contract is installed. Current-boot intent triggers audio/session/SQLite close;
+acknowledgement reports failures truthfully. The database worker checkpoints and
+closes before replying. Runtime/library/platform host suites and targeted real
+checkpoint/close test pass. Hardware transitions/low-battery thresholds remain
+Y2Linux owner-controlled qualification; no electrical limit is chosen here.

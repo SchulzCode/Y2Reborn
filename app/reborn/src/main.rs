@@ -1495,7 +1495,16 @@ fn run() -> Result<(), String> {
     let mut action_router = input::ActionRouter::default();
     let mut last_sd = storage::sd_present();
     let mut xrun_bundle = 0.;
+    let mut shutdown_intent = None;
+    let mut power_poll = Instant::now() - Duration::from_secs(1);
     while !reborn_platform::stop_requested() {
+        if !headless && power_poll.elapsed() >= Duration::from_millis(250) {
+            power_poll = Instant::now();
+            shutdown_intent = power::shutdown_intent();
+            if shutdown_intent.is_some() {
+                break;
+            }
+        }
         log.heartbeat("ui", 10);
         rt.ui.expire_notice();
         rt.poll_pending_reconfiguration();
@@ -2086,7 +2095,9 @@ fn run() -> Result<(), String> {
         thread::sleep(Duration::from_millis(15));
     }
     rt.model.invalidate();
+    let mut shutdown_ready = true;
     if let Err(e) = rt.playback.shutdown(rt.model.generation) {
+        shutdown_ready = false;
         log.emit(
             Level::Error,
             "audio",
@@ -2097,9 +2108,26 @@ fn run() -> Result<(), String> {
         );
     }
     rt.model.playback = PlaybackState::Paused;
+    rt.pending_reconfiguration = None;
     rt.checkpoint();
+    shutdown_ready &= !rt.dirty.persistence;
     rt.scanner.stop();
-    rt.db.stop();
+    if let Err(error) = rt.db.shutdown(Duration::from_secs(2)) {
+        shutdown_ready = false;
+        log.emit(
+            Level::Error,
+            "database",
+            "shutdown_failed",
+            &error,
+            None,
+            json!({}),
+        );
+    }
+    if let Some(id) = shutdown_intent {
+        if let Err(error) = power::acknowledge_shutdown(&id, shutdown_ready) {
+            log.emit(Level::Warn, "power", "ack_failed", &error, None, json!({}));
+        }
+    }
     if let Some(w) = rt.wifi {
         let _ = w.commands.try_send(wifi::Command::Stop);
     }

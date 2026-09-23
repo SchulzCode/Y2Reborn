@@ -49,6 +49,7 @@ enum DbCommand {
     #[cfg(test)]
     TestSql(String, SyncSender<Result<(), String>>),
     Stop,
+    Shutdown(SyncSender<Result<(), String>>),
 }
 #[derive(Clone)]
 pub struct Database {
@@ -472,6 +473,12 @@ impl Database {
         thread::Builder::new().name("database".into()).spawn(move||{
  log.health_set("database",HealthState::Ok,true,"schema ready");loop{log.heartbeat("database",15);let msg=match rx.recv_timeout(Duration::from_secs(1)){Ok(m)=>m,Err(RecvTimeoutError::Timeout)=>continue,Err(_)=>break};let now=Instant::now();let result:Result<(),String>=match msg{
  DbCommand::Stop=>break,
+ DbCommand::Shutdown(reply)=>{
+     let checkpoint = c.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |r|r.get::<_, i64>(0)).map_err(err).and_then(|busy| if busy == 0 {Ok(())} else {Err("checkpoint busy".into())});
+     let closed = c.close().map_err(|(_, e)|err(e));
+     let _=reply.try_send(checkpoint.and(closed));
+     break;
+ },
  DbCommand::Sources(sources)=>(||{let tx=c.transaction().map_err(err)?;tx.execute("UPDATE sources SET online=0",[]).map_err(err)?;for s in sources{tx.execute("INSERT INTO sources(id,root,online) VALUES(?1,?2,?3) ON CONFLICT(id) DO UPDATE SET root=excluded.root,online=excluded.online",params![s.id,s.root.to_string_lossy(),s.online]).map_err(err)?;}tx.commit().map_err(err)})(),
  DbCommand::List(f,reply)=>{let _=reply.try_send(list(&c,&f));Ok(())},
  DbCommand::Existing(id,reply)=>{let value=(||{let mut q=c.prepare(&format!("{SELECT} WHERE t.source_id=?1 LIMIT 250000")).map_err(err)?;let rows=q.query_map([id],from_row).map_err(err)?;let tracks=rows.collect::<rusqlite::Result<Vec<_>>>().map_err(err)?;Ok(tracks.into_iter().map(|t|(t.path.clone(),t)).collect())})();let _=reply.try_send(value);Ok(())},
@@ -522,6 +529,14 @@ impl Database {
     }
     pub fn stop(&self) {
         let _ = self.tx.try_send(DbCommand::Stop);
+    }
+    pub fn shutdown(&self, timeout: Duration) -> Result<(), String> {
+        let (tx, rx) = sync_channel(1);
+        self.tx
+            .try_send(DbCommand::Shutdown(tx))
+            .map_err(|e| e.to_string())?;
+        rx.recv_timeout(timeout)
+            .map_err(|e| format!("database shutdown: {e}"))?
     }
 }
 pub fn supported(path: &Path) -> bool {
@@ -1104,6 +1119,35 @@ mod tests {
             .filter_map(Result::ok)
             .any(|entry| entry.file_name().to_string_lossy().contains("corrupt-")));
         lock.execute_batch("ROLLBACK;").unwrap();
+    }
+
+    #[test]
+    fn shutdown_ack_follows_checkpoint_and_connection_close() {
+        let root = std::env::temp_dir().join(format!("reborn-shutdown-{}", std::process::id()));
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("library.db");
+        let log = Observer::new(&root.join("logs")).unwrap();
+        let db = Database::spawn(path.clone(), log).unwrap();
+        db.execute_test_sql("INSERT OR REPLACE INTO sources VALUES('one','/scratch',1)".into())
+            .unwrap();
+        db.shutdown(Duration::from_secs(3)).unwrap();
+        if let Ok(reply) = db.test() {
+            assert!(reply.recv_timeout(Duration::from_secs(1)).is_err());
+        }
+        let connection = Connection::open(path).unwrap();
+        assert_eq!(
+            connection
+                .query_row("SELECT root FROM sources WHERE id='one'", [], |r| r
+                    .get::<_, String>(0))
+                .unwrap(),
+            "/scratch"
+        );
+        assert_eq!(
+            connection
+                .query_row("PRAGMA quick_check", [], |r| r.get::<_, String>(0))
+                .unwrap(),
+            "ok"
+        );
     }
 
     #[test]
