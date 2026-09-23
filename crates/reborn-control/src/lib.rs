@@ -56,6 +56,10 @@ pub enum Command {
         radio: Radio,
         action: RadioAction,
     },
+    BluetoothCodec {
+        address: String,
+        preference: reborn_core::CodecPreference,
+    },
     InputMonitor {
         seconds: u64,
     },

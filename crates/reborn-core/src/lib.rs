@@ -6,6 +6,13 @@ use std::{
     path::{Path, PathBuf},
 };
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CodecPreference {
+    Auto,
+    #[serde(rename = "SBC")]
+    Sbc,
+}
+
 pub const VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), "-premium.01");
 pub const MAX_QUEUE: usize = 20_000;
 pub const SESSION_SCHEMA_VERSION: u32 = 2;

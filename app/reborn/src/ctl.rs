@@ -29,6 +29,17 @@ fn command(a: &[String]) -> Result<Command, String> {
         if a.iter().any(|s| s == "--follow") {
             return Err("Radio operations cannot use --follow; poll status instead".into());
         }
+        if first == "bluetooth" && next == Some("codec") {
+            let preference = match a.get(2).map(String::as_str) {
+                Some("Auto") => reborn_core::CodecPreference::Auto,
+                Some("SBC") => reborn_core::CodecPreference::Sbc,
+                _ => return Err("Use bluetooth codec Auto|SBC ADDRESS".into()),
+            };
+            return Ok(Command::BluetoothCodec {
+                address: a.get(3).ok_or("Bluetooth address required")?.clone(),
+                preference,
+            });
+        }
         let action = match next {
             Some("scan") => RadioAction::Scan,
             Some("on") => RadioAction::On,
@@ -55,7 +66,7 @@ fn command(a: &[String]) -> Result<Command, String> {
 fn run() -> Result<i32, String> {
     let args = std::env::args().skip(1).collect::<Vec<_>>();
     if args.iter().any(|s| s == "--help") {
-        io::stdout().write_all(b"rebornctl status|audio|health|metrics|snapshot|logs|events|log-level|diagnose|test|scan|input|play|pause|resume|stop|seek|output [--json] [--socket PATH]\nrebornctl wifi|bluetooth scan|on|off [--json]\nRadio scan enables that radio and reports progress through status.\n").map_err(|e|e.to_string())?;
+        io::stdout().write_all(b"rebornctl status|audio|health|metrics|snapshot|logs|events|log-level|diagnose|test|scan|input|play|pause|resume|stop|seek|output [--json] [--socket PATH]\nrebornctl wifi|bluetooth scan|on|off [--json]\nrebornctl bluetooth codec Auto|SBC ADDRESS (playback must be stopped)\nRadio scan enables that radio and reports progress through status.\n").map_err(|e|e.to_string())?;
         return Ok(0);
     }
     let path = PathBuf::from(arg(&args, "--socket").unwrap_or("/run/reborn/control.sock"));

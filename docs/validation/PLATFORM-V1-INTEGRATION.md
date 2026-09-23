@@ -71,3 +71,18 @@ Bluetooth user actions now share the platform reconnect operation lock. Pending
 connect/power intents inhibit automatic recovery; successful explicit completion
 re-arms it. Client timeout or D-Bus loss stays inhibited until owner retry.
 34 platform tests pass; ARM/image validation follows in the next build.
+
+`rebornctl bluetooth codec Auto|SBC ADDRESS` submits a bounded explicit codec
+session while playback is stopped. The platform inventory, runtime manager and
+GetCodecs intersection determine typed eligibility. Auto requires physical and
+distribution approval; this unqualified candidate therefore fails Auto closed.
+Manual SBC remains available for owner qualification. The policy tries at most
+two preferred codecs plus conformant SBC, never revisits a candidate and never
+automatically promotes after fallback. Optional encoders are absent.
+
+PCM probes/handles hold shared leases; selection requires an exclusive lease.
+Unknown selection outcome retains an on-disk gate until BlueALSA owner replacement,
+including app death during the request. Negotiated codec/format/rate/channels
+always come from the actual PCM; selection success is AwaitingNegotiatedObservation.
+The existing transport invalidation logic still governs playback. Codec controls
+are exposed through the stable control API/CLI; a richer preferences UI is deferred.

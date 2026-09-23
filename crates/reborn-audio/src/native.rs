@@ -139,7 +139,33 @@ fn output_name(output: &AudioOutput) -> Result<(String, bool), String> {
         }
     }
 }
+fn bluetooth_pcm_lease(device: &str) -> Result<Option<std::fs::File>, String> {
+    if !device.starts_with("bluealsa:")
+        || !std::path::Path::new("/etc/y2linux/platform-contract").exists()
+    {
+        return Ok(None);
+    }
+    pcm_lease_at(std::path::Path::new("/run/y2"))
+}
+fn pcm_lease_at(directory: &std::path::Path) -> Result<Option<std::fs::File>, String> {
+    use std::os::unix::fs::OpenOptionsExt;
+    let lock = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(directory.join("bt-pcm.lock"))
+        .map_err(|e| e.to_string())?;
+    lock.try_lock_shared()
+        .map_err(|_| "Bluetooth codec selection in progress; retry playback")?;
+    if directory.join("bt-codec-uncertain.json").exists() {
+        return Err("Bluetooth codec outcome unknown; restart BlueALSA before playback".into());
+    }
+    Ok(Some(lock))
+}
 pub struct AlsaSink {
+    _pcm_lease: Option<std::fs::File>,
     raw: NonNull<c_void>,
     params: Parameters,
     log: Observer,
@@ -214,6 +240,7 @@ impl AlsaSink {
         log: Observer,
         id: u64,
     ) -> Result<(SinkSpec, Parameters), String> {
+        let _pcm_lease = bluetooth_pcm_lease(device)?;
         let name = CString::new(device).map_err(|_| "NUL in PCM device")?;
         let mut raw: RawParams = unsafe { std::mem::zeroed() };
         // SAFETY: synchronous probe receives a live device name and output storage.
@@ -340,6 +367,7 @@ impl AlsaSink {
         log: Observer,
         id: u64,
     ) -> Result<Self, String> {
+        let pcm_lease = bluetooth_pcm_lease(device)?;
         let name = CString::new(device).map_err(|_| "NUL in PCM device")?;
         let mut raw = std::ptr::null_mut();
         let mut p: RawParams = unsafe { std::mem::zeroed() };
@@ -397,6 +425,7 @@ impl AlsaSink {
             json!({"device":device,"params":params,"format":params.format.as_str(),"channels":params.channels}),
         );
         Ok(Self {
+            _pcm_lease: pcm_lease,
             raw: NonNull::new(raw).ok_or_else(|| "null ALSA handle".to_string())?,
             params,
             log,
@@ -534,5 +563,30 @@ mod format_tests {
         let mut valid_bits = 0;
         let mut physical_bits = 0;
         assert!(unsafe { rb_alsa_format_info(4, &mut valid_bits, &mut physical_bits) } < 0);
+    }
+}
+
+#[cfg(test)]
+mod platform_pcm_lease_tests {
+    #[test]
+    fn open_pcm_excludes_codec_change_and_unknown_outcome_blocks_reopen() {
+        let dir = std::env::temp_dir().join(format!("reborn-pcm-lease-{}", std::process::id()));
+        std::fs::create_dir(&dir).unwrap();
+        let opened = super::pcm_lease_at(&dir).unwrap();
+        let exclusive = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(dir.join("bt-pcm.lock"))
+            .unwrap();
+        assert!(exclusive.try_lock().is_err());
+        drop(opened);
+        exclusive.try_lock().unwrap();
+        assert!(super::pcm_lease_at(&dir).is_err());
+        std::fs::write(dir.join("bt-codec-uncertain.json"), b"{}").unwrap();
+        drop(exclusive);
+        assert!(super::pcm_lease_at(&dir).is_err());
+        std::fs::remove_file(dir.join("bt-codec-uncertain.json")).unwrap();
+        assert!(super::pcm_lease_at(&dir).is_ok());
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }

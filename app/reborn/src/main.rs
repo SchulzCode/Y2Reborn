@@ -1887,6 +1887,30 @@ fn run() -> Result<(), String> {
                 Command::Scan => rt
                     .effect(Effect::ScanLibrary)
                     .map(|_| json!({"accepted":true})),
+                Command::BluetoothCodec {
+                    address,
+                    preference,
+                } => {
+                    if rt.model.playback != PlaybackState::Stopped
+                        || rt.pending_reconfiguration.is_some()
+                    {
+                        Err("Stop playback before codec negotiation".into())
+                    } else {
+                        rt.bluetooth
+                            .as_ref()
+                            .ok_or("Bluetooth service unavailable".into())
+                            .and_then(|worker| {
+                                worker
+                                    .commands
+                                    .try_send(bluetooth::Command::Codec {
+                                        address,
+                                        preference,
+                                    })
+                                    .map(|_| json!({"accepted":true,"negotiated":false}))
+                                    .map_err(|_| "Bluetooth busy".into())
+                            })
+                    }
+                }
                 Command::Radio { radio, action } => {
                     use reborn_control::{Radio, RadioAction};
                     // Scan uses exactly the button/UI path, not an independent
