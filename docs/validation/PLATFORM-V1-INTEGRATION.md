@@ -1,5 +1,18 @@
 # Platform v1 application integration
 
+The validated candidate source pair is Linux
+`d04b95aaff713edf943042d97a4c6134ca19fc24` / Reborn
+`6c8aa128550ec80addd08ef3145e9d5a846ddf2e`. Closing commits change documentation
+only. Final Reborn host workspace tests: **155 passed**, formatting and strict
+all-target clippy passed. Fresh Buildroot/Reborn ARM, eight QEMU userspace checks,
+installed defaults and the real 1k ARM database/scanner/UI benchmark pass.
+The platform image/package validation includes these exact installed binaries.
+Historical ARM-pending notes below describe original checkpoints and are
+superseded by those receipts. No physical application/Bluetooth qualification
+or target performance acceptance occurred; larger 10k/20k results are host
+measurements until owner qualification.
+
+
 Started 2026-09-23 from Reborn `d9ba0549e6b34eff029bd13f7c33a491fee09e66`;
 Y2Linux starts at `5f6b4468fb43605ca1da679420823afa72cea73f`. Existing untracked
 review/audit/codec documents in the original checkout are preserved. Work is in
@@ -86,3 +99,25 @@ including app death during the request. Negotiated codec/format/rate/channels
 always come from the actual PCM; selection success is AwaitingNegotiatedObservation.
 The existing transport invalidation logic still governs playback. Codec controls
 are exposed through the stable control API/CLI; a richer preferences UI is deferred.
+
+
+Application boot readiness is emitted only after actual KMS first-frame success
+and runtime worker creation, with boot ID/PID/start ticks. The platform verifies
+current generation, responsiveness, core interfaces and update source identity
+before acknowledging boot health. Headless/QEMU startup never supplies a fake
+physical first-frame receipt. Reborn exposes typed versioned platform capability
+reading with absent flags false, plus `--default-settings` so settings-only reset
+uses the installed schema/defaults without discarding queue or position.
+Incomplete owner maintenance prevents application startup until explicit resume.
+
+Bluetooth Auto/AVRCP, shutdown and SD/readiness contracts are platform foundations,
+not a second application authority. The existing FFmpeg DSP, SQLite single writer,
+semantic Actions and bounded workers remain. Optional codec preferences UI,
+target library/performance budgets and physical validation remain follow-up
+application/owner work; unsupported platform features must stay explicit.
+
+See Y2Linux's [completion ledger](../../../Y2Linux/docs/validation/PLATFORM-V1-COMPLETION.md)
+and [owner qualification sessions](../../../Y2Linux/docs/validation/PLATFORM-V1-OWNER-QUALIFICATION.md)
+for separate software, ARM/image and physical/endurance evidence. Return general
+application development here after the owner qualifies the advertised core;
+do not reopen gated hardware scope as incidental application work.
