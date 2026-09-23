@@ -26,6 +26,10 @@ pub struct Status {
     pub available: bool,
     pub enabled: bool,
     pub state: String,
+    #[serde(default)]
+    pub readiness: String,
+    #[serde(default)]
+    pub readiness_reason: Option<String>,
     pub ssid: String,
     pub ip: String,
     pub networks: Vec<Network>,
@@ -305,7 +309,55 @@ fn status_at(paths: &Paths) -> Status {
             }
         },
     }
+    if paths.controls == Path::new("/run/wpa_supplicant")
+        && Path::new("/etc/y2linux/platform-contract").exists()
+    {
+        let record = fs::read("/run/y2/network.json")
+            .ok()
+            .filter(|b| b.len() <= 65536)
+            .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok());
+        let boot = fs::read_to_string("/proc/sys/kernel/random/boot_id").unwrap_or_default();
+        let observed = record
+            .and_then(|r| network_readiness(&r, boot.trim(), crate::native::monotonic_seconds()?));
+        if let Some((state, reason)) = observed {
+            s.readiness = state;
+            s.readiness_reason = reason;
+        } else {
+            s.readiness = "Unavailable".into();
+            s.readiness_reason = Some("platform_readiness_stale".into());
+        }
+    }
     s
+}
+
+fn network_readiness(
+    record: &serde_json::Value,
+    boot: &str,
+    now: f64,
+) -> Option<(String, Option<String>)> {
+    let age = now - record["monotonic_s"].as_f64()?;
+    if record["schema"] != 1 || record["boot_id"] != boot || !(0.0..15.0).contains(&age) {
+        return None;
+    }
+    let state = record["state"].as_str()?;
+    if ![
+        "Off",
+        "Starting",
+        "Scanning",
+        "Associating",
+        "Authenticated",
+        "AcquiringIP",
+        "Online",
+        "Failed",
+    ]
+    .contains(&state)
+    {
+        return None;
+    }
+    Some((
+        state.to_owned(),
+        record["reason"].as_str().map(str::to_owned),
+    ))
 }
 struct Scan {
     id: u64,
@@ -556,6 +608,8 @@ fn run(log: Observer, rx: Receiver<Command>, et: SyncSender<Status>, paths: Path
                 HealthState::Unavailable
             } else if current.error.is_some() {
                 HealthState::Degraded
+            } else if current.state == "COMPLETED" && current.readiness != "Online" {
+                HealthState::Degraded
             } else {
                 HealthState::Ok
             },
@@ -606,11 +660,13 @@ pub fn saved_test(id: u32) -> Result<serde_json::Value, String> {
     let until = Instant::now() + Duration::from_secs(20);
     loop {
         let s = status();
-        if s.state == "COMPLETED" && !s.ip.is_empty() {
-            return Ok(json!({"passed":true,"state":s.state,"dhcp":true}));
+        if s.readiness == "Online" {
+            return Ok(
+                json!({"passed":true,"state":s.state,"readiness":s.readiness,"dhcp":true,"dns":true}),
+            );
         }
         if Instant::now() > until {
-            return Err("saved network association/DHCP timed out".into());
+            return Err("saved network usable IP/route/DNS deadline exceeded".into());
         }
         thread::sleep(Duration::from_millis(250));
     }
@@ -618,6 +674,15 @@ pub fn saved_test(id: u32) -> Result<serde_json::Value, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn platform_readiness_rejects_old_boot_and_stale_online_claims() {
+        let value =
+            json!({"schema":1,"boot_id":"one","monotonic_s":100.0,"state":"Online","reason":null});
+        assert_eq!(network_readiness(&value, "one", 101.0).unwrap().0, "Online");
+        assert!(network_readiness(&value, "two", 101.0).is_none());
+        assert!(network_readiness(&value, "one", 116.0).is_none());
+        assert!(network_readiness(&value, "one", 99.0).is_none());
+    }
     use std::sync::{
         atomic::{AtomicBool, AtomicUsize},
         Arc, Mutex,

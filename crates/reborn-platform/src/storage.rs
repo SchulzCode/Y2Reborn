@@ -72,7 +72,27 @@ pub fn sources(music: &Path) -> Vec<Source> {
                     .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok());
                 let boot =
                     fs::read_to_string("/proc/sys/kernel/random/boot_id").unwrap_or_default();
-                if !sd_claim_matches(claim.as_ref(), &uuid, observed_mount, boot.trim()) {
+                let instance = claim.as_ref().and_then(|v| {
+                    let device = v["device_id"].as_str()?;
+                    if device.len() > 24 || !device.bytes().all(|b| b.is_ascii_digit() || b == b':')
+                    {
+                        return None;
+                    }
+                    use std::os::unix::fs::MetadataExt;
+                    let meta = fs::metadata(format!("/sys/dev/block/{device}")).ok()?;
+                    Some(format!(
+                        "{}:{}",
+                        meta.ino(),
+                        meta.ctime() as i128 * 1_000_000_000 + meta.ctime_nsec() as i128
+                    ))
+                });
+                if !sd_claim_matches(
+                    claim.as_ref(),
+                    &uuid,
+                    observed_mount,
+                    boot.trim(),
+                    instance.as_deref(),
+                ) {
                     continue;
                 }
             }
@@ -105,6 +125,7 @@ fn sd_claim_matches(
     uuid: &str,
     mount: Option<u64>,
     boot: &str,
+    instance: Option<&str>,
 ) -> bool {
     claim.is_some_and(|c| {
         c["schema"].as_u64() == Some(1)
@@ -114,7 +135,12 @@ fn sd_claim_matches(
             && mount.is_some()
             && c["mount_id"].as_u64() == mount
             && c["state"].as_str() == Some("Ready")
+            && instance.is_some()
+            && c["source_instance"].as_str() == instance
     })
+}
+pub fn platform_manages_media() -> bool {
+    Path::new("/etc/y2linux/platform-contract").exists()
 }
 pub fn data_ready() -> bool {
     mounts()
@@ -194,31 +220,48 @@ mod tests {
     }
     #[test]
     fn new_platform_requires_matching_card_claim_and_boot() {
-        let claim = serde_json::json!({"schema":1,"state":"Ready","uuid":"card-one","boot_id":"boot-one","mount_id":42});
+        let claim = serde_json::json!({"schema":1,"state":"Ready","uuid":"card-one","boot_id":"boot-one","mount_id":42,"source_instance":"1:2"});
+        assert!(!sd_claim_matches(
+            Some(&claim),
+            "card-one",
+            Some(42),
+            "boot-one",
+            Some("3:4")
+        ));
         assert!(sd_claim_matches(
             Some(&claim),
             "card-one",
             Some(42),
-            "boot-one"
+            "boot-one",
+            Some("1:2")
         ));
         assert!(!sd_claim_matches(
             Some(&claim),
             "card-two",
             Some(42),
-            "boot-one"
+            "boot-one",
+            Some("1:2")
         ));
         assert!(!sd_claim_matches(
             Some(&claim),
             "card-one",
             Some(43),
-            "boot-one"
+            "boot-one",
+            Some("1:2")
         ));
         assert!(!sd_claim_matches(
             Some(&claim),
             "card-one",
             Some(42),
-            "boot-two"
+            "boot-two",
+            Some("1:2")
         ));
-        assert!(!sd_claim_matches(None, "card-one", Some(42), "boot-one"));
+        assert!(!sd_claim_matches(
+            None,
+            "card-one",
+            Some(42),
+            "boot-one",
+            Some("1:2")
+        ));
     }
 }

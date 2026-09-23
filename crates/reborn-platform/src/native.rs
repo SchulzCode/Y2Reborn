@@ -17,6 +17,17 @@ pub fn install_signals() {
 pub fn stop_requested() -> bool {
     STOP.load(Ordering::Relaxed)
 }
+pub fn monotonic_seconds() -> Option<f64> {
+    let mut value = std::mem::MaybeUninit::<libc::timespec>::uninit();
+    // SAFETY: clock_gettime writes a valid timespec on success; only then read.
+    unsafe {
+        if libc::clock_gettime(libc::CLOCK_MONOTONIC, value.as_mut_ptr()) != 0 {
+            return None;
+        }
+        let value = value.assume_init();
+        Some(value.tv_sec as f64 + value.tv_nsec as f64 / 1e9)
+    }
+}
 pub fn free_bytes(path: &Path) -> Result<u64, String> {
     use std::os::unix::ffi::OsStrExt;
     let s = CString::new(path.as_os_str().as_bytes()).map_err(|_| "NUL path")?;

@@ -49,3 +49,12 @@ acknowledgement reports failures truthfully. The database worker checkpoints and
 closes before replying. Runtime/library/platform host suites and targeted real
 checkpoint/close test pass. Hardware transitions/low-battery thresholds remain
 Y2Linux owner-controlled qualification; no electrical limit is chosen here.
+
+
+Network/storage integration: fresh platform network readiness is distinct from
+wpa_supplicant association; Online requires platform IP/route/DNS observation.
+Boot/time freshness is validated. Platform media maintenance owns automatic
+mount/unmount; Reborn no longer initiates those actions on new platform images.
+Source claims validate the sysfs instance in addition to mount/boot/UUID, rejecting
+same-minor reuse. Targeted freshness and four storage tests pass. ARM validation
+for this revision follows separately; phase-2 QEMU evidence is not transferred.

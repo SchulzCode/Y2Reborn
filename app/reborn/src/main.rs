@@ -1352,7 +1352,9 @@ fn run() -> Result<(), String> {
     }
     fs::create_dir_all(&model.settings.music_directory).map_err(|e| e.to_string())?;
     if !headless && storage::sd_present() {
-        let _ = storage::mount_sd();
+        if !storage::platform_manages_media() {
+            let _ = storage::mount_sd();
+        }
     }
     model.sources = if headless {
         vec![Source {
@@ -1670,8 +1672,18 @@ fn run() -> Result<(), String> {
                     powered: s.enabled,
                     scan: s.scan.clone(),
                     error: s.error.clone(),
-                    connection: if s.state == "COMPLETED" {
-                        format!("Connected: {}", s.ssid)
+                    connection: if s.readiness == "Online" {
+                        format!("Online: {}", s.ssid)
+                    } else if s.state == "COMPLETED" {
+                        format!(
+                            "{}: {}",
+                            if s.readiness.is_empty() {
+                                "Authenticated"
+                            } else {
+                                &s.readiness
+                            },
+                            s.ssid
+                        )
                     } else if s.state == "STARTING" {
                         "Starting Wi-Fi...".into()
                     } else {
@@ -1966,11 +1978,15 @@ fn run() -> Result<(), String> {
             if !headless {
                 let sd = storage::sd_present();
                 if sd && !last_sd {
-                    let _ = storage::mount_sd();
+                    if !storage::platform_manages_media() {
+                        let _ = storage::mount_sd();
+                    }
                 }
                 if !sd && last_sd {
                     rt.pause();
-                    let _ = storage::unmount_sd();
+                    if !storage::platform_manages_media() {
+                        let _ = storage::unmount_sd();
+                    }
                 }
                 last_sd = sd;
                 let sources = storage::sources(&rt.model.settings.music_directory);
