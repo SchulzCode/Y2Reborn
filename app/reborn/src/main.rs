@@ -9,7 +9,7 @@ use reborn_core::{
 use reborn_graphics::Renderer;
 use reborn_library::{Database, Filter, Scanner};
 use reborn_observability::{HealthState, Level, Observer};
-use reborn_platform::{bluetooth, input, power, storage, wifi};
+use reborn_platform::{avrcp, bluetooth, input, power, storage, wifi};
 use reborn_ui::{Item, PowerView, Ui};
 use serde_json::{json, Value};
 use std::{
@@ -1499,7 +1499,27 @@ fn run() -> Result<(), String> {
     let mut xrun_bundle = 0.;
     let mut shutdown_intent = None;
     let mut power_poll = Instant::now() - Duration::from_secs(1);
+    let player = if headless {
+        None
+    } else {
+        avrcp::Player::spawn(log.clone()).ok()
+    };
+    let mut player_publish = Instant::now() - Duration::from_secs(1);
     while !reborn_platform::stop_requested() {
+        if let Some(player) = &player {
+            for request in player.actions.try_iter().take(8) {
+                if let Some(action) = request.semantic(&rt.model) {
+                    let effect = rt.ui.model_action(&mut rt.model, action);
+                    if let Err(error) = rt.effect(effect) {
+                        rt.fail("avrcp", error);
+                    }
+                }
+            }
+            if player_publish.elapsed() >= Duration::from_millis(250) {
+                player.publish(&rt.model);
+                player_publish = Instant::now();
+            }
+        }
         if !headless && power_poll.elapsed() >= Duration::from_millis(250) {
             power_poll = Instant::now();
             shutdown_intent = power::shutdown_intent();

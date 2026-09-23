@@ -58,3 +58,11 @@ mount/unmount; Reborn no longer initiates those actions on new platform images.
 Source claims validate the sysfs instance in addition to mount/boot/UUID, rejecting
 same-minor reuse. Targeted freshness and four storage tests pass. ARM validation
 for this revision follows separately; phase-2 QEMU evidence is not transferred.
+
+
+AVRCP: BlueZ Media1 registration exports Reborn's existing playback model and
+metadata. An eight-command bounded queue delivers semantic Play/Pause/Next/
+Previous actions; only the current BlueZ owner can invoke them. Two host tests
+pass, including private D-Bus registration, authorized control, unauthorized
+sender rejection and unchanged metadata until the actual model changes. No
+remote playback or physical radio qualification is claimed; ARM build pending.

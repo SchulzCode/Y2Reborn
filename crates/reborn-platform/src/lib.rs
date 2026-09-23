@@ -1,3 +1,4 @@
+pub mod avrcp;
 pub mod bluetooth;
 pub mod input;
 mod native;
