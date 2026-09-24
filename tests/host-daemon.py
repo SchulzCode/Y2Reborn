@@ -2,6 +2,7 @@
 """Black-box socket, scanner, persistence and diagnostic security regression."""
 import json,os,pathlib,socket,subprocess,tempfile,time,tarfile
 root=pathlib.Path(__file__).resolve().parents[1]
+expected_version=subprocess.check_output([str(root/'target/debug/reborn'),'--version'],text=True).strip()
 with tempfile.TemporaryDirectory(prefix='reborn-integration-')as tmp:
  tmp=pathlib.Path(tmp);data=tmp/'data';sock=tmp/'run/control.sock';music=tmp/'music';music.mkdir()
  for p in (root/'assets/fixtures').glob('tone.*'):(music/p.name).write_bytes(p.read_bytes())
@@ -13,11 +14,11 @@ with tempfile.TemporaryDirectory(prefix='reborn-integration-')as tmp:
   value=json.loads(p.stdout)
   if success:assert p.returncode==0,(args,p.returncode,value,p.stderr)
   return value
- def wait_library(expected_tracks):
+ def wait_library(expected_tracks,complete=True):
   for _ in range(200):
    value=ctl('status')
    library=value['library']
-   if not library['scanning'] and library['tracks_loaded']==expected_tracks and library['last_scan'] is not None:
+   if not library['scanning'] and library['tracks_loaded']==expected_tracks and (library['last_scan'] is not None if complete else library['error'] is not None):
     return value
    time.sleep(.05)
   raise AssertionError(value)
@@ -27,7 +28,9 @@ with tempfile.TemporaryDirectory(prefix='reborn-integration-')as tmp:
    assert proc.poll()is None,proc.communicate()
    time.sleep(.05)
   assert sock.stat().st_mode&0o777==0o600
-  status=wait_library(6)
+  status=wait_library(6,complete=False)
+  assert status['library']['last_scan'] is None
+  (music/'broken.mp3').unlink()
   assert ctl('test','decoder')['passed']
   assert ctl('test','database')['passed']
   assert ctl('test','library')['passed']
@@ -43,7 +46,7 @@ with tempfile.TemporaryDirectory(prefix='reborn-integration-')as tmp:
    if r:assert json.loads(r)['ok']is False
    c.close()
   slow=socket.socket(socket.AF_UNIX);slow.connect(str(sock));slow.sendall(b'{')
-  assert ctl('status')['version'].endswith('premium.01');slow.close()
+  assert ctl('status')['version']==expected_version;slow.close()
   ctl('log-level','playback','debug');assert ctl('log-level')['overrides']['playback']=='DEBUG';ctl('log-level','reset')
   bundle=pathlib.Path(ctl('diagnose')['path']);assert bundle.stat().st_size<2*1024*1024
   with tarfile.open(bundle)as t:
@@ -58,7 +61,7 @@ with tempfile.TemporaryDirectory(prefix='reborn-integration-')as tmp:
     except (AssertionError,json.JSONDecodeError):pass
    time.sleep(.05)
   assert status['playback']['state']in('stopped','paused'),status
-  print(json.dumps({'passed':True,'checks':20,'scanner_tracks':6,'incremental_reused':6,'malformed_files_skipped':1,'no_hardware_claim':True}))
+  print(json.dumps({'passed':True,'checks':20,'scanner_tracks':6,'incremental_reused':6,'incomplete_scan_retains_valid_music':True,'no_hardware_claim':True}))
  finally:
   proc.terminate()
   try:out,err=proc.communicate(timeout=10)

@@ -107,7 +107,6 @@ impl RadioView {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct PowerView {
-    pub battery_percent: Option<u8>,
     pub charging: bool,
 }
 
@@ -368,20 +367,36 @@ impl Ui {
                 Item::new("Crossfade", "crossfade")
                     .with_secondary(crossfade_label(m.settings.crossfade_ms)),
             ],
-            Screen::SettingsLibrary => vec![
-                Item::new("Internal Storage", "internal").with_secondary("Music library"),
-                Item::new("SD Card", "sd").with_secondary(
-                    if m.sources.iter().any(|source| {
-                        matches!(source.kind, MediaSource::SdCard(_)) && source.online
-                    }) {
-                        "Available"
-                    } else {
-                        "Not inserted"
-                    },
-                ),
-                Item::new("Scan Library", "scan_library"),
-                Item::new("Rebuild Library", "rebuild_library"),
-            ],
+            Screen::SettingsLibrary => {
+                let state = if m.library.scanning {
+                    "Scanning your music. Existing entries remain available.".into()
+                } else if m.library.error.is_some() {
+                    "Scan interrupted. Existing entries are kept. Check for missing or damaged files, then rescan.".into()
+                } else if let Some(scan) = &m.library.last_scan {
+                    format!(
+                        "Complete: {} files, {} reused.",
+                        scan.discovered, scan.reused
+                    )
+                } else {
+                    "Not scanned yet".into()
+                };
+                vec![
+                    Item::new("Internal Storage", "internal").with_secondary("Music library"),
+                    Item::new("SD Card", "sd").with_secondary(
+                        if m.sources.iter().any(|source| {
+                            matches!(source.kind, MediaSource::SdCard(_)) && source.online
+                        }) {
+                            "Available"
+                        } else {
+                            "Not inserted"
+                        },
+                    ),
+                    Item::new("Scan Library", "scan_library"),
+                    Item::new("Rebuild Library", "rebuild_library"),
+                    Item::new("Scan Status", format!("value:Library scan\u{1f}{state}"))
+                        .with_secondary(state),
+                ]
+            }
             Screen::SettingsDisplay => vec![Item::new("Screen Timeout", "timeout")
                 .with_secondary(timeout_label(m.settings.screen_timeout_seconds))],
             Screen::SettingsPower => vec![

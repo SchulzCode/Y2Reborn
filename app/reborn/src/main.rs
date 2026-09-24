@@ -1908,13 +1908,6 @@ fn run() -> Result<(), String> {
                             reused: stats.reused,
                             elapsed_ms: stats.elapsed_ms,
                         }));
-                    rt.query = rt
-                        .db
-                        .list(Filter {
-                            limit: 20000,
-                            ..Default::default()
-                        })
-                        .ok();
                     rt.ui.flash(format!(
                         "Scan: {} tracks, {} reused",
                         stats.discovered, stats.reused
@@ -1935,6 +1928,16 @@ fn run() -> Result<(), String> {
                     rt.fail("scanner", e);
                 }
             }
+            // An incomplete scan still publishes validated rows to SQLite,
+            // while intentionally refusing pruning. Show those usable rows;
+            // keep the failed/incomplete scan state visible and truthful.
+            rt.query = rt
+                .db
+                .list(Filter {
+                    limit: 20000,
+                    ..Default::default()
+                })
+                .ok();
             rt.dirty.mark_render();
         }
         if let Some(rx) = &rt.query {
@@ -2530,17 +2533,10 @@ fn power_view(status: &Value) -> PowerView {
                     .find(|supply| supply["name"].as_str() == Some("BAT0"))
             })
     });
-    let battery_percent = battery
-        .and_then(|supply| supply["capacity"].as_str())
-        .and_then(|value| value.trim().parse::<u8>().ok())
-        .map(|value| value.min(100));
     let charging = battery
         .and_then(|supply| supply["status"].as_str())
         .is_some_and(|status| matches!(status, "Charging" | "Full"));
-    PowerView {
-        battery_percent,
-        charging,
-    }
+    PowerView { charging }
 }
 
 fn main() {
