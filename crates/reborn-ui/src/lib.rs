@@ -1576,8 +1576,8 @@ impl Ui {
                             letters.entry(letter).or_insert(i);
                         }
                         self.letter_index = letters
-                            .into_iter()
-                            .map(|(letter, _index)| {
+                            .into_keys()
+                            .map(|letter| {
                                 Item::new(letter.to_string(), format!("jump_to:{letter}"))
                                     .with_secondary("Jump to the first matching item")
                             })
