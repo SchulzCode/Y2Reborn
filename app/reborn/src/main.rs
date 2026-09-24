@@ -1,4 +1,5 @@
 #![forbid(unsafe_code)]
+mod artwork;
 mod diagnostics;
 mod playback;
 use reborn_control::{Command, PlaybackAction, Response};
@@ -26,6 +27,10 @@ use std::{
 struct Runtime {
     model: AppModel,
     ui: Ui,
+    platform_dashboard: Option<reborn_platform::dashboard::Dashboard>,
+    platform_observer: Option<reborn_platform::dashboard::Dashboard>,
+    platform_refresh_pending: bool,
+    collection_art: Option<artwork::Worker>,
     playback: playback::Playback,
     log: Observer,
     db: Database,
@@ -182,11 +187,15 @@ impl Runtime {
         let outermost = self.action_depth == 0;
         if outermost {
             if self.pending_reconfiguration.is_some() {
-                self.ui.notice = "Audio output is still starting".into();
+                self.ui.flash("Audio output is still starting");
                 self.dirty.mark_render();
                 return Err("audio reconfiguration is still pending".into());
             }
+            let tracks = std::mem::take(&mut self.model.library.tracks);
+            let platform = std::mem::take(&mut self.model.platform);
             self.action_before = Some(self.model.clone());
+            self.model.library.tracks = tracks;
+            self.model.platform = platform;
             self.action_dirty_before = Some(self.dirty);
             self.reconfiguration_attempted = false;
             self.sink_release_started = false;
@@ -231,12 +240,14 @@ impl Runtime {
 
     fn restore_failed_reconfiguration(
         &mut self,
-        previous: AppModel,
+        mut previous: AppModel,
         dirty_before: DirtyState,
         error: &str,
         sink_release_started: bool,
         transition_generation: Option<u64>,
     ) {
+        previous.library.tracks = std::mem::take(&mut self.model.library.tracks);
+        previous.platform = std::mem::take(&mut self.model.platform);
         if !sink_release_started {
             self.model = previous;
             self.dirty = dirty_before;
@@ -275,7 +286,7 @@ impl Runtime {
                 true,
                 Some(pending.generation),
             );
-            self.ui.notice = error.into();
+            self.ui.flash(error);
             self.dirty.mark_render();
             return;
         }
@@ -302,7 +313,7 @@ impl Runtime {
                     true,
                     Some(pending.generation),
                 );
-                self.ui.notice = format!("Playback could not start: {error}");
+                self.ui.flash(format!("Playback could not start: {error}"));
                 self.dirty.mark_render();
             }
         }
@@ -374,7 +385,7 @@ impl Runtime {
             Screen::Bluetooth | Screen::SettingsBluetooth if sub == "ui" => {
                 self.ui.bluetooth.failed(friendly.clone())
             }
-            _ => self.ui.notice = friendly,
+            _ => self.ui.flash(friendly),
         }
         self.log.emit(
             Level::Error,
@@ -651,12 +662,88 @@ impl Runtime {
         Ok(())
     }
     fn effect(&mut self, e: Effect) -> Result<(), String> {
+        if matches!(
+            e,
+            Effect::None
+                | Effect::Platform(_)
+                | Effect::WifiPower
+                | Effect::WifiScan
+                | Effect::WifiConnect { .. }
+                | Effect::WifiSaved(_)
+                | Effect::WifiForget(_)
+                | Effect::WifiDisconnect
+                | Effect::BluetoothPower
+                | Effect::BluetoothScan
+                | Effect::ConfirmPairing(_)
+                | Effect::ScreenSleep
+                | Effect::ScreenWake
+                | Effect::SetScreenTimeout(_)
+        ) {
+            return self.effect_inner(e);
+        }
         self.with_model_action(|runtime| runtime.effect_inner(e))
     }
     fn effect_inner(&mut self, e: Effect) -> Result<(), String> {
         self.dirty.mark_render();
         match e {
             Effect::None => {}
+            Effect::Platform(task) => {
+                if self.model.platform.busy.is_some() {
+                    return Ok(());
+                }
+                let worker = self
+                    .platform_dashboard
+                    .as_ref()
+                    .ok_or("Platform service unavailable")?;
+                worker
+                    .commands
+                    .try_send(task)
+                    .map_err(|_| "Platform operation already pending")?;
+                self.model.platform.busy = Some(task);
+                if task != reborn_core::PlatformTask::Refresh {
+                    self.model.platform.failure = None;
+                    self.model.platform.result = None;
+                }
+                self.dirty.mark_render();
+            }
+            Effect::StopPlayback => {
+                self.pause();
+                self.model.playback = PlaybackState::Stopped;
+            }
+            Effect::SetCodecPreference(preference) => {
+                if self.model.playback != PlaybackState::Stopped
+                    || self.pending_reconfiguration.is_some()
+                {
+                    return Err("Stop playback before codec negotiation".into());
+                }
+                let address = self
+                    .bt_state
+                    .devices
+                    .iter()
+                    .find(|d| d.connected && d.audio)
+                    .map(|d| d.address.clone())
+                    .ok_or("Connect Bluetooth headphones first")?;
+                self.bluetooth
+                    .as_ref()
+                    .ok_or("Bluetooth unavailable")?
+                    .commands
+                    .try_send(bluetooth::Command::Codec {
+                        address,
+                        preference,
+                    })
+                    .map_err(|_| "Bluetooth busy")?;
+                self.model.settings.codec_preference = preference;
+                self.dirty.mark_both();
+                self.ui
+                    .flash("Codec requested. Active codec updates from the transport.");
+            }
+            Effect::WifiDisconnect => self
+                .wifi
+                .as_ref()
+                .ok_or("Wi-Fi unavailable")?
+                .commands
+                .try_send(wifi::Command::Disconnect)
+                .map_err(|e| e.to_string())?,
             Effect::Play(index) => self.play_index(index, false)?,
             Effect::PlayShuffled(index) => self.play_index(index, true)?,
             Effect::PlayCollection {
@@ -837,7 +924,7 @@ impl Runtime {
                     self.model.apply(Event::LibraryScanFailed(error.clone()));
                     return Err(error);
                 }
-                self.ui.notice = "Scanning music".into();
+                self.ui.flash("Scanning music");
             }
             Effect::WifiPower => self
                 .wifi
@@ -1030,7 +1117,7 @@ impl Runtime {
             }
             Effect::QueueRemove(index) => {
                 if index == self.model.queue_position {
-                    self.ui.notice = "The current track stays in the queue".into();
+                    self.ui.flash("The current track stays in the queue");
                 } else if index < self.model.queue.len()
                     && self.model.remove_queue_entry(index).is_some()
                 {
@@ -1079,7 +1166,7 @@ impl Runtime {
                     self.model.apply(Event::LibraryScanFailed(error.clone()));
                     return Err(error);
                 }
-                self.ui.notice = "Rebuilding library".into();
+                self.ui.flash("Rebuilding library");
             }
             Effect::PowerOff => {
                 power::request_shutdown(false)?;
@@ -1193,6 +1280,40 @@ fn kernel_events() -> Vec<String> {
     events.into()
 }
 
+fn wifi_readiness_label(s: &wifi::Status) -> String {
+    let label = match s.readiness.as_str() {
+        "Online" => "Online",
+        "AcquiringIP" => "Acquiring IP address",
+        "Authenticated" if s.readiness_reason.as_deref() == Some("dns_unavailable") => {
+            "Authenticated · DNS unavailable"
+        }
+        "Authenticated" => "Authenticated · waiting for network",
+        "Associating" => "Associating",
+        "Failed" => {
+            return reborn_platform::dashboard::friendly_error(
+                s.readiness_reason.as_deref().unwrap_or("network_failed"),
+            )
+        }
+        "Starting" => "Starting Wi-Fi",
+        "Scanning" => "Scanning",
+        "Off" => "Wi-Fi is off",
+        "Unavailable" => "Wi-Fi unavailable",
+        _ => match s.state.as_str() {
+            "COMPLETED" => "Authenticated · IP readiness unavailable",
+            "SCANNING" => "Scanning",
+            "ASSOCIATING" | "ASSOCIATED" | "4WAY_HANDSHAKE" | "GROUP_HANDSHAKE" => "Associating",
+            "STARTING" => "Starting Wi-Fi",
+            "OFF" => "Wi-Fi is off",
+            "DISCONNECTED" => "Not connected",
+            _ => "Readiness unavailable",
+        },
+    };
+    if s.ssid.is_empty() {
+        label.into()
+    } else {
+        format!("{label} · {}", s.ssid)
+    }
+}
 fn friendly_error(error: &str) -> String {
     let lower = error.to_ascii_lowercase();
     if lower.contains("unavailable")
@@ -1313,8 +1434,8 @@ fn run() -> Result<(), String> {
         None
     } else {
         match Renderer::open(
-            &reborn_ui::font_atlas(),
-            &reborn_ui::display_font_atlas(),
+            reborn_ui::font_atlas(),
+            reborn_ui::display_font_atlas(),
             &reborn_ui::icons_atlas(),
             log.clone(),
         ) {
@@ -1433,6 +1554,22 @@ fn run() -> Result<(), String> {
     let mut rt = Runtime {
         model,
         ui,
+        platform_observer: if headless {
+            None
+        } else {
+            Some(reborn_platform::dashboard::Dashboard::spawn().map_err(|e| e.to_string())?)
+        },
+        platform_refresh_pending: false,
+        collection_art: if headless {
+            None
+        } else {
+            Some(artwork::Worker::spawn().map_err(|e| e.to_string())?)
+        },
+        platform_dashboard: if headless {
+            None
+        } else {
+            Some(reborn_platform::dashboard::Dashboard::spawn().map_err(|e| e.to_string())?)
+        },
         playback,
         log: log.clone(),
         db,
@@ -1524,7 +1661,101 @@ fn run() -> Result<(), String> {
         avrcp::Player::spawn(log.clone()).ok()
     };
     let mut player_publish = Instant::now() - Duration::from_secs(1);
+    let mut platform_refresh = Instant::now() - Duration::from_secs(30);
     while !reborn_platform::stop_requested() {
+        if let Some(worker) = &mut rt.collection_art {
+            let desired = if matches!(rt.model.screen, Screen::Album | Screen::Artist)
+                && !rt.model.screen_off
+            {
+                rt.ui
+                    .collection_track(&rt.model, &rt.model.library.tracks)
+                    .map(|track| {
+                        artwork::Key::new(
+                            track,
+                            rt.model
+                                .sources
+                                .iter()
+                                .find(|s| s.id == track.source_id)
+                                .and_then(|s| s.mount_id),
+                        )
+                    })
+            } else {
+                None
+            };
+            // Drain replies before scheduling: stale completions cannot fill the
+            // bounded channel and hide the new route's completion.
+            while let Ok(reply) = worker.replies.try_recv() {
+                if desired.as_ref() == Some(&reply.key) {
+                    if let (Some(pixels), Some(renderer)) = (reply.pixels, rt.graphics.as_mut()) {
+                        if renderer.collection_artwork(&pixels).is_ok() {
+                            rt.ui.collection_art = Some((reply.key.source, reply.key.id));
+                            rt.dirty.mark_render();
+                        }
+                    }
+                }
+            }
+            if worker.select(desired) {
+                rt.ui.collection_art = None;
+                rt.dirty.mark_render();
+            }
+        }
+        if let Some(worker) = &rt.platform_dashboard {
+            if let Ok(reply) = worker.events.try_recv() {
+                rt.model.platform.busy = None;
+                match reply.result {
+                    Ok(v) => match reply.task {
+                        reborn_core::PlatformTask::Refresh => {
+                            rt.model.platform.status = v["status"].clone();
+                            rt.model.platform.capabilities = v["capabilities"].clone();
+                        }
+                        reborn_core::PlatformTask::Health => rt.model.platform.health = v,
+                        _ => {
+                            rt.model.platform.result = Some(v);
+                            rt.ui.flash("Operation complete. See Diagnostics results.");
+                        }
+                    },
+                    Err(e) => {
+                        if reply.task == reborn_core::PlatformTask::Refresh {
+                            rt.model.platform.status = Value::Null;
+                            rt.model.platform.capabilities = Value::Null;
+                        }
+                        rt.model.platform.failure = Some(e.clone());
+                        rt.ui.flash(e);
+                    }
+                }
+                rt.dirty.mark_render();
+            }
+        }
+        if let Some(observer) = &rt.platform_observer {
+            if let Ok(reply) = observer.events.try_recv() {
+                rt.platform_refresh_pending = false;
+                match reply.result {
+                    Ok(value) => {
+                        rt.model.platform.status = value["status"].clone();
+                        rt.model.platform.capabilities = value["capabilities"].clone();
+                    }
+                    Err(_) => {
+                        // A stale observation cannot keep a control enabled.
+                        rt.model.platform.status = Value::Null;
+                        rt.model.platform.capabilities = Value::Null;
+                    }
+                }
+                rt.dirty.mark_render();
+            }
+            if !rt.model.screen_off
+                && !rt.platform_refresh_pending
+                && platform_refresh.elapsed() > Duration::from_secs(10)
+                && (matches!(rt.model.screen, Screen::Platform | Screen::Diagnostics)
+                    || rt.model.platform.busy.is_some())
+                && observer
+                    .commands
+                    .try_send(reborn_core::PlatformTask::Refresh)
+                    .is_ok()
+            {
+                rt.platform_refresh_pending = true;
+                platform_refresh = Instant::now();
+            }
+        }
         if let Some(player) = &player {
             for request in player.actions.try_iter().take(8) {
                 if let Some(action) = request.semantic(&rt.model) {
@@ -1547,7 +1778,9 @@ fn run() -> Result<(), String> {
             }
         }
         log.heartbeat("ui", 10);
-        rt.ui.expire_notice();
+        if rt.ui.expire_notice() {
+            rt.dirty.mark_render();
+        }
         rt.poll_pending_reconfiguration();
         if let Some(input) = &mut inputs {
             for event in input.poll() {
@@ -1614,7 +1847,10 @@ fn run() -> Result<(), String> {
                     if let Event::Position { generation, ms } = event {
                         if generation == rt.model.generation && ms != rt.model.position_ms {
                             rt.dirty.mark_persistence();
-                            if ms / 1000 != rt.model.position_ms / 1000 {
+                            if ms / 1000 != rt.model.position_ms / 1000
+                                && rt.model.screen == Screen::NowPlaying
+                                && !rt.model.screen_off
+                            {
                                 rt.dirty.mark_render();
                             }
                         }
@@ -1639,6 +1875,11 @@ fn run() -> Result<(), String> {
                             if *generation == rt.model.generation
                     ) {
                         rt.art = false;
+                        if rt.model.screen == Screen::NowPlaying {
+                            rt.model.navigation.modal = None;
+                            rt.model.navigation.context_target = None;
+                            rt.model.navigation.context_key = None;
+                        }
                     }
                     rt.model.apply(event);
                     rt.dirty.mark_render();
@@ -1674,8 +1915,10 @@ fn run() -> Result<(), String> {
                             ..Default::default()
                         })
                         .ok();
-                    rt.ui.notice =
-                        format!("Scan: {} tracks, {} reused", stats.discovered, stats.reused);
+                    rt.ui.flash(format!(
+                        "Scan: {} tracks, {} reused",
+                        stats.discovered, stats.reused
+                    ));
                 }
                 Ok(stats) => {
                     let error = format!(
@@ -1697,7 +1940,26 @@ fn run() -> Result<(), String> {
         if let Some(rx) = &rt.query {
             if let Ok(value) = rx.try_recv() {
                 match value {
-                    Ok(t) => rt.model.library.tracks = t,
+                    Ok(t) => {
+                        if matches!(
+                            rt.model.screen,
+                            Screen::Tracks
+                                | Screen::Album
+                                | Screen::Artist
+                                | Screen::Folders
+                                | Screen::TrackInfo
+                        ) {
+                            rt.model.navigation.modal = None;
+                            rt.model.navigation.context_target = None;
+                            rt.model.navigation.context_key = None;
+                            if rt.model.screen == Screen::TrackInfo {
+                                rt.model.screen = Screen::Tracks;
+                                rt.model.navigation.filter.clear();
+                            }
+                        }
+                        rt.model.library.tracks = t;
+                        rt.ui.invalidate_catalog();
+                    }
                     Err(e) => rt.fail("database", e),
                 }
                 rt.query = None;
@@ -1710,58 +1972,52 @@ fn run() -> Result<(), String> {
                     available: s.available,
                     powered: s.enabled,
                     scan: s.scan.clone(),
-                    error: s.error.clone(),
-                    connection: if s.readiness == "Online" {
-                        format!("Online: {}", s.ssid)
-                    } else if s.state == "COMPLETED" {
-                        format!(
-                            "{}: {}",
-                            if s.readiness.is_empty() {
-                                "Authenticated"
-                            } else {
-                                &s.readiness
-                            },
-                            s.ssid
-                        )
-                    } else if s.state == "STARTING" {
-                        "Starting Wi-Fi...".into()
-                    } else {
-                        String::new()
-                    },
+                    error: s
+                        .error
+                        .as_deref()
+                        .map(reborn_platform::dashboard::friendly_error),
+                    connection: wifi_readiness_label(&s),
                     count: s.networks.len(),
                 };
                 rt.ui.networks = s
                     .networks
                     .iter()
+                    .filter(|n| !s.saved.iter().any(|saved| saved.ssid == n.ssid))
                     .map(|n| {
-                        Item::new(
-                            format!(
-                                "{} {} dBm {}",
-                                n.ssid,
+                        let mut item =
+                            Item::new(n.ssid.clone(), n.ssid.clone()).with_secondary(format!(
+                                "{} dBm · {}",
                                 n.signal,
-                                if n.security.contains("WPA") {
-                                    "secure"
-                                } else {
-                                    "open"
+                                match n.password_required() {
+                                    Some(true) => "Secured",
+                                    Some(false) => "Open",
+                                    None => "Unsupported security",
                                 }
-                            ),
-                            n.ssid.clone(),
-                        )
+                            ));
+                        item.enabled = n.password_required().is_some() && s.enabled;
+                        item
                     })
                     .collect();
                 rt.ui.saved_networks = s
                     .saved
                     .iter()
-                    .map(|n| {
-                        Item::new(
-                            format!("Saved: {}", n.ssid),
-                            format!("saved:{}", n.saved_id.unwrap_or(0)),
-                        )
-                        .with_secondary("Left: forget")
+                    .filter_map(|n| {
+                        n.saved_id.map(|id| {
+                            let signal = s
+                                .networks
+                                .iter()
+                                .find(|visible| visible.ssid == n.ssid)
+                                .map(|n| format!(" · {} dBm", n.signal))
+                                .unwrap_or_default();
+                            let mut item = Item::new(n.ssid.clone(), format!("saved:{id}"))
+                                .with_secondary(format!("Saved{signal} · Hold Select for options"));
+                            item.enabled = s.enabled;
+                            item
+                        })
                     })
                     .collect();
                 rt.wifi_state = s;
-                rt.dirty.render |= rt.model.screen == Screen::Wifi;
+                rt.dirty.mark_render();
             }
         }
         let mut bt_lost = false;
@@ -1798,7 +2054,10 @@ fn run() -> Result<(), String> {
                     available: s.available,
                     powered: s.powered,
                     scan: s.scan.clone(),
-                    error: s.error.clone(),
+                    error: s
+                        .error
+                        .as_deref()
+                        .map(reborn_platform::dashboard::friendly_error),
                     connection,
                     count: s.devices.len(),
                 };
@@ -1806,29 +2065,33 @@ fn run() -> Result<(), String> {
                     .devices
                     .iter()
                     .map(|d| {
-                        Item::new(
-                            format!(
-                                "{} {}",
-                                d.name,
-                                if d.connected {
-                                    "connected"
-                                } else if d.paired {
-                                    "paired"
-                                } else {
-                                    "available"
-                                }
-                            ),
-                            d.path.clone(),
-                        )
-                        .with_secondary(if d.audio {
-                            "Audio device"
+                        Item::new(d.name.clone(), d.path.clone()).with_secondary(if d.connected {
+                            "Connected"
+                        } else if d.paired {
+                            "Paired"
                         } else {
-                            "Device"
+                            "Available"
                         })
                     })
                     .collect();
-                rt.ui.pairing = s.pending.as_ref().map(|p| p.display.clone());
-                rt.dirty.render |= rt.model.screen == Screen::Bluetooth || rt.ui.pairing.is_some();
+                let pairing = s.pending.as_ref().map(|p| {
+                    let name = s
+                        .devices
+                        .iter()
+                        .find(|d| d.path == p.device)
+                        .map(|d| d.name.as_str())
+                        .unwrap_or("Bluetooth device");
+                    format!(
+                        "{name} · {}. Confirm only if you recognize this device.",
+                        p.display
+                    )
+                });
+                if pairing != rt.ui.pairing {
+                    rt.ui.pairing_focus = 1;
+                }
+                rt.ui.pairing = pairing;
+                rt.dirty.mark_render();
+                rt.model.platform.bluetooth = serde_json::to_value(&s).unwrap_or(Value::Null);
                 rt.bt_state = s;
             }
         }
@@ -1838,7 +2101,7 @@ fn run() -> Result<(), String> {
                 rt.model.apply(Event::BluetoothDisconnected(address));
             }
             rt.pause();
-            rt.ui.notice = "Bluetooth disconnected; playback paused".into();
+            rt.ui.flash("Bluetooth disconnected; playback paused");
             log.emit(
                 Level::Warn,
                 "bluetooth",
@@ -1860,10 +2123,12 @@ fn run() -> Result<(), String> {
                     rt.fail_active_transport(
                         "Bluetooth transport changed while a new sink was opening",
                     );
-                    rt.ui.notice = "Bluetooth audio transport changed; playback stopped".into();
+                    rt.ui
+                        .flash("Bluetooth audio transport changed; playback stopped");
                     rt.dirty.mark_render();
                 } else if let Err(error) = rt.with_model_action(|runtime| runtime.load()) {
-                    rt.ui.notice = format!("Bluetooth audio transport changed: {error}");
+                    rt.ui
+                        .flash(format!("Bluetooth audio transport changed: {error}"));
                     rt.dirty.mark_render();
                 }
             }
@@ -1871,7 +2136,8 @@ fn run() -> Result<(), String> {
                 rt.fail_active_transport(
                     "Bluetooth playback PCM disappeared or lost its negotiated identity",
                 );
-                rt.ui.notice = "Bluetooth audio transport changed; playback stopped".into();
+                rt.ui
+                    .flash("Bluetooth audio transport changed; playback stopped");
                 rt.dirty.mark_render();
             }
         }
@@ -2082,6 +2348,7 @@ fn run() -> Result<(), String> {
                     }
                     let g = rt.model.generation;
                     rt.model.apply(Event::SourceChanged(sources.clone()));
+                    rt.ui.invalidate_catalog();
                     if g != rt.model.generation {
                         rt.playback.stop(rt.model.generation)
                     }
@@ -2097,6 +2364,13 @@ fn run() -> Result<(), String> {
             }
             if !headless
                 && !rt.model.screen_off
+                && !matches!(
+                    rt.model.platform.busy,
+                    Some(
+                        reborn_core::PlatformTask::UpdateApply
+                            | reborn_core::PlatformTask::UpdateRollback
+                    )
+                )
                 && rt.model.settings.screen_timeout_seconds != 0
                 && rt.last_activity.elapsed().as_secs()
                     >= rt.model.settings.screen_timeout_seconds as u64
@@ -2123,6 +2397,11 @@ fn run() -> Result<(), String> {
             && !rt.model.screen_off
             && render_time.elapsed() > Duration::from_millis(34)
         {
+            let tracks = std::mem::take(&mut rt.model.library.tracks);
+            rt.ui.normalize(&mut rt.model, &tracks);
+            rt.model.library.tracks = tracks;
+            rt.model.platform.audio = rt.playback.audio_state();
+
             let draw = rt.ui.draw(
                 &rt.model,
                 &rt.model.library.tracks,
@@ -2135,9 +2414,14 @@ fn run() -> Result<(), String> {
                     rt.fail("graphics", e);
                     rt.graphics = None;
                     // One bounded recreation attempt. Further attempts wait for an explicit wake.
+                    rt.art = false;
+                    rt.ui.collection_art = None;
+                    if let Some(worker) = &mut rt.collection_art {
+                        worker.selected = None;
+                    }
                     if let Ok(g) = Renderer::open(
-                        &reborn_ui::font_atlas(),
-                        &reborn_ui::display_font_atlas(),
+                        reborn_ui::font_atlas(),
+                        reborn_ui::display_font_atlas(),
                         &reborn_ui::icons_atlas(),
                         log.clone(),
                     ) {
@@ -2709,5 +2993,35 @@ mod runtime_reconfiguration_tests {
         assert_eq!(restored.settings.volume, previous.settings.volume);
         assert_eq!(restored.generation, previous.generation);
         assert_eq!(restored.last_error, previous.last_error);
+    }
+}
+
+#[cfg(test)]
+mod ui_readiness_tests {
+    use super::*;
+    #[test]
+    fn authentication_never_means_online_and_errors_are_sanitized() {
+        let mut s = wifi::Status {
+            state: "COMPLETED".into(),
+            ..Default::default()
+        };
+        assert!(!wifi_readiness_label(&s).contains("Online"));
+        for state in [
+            "Starting",
+            "Scanning",
+            "Associating",
+            "Authenticated",
+            "AcquiringIP",
+        ] {
+            s.readiness = state.into();
+            assert!(!wifi_readiness_label(&s).contains("Online"));
+        }
+        s.readiness = "Online".into();
+        assert!(wifi_readiness_label(&s).contains("Online"));
+        s.readiness = "Failed".into();
+        s.readiness_reason = Some("wrong_credentials".into());
+        assert!(wifi_readiness_label(&s).contains("Wrong password"));
+        s.readiness_reason = Some("org.secret.service credential=abc".into());
+        assert!(!wifi_readiness_label(&s).contains("credential"));
     }
 }

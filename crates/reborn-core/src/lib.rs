@@ -6,14 +6,15 @@ use std::{
     path::{Path, PathBuf},
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum CodecPreference {
     Auto,
+    #[default]
     #[serde(rename = "SBC")]
     Sbc,
 }
 
-pub const VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), "-premium.01");
+pub const VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), "-ui-v1-candidate.1");
 pub const MAX_QUEUE: usize = 20_000;
 pub const SESSION_SCHEMA_VERSION: u32 = 2;
 pub const SESSION_MAX_BYTES: usize = 8 * 1024 * 1024;
@@ -294,6 +295,10 @@ pub enum Screen {
     Artist,
     TextEntry,
     Pairing,
+    QuickSettings,
+    Platform,
+    TrackInfo,
+    LibraryIndex,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -307,6 +312,7 @@ pub struct NavigationState {
     pub modal: Option<Modal>,
     pub modal_focus: usize,
     pub context_target: Option<usize>,
+    pub context_key: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -332,14 +338,44 @@ pub enum ConfirmAction {
     ForgetWifi,
     PowerOff,
     Reboot,
+    Platform(PlatformTask),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PlatformTask {
+    Refresh,
+    Health,
+    UpdateCheck,
+    UpdateStage,
+    UpdateApply,
+    UpdateCancel,
+    UpdateRollback,
+    Export,
+    StorageBenchmark,
+    LibraryBenchmark,
+    NetworkCheck,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct PlatformState {
+    pub status: serde_json::Value,
+    pub capabilities: serde_json::Value,
+    pub health: serde_json::Value,
+    pub audio: serde_json::Value,
+    pub bluetooth: serde_json::Value,
+    pub busy: Option<PlatformTask>,
+    pub result: Option<serde_json::Value>,
+    pub failure: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct LibraryState {
     #[serde(skip)]
     pub tracks: Vec<Track>,
+    #[serde(skip)]
     pub scanning: bool,
     pub last_scan: Option<ScanSummary>,
+    #[serde(skip)]
     pub error: Option<String>,
 }
 
@@ -352,6 +388,8 @@ pub struct ScanSummary {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Settings {
     pub volume: u8,
+    #[serde(default)]
+    pub codec_preference: CodecPreference,
     pub screen_timeout_seconds: u32,
     pub music_directory: PathBuf,
     #[serde(default)]
@@ -385,6 +423,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             volume: 35,
+            codec_preference: CodecPreference::Sbc,
             screen_timeout_seconds: 60,
             music_directory: "/data/music".into(),
             replay_gain: ReplayGainMode::Off,
@@ -406,16 +445,23 @@ pub struct AppModel {
     pub queue_position: usize,
     pub position_ms: u64,
     pub output: AudioOutput,
+    #[serde(skip)]
     pub screen: Screen,
     pub settings: Settings,
+    #[serde(skip)]
     pub generation: u64,
+    #[serde(skip)]
     pub sources: Vec<Source>,
+    #[serde(skip)]
     pub screen_off: bool,
+    #[serde(skip)]
     pub last_error: Option<String>,
     #[serde(default)]
     pub library: LibraryState,
     #[serde(skip)]
     pub navigation: NavigationState,
+    #[serde(skip)]
+    pub platform: PlatformState,
 }
 
 /// Effects are requests to the application/service boundary. They carry no
@@ -423,6 +469,10 @@ pub struct AppModel {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Effect {
     None,
+    Platform(PlatformTask),
+    WifiDisconnect,
+    StopPlayback,
+    SetCodecPreference(CodecPreference),
     Play(usize),
     PlayShuffled(usize),
     PlayCollection {
@@ -744,6 +794,7 @@ impl AppModel {
             PlaybackState::Stopped
         };
         m.screen_off = false;
+        m.screen = Screen::Home;
         m.generation = 0;
         m.navigation = NavigationState::default();
         m.settings.volume = m.settings.volume.min(100);

@@ -1,7 +1,9 @@
-# Reborn icon atlas
+# Reborn Simple icon atlas
 
-`reborn-icons.rgba` is a build-time raster atlas made directly from the
-monochrome SVG files in `Reborn_Y2_UI_Implementation_Pack/icons_svg/`.
+`src/` preserves the monochrome SVG sources used from the owner-supplied
+Reborn Y2 Simple UI Asset Pack. `provenance.json` records each source hash and
+the stable slot mapping; unused legacy names alias a supplied Simple icon.
 
-The atlas is 192×160 pixels: 6 columns × 5 rows of 32×32 cells. The native
-GLES2 renderer samples one cell per icon, so runtime never needs an SVG parser.
+`reborn-icons.rgba` is 192×160: six columns by five rows of 32×32 cells.
+Regenerate with `tools/assets/build_atlas.py`. Runtime uses GLES textures and
+needs no SVG parser, Python or CairoSVG. This atlas contains no sample artwork.

@@ -21,6 +21,22 @@ pub struct Network {
     pub security: String,
     pub saved_id: Option<u32>,
 }
+impl Network {
+    /// The connector supports open and WPA-PSK networks. Enterprise, WEP and
+    /// SAE-only networks must never be accidentally treated as open networks.
+    pub fn password_required(&self) -> Option<bool> {
+        if self.security.contains("PSK") {
+            Some(true)
+        } else if self.security.is_empty()
+            || self.security == "[ESS]"
+            || self.security == "[WPS][ESS]"
+        {
+            Some(false)
+        } else {
+            None
+        }
+    }
+}
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Status {
     pub available: bool,
@@ -44,6 +60,7 @@ pub enum Command {
     Connect { ssid: String, password: String },
     Saved(u32),
     Forget(u32),
+    Disconnect,
     Refresh,
     Stop,
 }
@@ -188,7 +205,10 @@ pub fn radio(on: bool, persist: bool) -> Result<(), String> {
     Paths::default().radio(on, persist)
 }
 fn connect(c: &Control, ssid: &str, password: &str) -> Result<(), String> {
-    if ssid.is_empty() || ssid.len() > 32 || !(8..=63).contains(&password.len()) {
+    if ssid.is_empty()
+        || ssid.len() > 32
+        || (!password.is_empty() && !(8..=63).contains(&password.len()))
+    {
         return Err("WPA2 requires SSID 1..32 bytes and password 8..63 bytes".into());
     }
     let ssid = quote(ssid)?;
@@ -199,8 +219,12 @@ fn connect(c: &Control, ssid: &str, password: &str) -> Result<(), String> {
         .map_err(|_| "invalid network id")?;
     let result = (|| {
         c.request(&format!("SET_NETWORK {id} ssid {ssid}"))?;
-        c.request(&format!("SET_NETWORK {id} psk {psk}"))?;
-        c.request(&format!("SET_NETWORK {id} key_mgmt WPA-PSK"))?;
+        if password.is_empty() {
+            c.request(&format!("SET_NETWORK {id} key_mgmt NONE"))?;
+        } else {
+            c.request(&format!("SET_NETWORK {id} psk {psk}"))?;
+            c.request(&format!("SET_NETWORK {id} key_mgmt WPA-PSK"))?;
+        }
         c.request(&format!("SELECT_NETWORK {id}"))?;
         c.request("SAVE_CONFIG")?;
         Ok(())
@@ -508,6 +532,9 @@ fn run(log: Observer, rx: Receiver<Command>, et: SyncSender<Status>, paths: Path
                     json!({"ssid":ssid}),
                 );
                 Control::at(&paths).and_then(|c| connect(&c, &ssid, &password))
+            }
+            Command::Disconnect => {
+                Control::at(&paths).and_then(|c| c.request("DISCONNECT").map(|_| ()))
             }
             Command::Saved(id) => Control::at(&paths)
                 .and_then(|c| c.request(&format!("SELECT_NETWORK {id}")).map(|_| ())),
@@ -917,5 +944,26 @@ mod tests {
     fn password_encoding_cannot_inject_commands() {
         assert!(quote("x\nREMOVE_NETWORK all").is_err());
         assert_eq!(quote("a\"b\\c").unwrap(), "\"a\\\"b\\\\c\"");
+    }
+}
+
+#[cfg(test)]
+mod ui_security_tests {
+    use super::Network;
+    #[test]
+    fn only_supported_security_can_be_connected_from_the_wheel_ui() {
+        for (security, expected) in [
+            ("[ESS]", Some(false)),
+            ("[WPA2-PSK-CCMP][ESS]", Some(true)),
+            ("[WPA2-EAP-CCMP][ESS]", None),
+            ("[WEP][ESS]", None),
+            ("[WPA3-SAE-CCMP][ESS]", None),
+        ] {
+            let network = Network {
+                security: security.into(),
+                ..Default::default()
+            };
+            assert_eq!(network.password_required(), expected, "{security}");
+        }
     }
 }

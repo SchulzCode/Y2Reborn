@@ -31,7 +31,7 @@ unsafe extern "C" {
         display_font: c_int,
         art: c_int,
     );
-    fn rb_graphics_art(p: *mut c_void, b: *const u8) -> c_int;
+    fn rb_graphics_art(p: *mut c_void, b: *const u8, collection: c_int) -> c_int;
     fn rb_graphics_test(p: *mut c_void) -> c_int;
     fn rb_graphics_present(p: *mut c_void) -> c_int;
 }
@@ -49,7 +49,7 @@ impl Renderer {
         icons: &[u8],
         log: Observer,
     ) -> Result<Self, String> {
-        if ui_font.len() != 256 * 128 * 4 || display_font.len() != 256 * 128 * 4 {
+        if ui_font.len() != 1024 * 1024 * 4 || display_font.len() != 1024 * 1024 * 4 {
             return Err("font atlas dimensions".into());
         }
         if icons.len() != 192 * 160 * 4 {
@@ -99,6 +99,12 @@ impl Renderer {
         })
     }
     pub fn render(&mut self, quads: &[Quad]) -> Result<(), String> {
+        if quads
+            .iter()
+            .any(|q| q.glyph.is_some_and(|g| g >= 1001) || q.icon.is_some_and(|i| i >= 26))
+        {
+            return Err("texture atlas index outside validated bounds".into());
+        }
         if quads.len() > 20000 {
             return Err("draw list exceeds limit".into());
         }
@@ -117,7 +123,11 @@ impl Renderer {
                     q.glyph.map(i32::from).unwrap_or(-1),
                     q.icon.map(i32::from).unwrap_or(-1),
                     i32::from(q.display_font),
-                    i32::from(q.artwork),
+                    if q.collection_artwork {
+                        2
+                    } else {
+                        i32::from(q.artwork)
+                    },
                 );
             }
         }
@@ -140,11 +150,17 @@ impl Renderer {
         Ok(())
     }
     pub fn artwork(&mut self, rgba: &[u8]) -> Result<(), String> {
+        self.upload_art(rgba, false)
+    }
+    pub fn collection_artwork(&mut self, rgba: &[u8]) -> Result<(), String> {
+        self.upload_art(rgba, true)
+    }
+    fn upload_art(&mut self, rgba: &[u8], collection: bool) -> Result<(), String> {
         if rgba.len() != 160 * 160 * 4 {
             return Err("artwork dimensions".into());
         }
         // SAFETY: exact RGBA dimensions validated; GL synchronously copies slice into owned texture.
-        let r = unsafe { rb_graphics_art(self.raw.as_ptr(), rgba.as_ptr()) };
+        let r = unsafe { rb_graphics_art(self.raw.as_ptr(), rgba.as_ptr(), i32::from(collection)) };
         if r < 0 {
             Err(format!("texture upload {r}"))
         } else {

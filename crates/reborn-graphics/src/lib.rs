@@ -8,10 +8,12 @@ pub struct Quad {
     pub w: f32,
     pub h: f32,
     pub color: u32,
-    pub glyph: Option<u8>,
+    pub glyph: Option<u16>,
     pub icon: Option<u8>,
     pub display_font: bool,
     pub artwork: bool,
+    #[serde(default)]
+    pub collection_artwork: bool,
     /// Presentation metadata used by deterministic UI validation. Native
     /// rendering intentionally ignores this field.
     pub focus_target: bool,
@@ -28,6 +30,7 @@ impl Quad {
             icon: None,
             display_font: false,
             artwork: false,
+            collection_artwork: false,
             focus_target: false,
         }
     }

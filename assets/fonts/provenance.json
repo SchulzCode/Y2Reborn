@@ -1,0 +1,14 @@
+{
+  "family": "DejaVu Sans",
+  "version": "2.37",
+  "source": "https://github.com/dejavu-fonts/dejavu-fonts/releases/download/version_2_37/dejavu-fonts-ttf-2.37.tar.bz2",
+  "ttf_sha256": "7da195a74c55bef988d0d48f9508bd5d849425c1770dba5d7bfc6ce9ed848954",
+  "atlas_size": [
+    1024,
+    1024
+  ],
+  "cell": 32,
+  "font_px": 24,
+  "glyphs": 1001,
+  "runtime_font_files": false
+}

@@ -1,6 +1,9 @@
 #![forbid(unsafe_code)]
 
+mod catalog;
 mod components;
+mod glyphs;
+mod platform;
 mod screens;
 pub mod theme;
 
@@ -9,10 +12,7 @@ use reborn_core::{
     RepeatMode, Screen, Track,
 };
 use reborn_graphics::Quad;
-use std::{
-    collections::BTreeSet,
-    time::{Duration, Instant},
-};
+use std::time::{Duration, Instant};
 
 pub use reborn_core::Effect;
 pub use screens::PreviewScreen;
@@ -75,6 +75,9 @@ impl RadioView {
 
     pub(crate) fn message(&self, bluetooth: bool) -> String {
         let name = if bluetooth { "Bluetooth" } else { "Wi-Fi" };
+        if let Some(error) = &self.error {
+            return error.clone();
+        }
         match self.scan {
             RadioScan::Starting => return format!("Starting {name}..."),
             RadioScan::Scanning => return format!("Scanning... {} found", self.count),
@@ -90,7 +93,7 @@ impl RadioView {
             RadioScan::Idle => {}
         }
         if !self.available {
-            return format!("{name} is starting");
+            return format!("{name} unavailable");
         }
         if !self.powered {
             return format!("{name} is off");
@@ -121,10 +124,14 @@ pub struct Ui {
     pub saved_networks: Vec<Item>,
     pub bluetooth_devices: Vec<Item>,
     pub pairing: Option<String>,
+    pub pairing_focus: usize,
+    pub collection_art: Option<(String, i64)>,
     password: String,
     ssid: String,
     letter: usize,
     pub text_entry: bool,
+    catalog: std::cell::RefCell<catalog::Catalog>,
+    letter_index: Vec<Item>,
 }
 
 const LETTERS: &[u8] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 !@#$%^&*()-_=+[]{};:'\",.<>/?\\|`~";
@@ -140,23 +147,54 @@ impl Ui {
         effect
     }
 
+    pub fn normalize(&self, m: &mut AppModel, tracks: &[Track]) {
+        let count = self.row_count(m, tracks);
+        m.navigation.focus = m.navigation.focus.min(count.saturating_sub(1));
+        if count > 0
+            && !self
+                .row_at(m, tracks, m.navigation.focus)
+                .is_some_and(|r| r.enabled)
+        {
+            m.navigation.focus = (0..count)
+                .find(|i| self.row_at(m, tracks, *i).is_some_and(|r| r.enabled))
+                .unwrap_or(0);
+        }
+        if m.navigation.modal.is_some() {
+            let rows = self.modal_rows(m, tracks);
+            if rows.is_empty() {
+                m.navigation.modal = None;
+            } else {
+                m.navigation.modal_focus = m.navigation.modal_focus.min(rows.len() - 1);
+                if !rows[m.navigation.modal_focus].enabled {
+                    m.navigation.modal_focus = rows.iter().position(|r| r.enabled).unwrap_or(0);
+                }
+            }
+        }
+    }
     pub fn flash(&mut self, message: impl Into<String>) {
         self.notice = message.into();
         self.notice_until = Some(Instant::now() + Duration::from_millis(1600));
     }
 
-    pub fn expire_notice(&mut self) {
+    pub fn expire_notice(&mut self) -> bool {
         if self
             .notice_until
             .is_some_and(|until| Instant::now() >= until)
         {
             self.notice.clear();
             self.notice_until = None;
+            return true;
         }
+        false
     }
 
     fn go(m: &mut AppModel, screen: Screen, filter: impl Into<String>) {
-        if m.screen != screen {
+        let filter = filter.into();
+        if m.screen != screen || m.navigation.filter != filter {
+            if m.navigation.history.len() >= 64 {
+                m.navigation.history.remove(0);
+                m.navigation.stack.remove(0);
+            }
             m.navigation.stack.push(m.screen);
             m.navigation.history.push(NavigationFrame {
                 screen: m.screen,
@@ -166,12 +204,13 @@ impl Ui {
             });
         }
         m.screen = screen;
-        m.navigation.focus = usize::from(screen == Screen::NowPlaying);
+        m.navigation.focus = 0;
         m.navigation.scroll = 0;
-        m.navigation.filter = filter.into();
+        m.navigation.filter = filter;
         m.navigation.modal = None;
         m.navigation.modal_focus = 0;
         m.navigation.context_target = None;
+        m.navigation.context_key = None;
     }
 
     fn back(m: &mut AppModel) {
@@ -179,6 +218,7 @@ impl Ui {
             m.navigation.modal = None;
             m.navigation.modal_focus = 0;
             m.navigation.context_target = None;
+            m.navigation.context_key = None;
             return;
         }
         if m.screen == Screen::TextEntry {
@@ -197,6 +237,8 @@ impl Ui {
             m.navigation.focus = 0;
             m.navigation.scroll = 0;
             m.navigation.filter.clear();
+        } else if m.screen != Screen::Home {
+            Self::home(m);
         }
     }
 
@@ -209,6 +251,7 @@ impl Ui {
         m.navigation.filter.clear();
         m.navigation.modal = None;
         m.navigation.context_target = None;
+        m.navigation.context_key = None;
     }
 
     pub fn rows(&self, m: &AppModel, tracks: &[Track]) -> Vec<Item> {
@@ -231,38 +274,64 @@ impl Ui {
                     "Find new music"
                 }),
             ],
-            Screen::Artists | Screen::Albums | Screen::Folders => self.catalog_rows(m, tracks),
-            Screen::Artist => {
-                let name = m
-                    .navigation
-                    .filter
-                    .strip_prefix("artist:")
-                    .unwrap_or("Artist");
-                let mut rows = vec![Item::new(format!("Play {name}"), "play:collection")];
-                rows.extend(self.filtered_track_rows(m, tracks));
-                rows
+            Screen::Artists
+            | Screen::Albums
+            | Screen::Folders
+            | Screen::Artist
+            | Screen::Album
+            | Screen::Tracks => self.catalog_rows(m, tracks),
+            Screen::LibraryIndex => {
+                if self.letter_index.is_empty() {
+                    vec![Item::new("Back", "back")
+                        .with_secondary("No letter index for this collection")]
+                } else {
+                    self.letter_index.clone()
+                }
             }
-            Screen::Album => {
-                let name = m
-                    .navigation
-                    .filter
-                    .strip_prefix("album:")
-                    .map(album_filter_label)
-                    .unwrap_or("Album");
-                let mut rows = vec![
-                    Item::new(format!("Play {name}"), "play:collection"),
-                    Item::new("Shuffle Album", "shuffle:collection"),
-                    Item::new("Play Next", "play_next:collection"),
-                    Item::new("Add to Queue", "add:collection"),
-                ];
-                rows.extend(self.filtered_track_rows(m, tracks));
-                rows
-            }
-            Screen::Tracks => self.filtered_track_rows(m, tracks),
             Screen::Queue => self.queue_rows(m),
+            Screen::Platform => platform::rows(m, &m.navigation.filter),
+            Screen::QuickSettings => vec![
+                Item::new("Wi-Fi", "wifi").with_secondary(self.wifi_summary()),
+                Item::new("Bluetooth", "bluetooth").with_secondary(self.bluetooth_summary()),
+                Item::new("Audio Output", "output")
+                    .with_secondary(components::output_label(&m.output)),
+                Item::new("Display", "display")
+                    .with_secondary(timeout_label(m.settings.screen_timeout_seconds)),
+                Item::new("System Settings", "settings"),
+            ],
+            Screen::TrackInfo => {
+                let track = m
+                    .navigation
+                    .filter
+                    .parse::<usize>()
+                    .ok()
+                    .and_then(|i| tracks.get(i))
+                    .or_else(|| m.current());
+                if let Some(t) = track {
+                    [
+                        ("Title", t.title.clone()),
+                        ("Artist", display_or_unknown(&t.artist).into()),
+                        ("Album", display_or_unknown(&t.album).into()),
+                        ("File", t.filename.clone()),
+                        ("Source codec", t.codec.clone()),
+                        ("Source rate", format!("{} Hz", t.sample_rate)),
+                        ("Duration", components::time(t.duration_ms)),
+                        ("Source", t.source_id.clone()),
+                    ]
+                    .into_iter()
+                    .map(|(name, value)| {
+                        Item::new(name, format!("value:{name}\u{1f}{value}")).with_secondary(value)
+                    })
+                    .collect()
+                } else {
+                    vec![Item::new("Back", "back").with_secondary("Track unavailable")]
+                }
+            }
             Screen::Connectivity => vec![
                 Item::new("Wi-Fi", "wifi").with_secondary(self.wifi_summary()),
                 Item::new("Bluetooth", "bluetooth").with_secondary(self.bluetooth_summary()),
+                Item::new("PC Transfer", "page:usb").with_secondary("Authenticated USB SFTP"),
+                Item::new("Quick Settings", "quick_settings"),
             ],
             Screen::Bluetooth | Screen::SettingsBluetooth => self.bluetooth_rows(),
             Screen::Wifi | Screen::SettingsWifi => self.wifi_rows(),
@@ -270,8 +339,8 @@ impl Ui {
                 Item::new("Audio", "audio").with_secondary("Audio controls"),
                 Item::new("Playback", "playback").with_secondary("Gapless + repeat"),
                 Item::new("Library", "library").with_secondary("Storage + scan"),
-                Item::new("Bluetooth", "bluetooth").with_secondary("Wireless audio"),
-                Item::new("Wi-Fi", "wifi").with_secondary("Saved networks"),
+                Item::new("Connectivity", "connectivity").with_secondary("Wi-Fi · Bluetooth · USB"),
+                Item::new("Storage", "page:storage").with_secondary("Internal storage and SD"),
                 Item::new("Display", "display").with_secondary("Screen timeout"),
                 Item::new("Power", "power").with_secondary("Power options"),
                 Item::new("System", "system").with_secondary("About + health"),
@@ -280,11 +349,6 @@ impl Ui {
                 Item::new("Output", "output").with_secondary(components::output_label(&m.output)),
                 Item::new("ReplayGain", "replay_gain")
                     .with_secondary(replay_gain_label(m.settings.replay_gain)),
-                Item::new("Equalizer", "equalizer").with_secondary(if m.settings.eq_enabled {
-                    "On"
-                } else {
-                    "Off"
-                }),
                 Item::new("Audio Info", "audio_info").with_secondary("Codec + output"),
             ],
             Screen::SettingsPlayback => vec![
@@ -320,94 +384,47 @@ impl Ui {
             ],
             Screen::SettingsDisplay => vec![Item::new("Screen Timeout", "timeout")
                 .with_secondary(timeout_label(m.settings.screen_timeout_seconds))],
-            Screen::SettingsPower => {
-                vec![Item::new("Power Menu", "power_menu").with_secondary("Power actions")]
-            }
+            Screen::SettingsPower => vec![
+                Item::new("Battery & Source", "page:power"),
+                Item::new("Power Menu", "power_menu"),
+            ],
             Screen::SettingsSystem => vec![
-                Item::new("About Reborn", "about").with_secondary(reborn_core::VERSION),
-                Item::new("Diagnostics", "diagnostics").with_secondary("Health + logs"),
-                Item::new("Reboot", "reboot"),
-                Item::new("Power Off", "power_off"),
+                Item::new("About Reborn", "page:about").with_secondary(reborn_core::VERSION),
+                Item::new("Software Update", "page:update")
+                    .with_secondary("Signed system root updates"),
+                Item::new("Backup & Export", "page:backup"),
+                Item::new("Reset & Maintenance", "page:maintenance"),
+                Item::new("Date & Time", "page:clock"),
+                Item::new("Diagnostics", "diagnostics")
+                    .with_secondary("Platform health and observations"),
             ],
-            Screen::Diagnostics => {
-                if m.navigation.filter == "audio" {
-                    vec![Item::new("Back to Diagnostics", "back_diagnostics")]
-                } else {
-                    vec![
-                        Item::new("Audio", "diag_audio"),
-                        Item::new("Storage", "diag_storage"),
-                        Item::new("Bluetooth", "diag_bluetooth"),
-                        Item::new("Wi-Fi", "diag_wifi"),
-                        Item::new("System", "diag_system"),
-                    ]
-                }
-            }
+            Screen::Diagnostics => platform::rows(m, &m.navigation.filter),
             Screen::TextEntry | Screen::Pairing => vec![],
+            Screen::NowPlaying if m.current().is_none() => vec![Item::new("Open Music", "music")],
             Screen::NowPlaying => vec![
-                Item::new("Previous Track", "previous"),
-                Item::new("Play / Pause", "toggle"),
-                Item::new("Next Track", "next"),
+                Item::new("Track Options", "now_options"),
+                Item::new("Queue", "queue"),
+                Item::new("Audio Information", "page:audio"),
             ],
         }
     }
 
+    pub fn collection_track<'a>(&self, m: &AppModel, tracks: &'a [Track]) -> Option<&'a Track> {
+        let mut catalog = self.catalog.borrow_mut();
+        catalog.ensure(m, tracks);
+        catalog.rows.iter().find_map(|row| match row {
+            catalog::Row::Track(index) => tracks.get(*index),
+            _ => None,
+        })
+    }
+    pub fn invalidate_catalog(&self) {
+        self.catalog.borrow_mut().clear();
+    }
     fn catalog_rows(&self, m: &AppModel, tracks: &[Track]) -> Vec<Item> {
-        if m.screen == Screen::Albums {
-            let mut albums = BTreeSet::new();
-            for track in tracks.iter().filter(|track| track.online) {
-                albums.insert((track.album_artist.clone(), track.album.clone()));
-            }
-            return albums
-                .into_iter()
-                .map(|(artist, album)| {
-                    let label = if album.is_empty() && artist.is_empty() {
-                        "Unknown".into()
-                    } else if artist.is_empty() {
-                        album.clone()
-                    } else if album.is_empty() {
-                        format!("Unknown · {artist}")
-                    } else {
-                        format!("{album} · {artist}")
-                    };
-                    Item::new(label, format!("album:{artist}\u{1f}{album}"))
-                })
-                .collect();
-        }
-        let mut values = BTreeSet::new();
-        for track in tracks.iter().filter(|track| track.online) {
-            let value = match m.screen {
-                Screen::Artists => track.artist.clone(),
-                Screen::Albums => track.album.clone(),
-                Screen::Folders => track
-                    .path
-                    .parent()
-                    .map(|path| path.to_string_lossy().into_owned())
-                    .unwrap_or_default(),
-                _ => String::new(),
-            };
-            values.insert(if value.is_empty() {
-                "Unknown".into()
-            } else {
-                value
-            });
-        }
-        values
-            .into_iter()
-            .map(|value| {
-                let prefix = match m.screen {
-                    Screen::Artists => "artist:",
-                    Screen::Albums => "album:",
-                    _ => "folder:",
-                };
-                Item::new(value.clone(), format!("{prefix}{value}"))
-            })
-            .collect()
+        let mut c = self.catalog.borrow_mut();
+        c.ensure(m, tracks);
+        c.rows.iter().map(|r| r.item(tracks)).collect()
     }
-
-    fn filtered_track_rows(&self, m: &AppModel, tracks: &[Track]) -> Vec<Item> {
-        self.track_rows_page(m, tracks, 0, usize::MAX)
-    }
-
     pub(crate) fn track_rows_page(
         &self,
         m: &AppModel,
@@ -415,50 +432,86 @@ impl Ui {
         offset: usize,
         limit: usize,
     ) -> Vec<Item> {
-        tracks
+        let mut c = self.catalog.borrow_mut();
+        c.ensure(m, tracks);
+        c.rows
             .iter()
-            .enumerate()
-            .filter(|(_, track)| track_matches(track, &m.navigation.filter))
             .skip(offset)
             .take(limit)
-            .map(|(index, track)| {
+            .map(|r| r.item(tracks))
+            .collect()
+    }
+    pub(crate) fn row_count(&self, m: &AppModel, tracks: &[Track]) -> usize {
+        if Self::is_catalog(m.screen) {
+            let mut c = self.catalog.borrow_mut();
+            c.ensure(m, tracks);
+            c.rows.len()
+        } else if m.screen == Screen::Queue {
+            m.queue.len()
+        } else {
+            self.rows(m, tracks).len()
+        }
+    }
+    fn is_catalog(s: Screen) -> bool {
+        matches!(
+            s,
+            Screen::Albums
+                | Screen::Artists
+                | Screen::Folders
+                | Screen::Album
+                | Screen::Artist
+                | Screen::Tracks
+        )
+    }
+    pub(crate) fn row_at(&self, m: &AppModel, tracks: &[Track], index: usize) -> Option<Item> {
+        if Self::is_catalog(m.screen) {
+            self.track_rows_page(m, tracks, index, 1).pop()
+        } else if m.screen == Screen::Queue {
+            m.queue.get(index).map(|t| {
                 Item::new(
-                    if track.title.is_empty() {
-                        track.filename.clone()
+                    if t.title.is_empty() {
+                        &t.filename
                     } else {
-                        track.title.clone()
+                        &t.title
                     },
-                    format!("track:{index}"),
+                    format!(
+                        "queue:{}",
+                        m.queue_entry_ids
+                            .get(index)
+                            .map(|v| v.0)
+                            .unwrap_or(index as u64)
+                    ),
                 )
                 .with_secondary(format!(
                     "{} · {}",
-                    display_or_unknown(&track.artist),
-                    display_or_unknown(&track.album)
+                    if index == m.queue_position {
+                        "Now Playing"
+                    } else if index > m.queue_position {
+                        "Up Next"
+                    } else {
+                        "Played"
+                    },
+                    display_or_unknown(&t.artist)
                 ))
             })
+        } else {
+            self.rows(m, tracks).get(index).cloned()
+        }
+    }
+    pub(crate) fn visible_rows(
+        &self,
+        m: &AppModel,
+        tracks: &[Track],
+        offset: usize,
+        count: usize,
+    ) -> Vec<Item> {
+        (offset..offset + count)
+            .filter_map(|i| self.row_at(m, tracks, i))
             .collect()
     }
-
     fn queue_rows(&self, m: &AppModel) -> Vec<Item> {
-        m.queue
-            .iter()
-            .enumerate()
-            .map(|(index, track)| {
-                let title = if track.title.is_empty() {
-                    track.filename.clone()
-                } else {
-                    track.title.clone()
-                };
-                let section = if index == m.queue_position {
-                    "Now Playing"
-                } else if index > m.queue_position {
-                    "Up Next"
-                } else {
-                    "Played"
-                };
-                Item::new(title, format!("queue:{index}"))
-                    .with_secondary(format!("{section} · {}", display_or_unknown(&track.artist)))
-            })
+        (0..m.queue.len())
+            .filter_map(|i| self.row_at(m, &[], i))
             .collect()
     }
 
@@ -475,10 +528,23 @@ impl Ui {
             Item::new("Scan for Devices", "bt_scan"),
             Item::new("Use Wired Output", "wired_output"),
         ];
+        rows[0].enabled = self.bluetooth.available;
+        rows[1].enabled =
+            self.bluetooth.available && self.bluetooth.powered && !self.bluetooth.scan.active();
         rows.extend(self.bluetooth_devices.iter().cloned().map(|device| {
             Item::new(device.label, format!("bt_device:{}", device.key))
-                .with_secondary("Select for options")
+                .with_secondary(device.secondary)
         }));
+        rows.push(Item::new("Codec & Audio Details", "page:bluetooth"));
+        if let Some(error) = &self.bluetooth.error {
+            rows.push(
+                Item::new(
+                    "Connection Problem",
+                    format!("value:Bluetooth error\u{1f}{error}"),
+                )
+                .with_secondary(error),
+            );
+        }
         rows
     }
 
@@ -494,8 +560,21 @@ impl Ui {
             ),
             Item::new("Scan for Networks", "wifi_scan"),
         ];
+        rows[0].enabled = self.wifi.available;
+        rows[1].enabled = self.wifi.available && self.wifi.powered && !self.wifi.scan.active();
         rows.extend(self.saved_networks.iter().cloned());
         rows.extend(self.networks.iter().cloned());
+        rows.push(Item::new("Disconnect", "wifi_disconnect"));
+        rows.push(Item::new("Network Details", "page:network"));
+        if let Some(error) = &self.wifi.error {
+            rows.push(
+                Item::new(
+                    "Connection Problem",
+                    format!("value:Wi-Fi error\u{1f}{error}"),
+                )
+                .with_secondary(error),
+            );
+        }
         rows
     }
 
@@ -519,16 +598,16 @@ impl Ui {
     }
 
     fn context_rows(&self, m: &AppModel, tracks: &[Track]) -> Vec<Item> {
-        let selected_key = m.navigation.context_target.and_then(|target| {
-            self.rows(m, tracks)
-                .get(target)
-                .map(|item| item.key.clone())
+        let selected_key = m.navigation.context_key.clone().or_else(|| {
+            m.navigation
+                .context_target
+                .and_then(|target| self.row_at(m, tracks, target).map(|item| item.key))
         });
         if selected_key
             .as_deref()
             .is_some_and(|key| key.starts_with("track:"))
         {
-            return vec![
+            let mut actions = vec![
                 Item::new("Play", "play"),
                 Item::new("Play Next", "play_next"),
                 Item::new("Add to Queue", "add_queue"),
@@ -536,6 +615,10 @@ impl Ui {
                 Item::new("Go to Artist", "go_artist"),
                 Item::new("Track Information", "track_info"),
             ];
+            if m.screen == Screen::Tracks && m.navigation.filter.is_empty() {
+                actions.push(Item::new("Jump to Letter", "letter_index"));
+            }
+            return actions;
         }
         if m.screen == Screen::Artist && selected_key.as_deref() == Some("play:collection") {
             return vec![
@@ -546,12 +629,13 @@ impl Ui {
             ];
         }
         match m.screen {
+            Screen::Albums | Screen::Artists => vec![Item::new("Jump to Letter", "letter_index")],
             Screen::Album => vec![
                 Item::new("Play Album", "album_play"),
                 Item::new("Shuffle Album", "album_shuffle"),
                 Item::new("Play Next", "album_next"),
                 Item::new("Add to Queue", "album_queue"),
-                Item::new("Album Information", "album_info"),
+                Item::new("Audio Information", "audio_info"),
             ],
             Screen::Tracks | Screen::Artist | Screen::NowPlaying => vec![
                 Item::new("Play", "play"),
@@ -561,38 +645,72 @@ impl Ui {
                 Item::new("Go to Artist", "go_artist"),
                 Item::new("Track Information", "track_info"),
             ],
-            Screen::Queue => vec![
-                Item::new("Play", "queue_play"),
-                Item::new("Remove from Queue", "queue_remove"),
-                Item::new("Move Up", "queue_up"),
-                Item::new("Move Down", "queue_down"),
-                Item::new("Clear Queue", "clear_queue"),
-            ],
+            Screen::Queue => {
+                let target = selected_key
+                    .as_deref()
+                    .and_then(|s| s.strip_prefix("queue:"))
+                    .and_then(|s| s.parse::<u64>().ok())
+                    .and_then(|id| {
+                        m.queue_entry_ids
+                            .iter()
+                            .position(|v| v.0 == id)
+                            .or_else(|| m.queue_entry_ids.is_empty().then_some(id as usize))
+                    })
+                    .filter(|i| *i < m.queue.len());
+                let Some(i) = target else {
+                    return vec![];
+                };
+                let mut rows = vec![
+                    Item::new("Play Now", "queue_play"),
+                    Item::new("Remove from Queue", "queue_remove"),
+                    Item::new("Move Up", "queue_up"),
+                    Item::new("Move Down", "queue_down"),
+                    Item::new("Clear Future", "clear_queue"),
+                ];
+                rows[1].enabled = i != m.queue_position;
+                rows[2].enabled = i > m.queue_position.saturating_add(1);
+                rows[3].enabled = i > m.queue_position && i + 1 < m.queue.len();
+                rows[4].enabled = m.queue_position + 1 < m.queue.len();
+                rows
+            }
             Screen::Bluetooth | Screen::SettingsBluetooth => {
-                let target = m.navigation.context_target.unwrap_or(0);
-                if target >= 3 && target - 3 < self.bluetooth_devices.len() {
-                    let connected = self
-                        .bluetooth_devices
-                        .get(target - 3)
-                        .is_some_and(|item| item.label.contains("connected"));
+                let path = selected_key
+                    .as_deref()
+                    .and_then(|key| key.strip_prefix("bt_device:"));
+                if let Some(device) =
+                    path.and_then(|p| self.bluetooth_devices.iter().find(|d| d.key == p))
+                {
+                    let connected = device.secondary == "Connected";
+                    let paired = device.secondary == "Paired" || connected;
                     vec![
                         Item::new(
-                            if connected { "Disconnect" } else { "Connect" },
+                            if connected {
+                                "Disconnect"
+                            } else if paired {
+                                "Connect"
+                            } else {
+                                "Pair & Connect"
+                            },
                             "bt_connect",
                         ),
                         Item::new("Use for Audio", "bt_output"),
                         Item::new("Forget Device", "bt_forget"),
+                        Item::new("Codec & Audio Details", "bt_info"),
                     ]
                 } else {
                     vec![]
                 }
             }
             Screen::Wifi | Screen::SettingsWifi => {
-                let target = m.navigation.context_target.unwrap_or(0);
-                if target >= 2 && self.saved_networks.get(target - 2).is_some() {
+                if selected_key
+                    .as_deref()
+                    .is_some_and(|s| s.starts_with("saved:"))
+                {
                     vec![
                         Item::new("Connect", "wifi_connect"),
                         Item::new("Forget Network", "wifi_forget"),
+                        Item::new("Disconnect", "wifi_disconnect"),
+                        Item::new("Network Details", "wifi_info"),
                     ]
                 } else {
                     vec![]
@@ -610,10 +728,36 @@ impl Ui {
                 Item::new("Reboot", "reboot"),
                 Item::new("Cancel", "cancel"),
             ],
-            Some(Modal::Confirm(_)) => vec![
-                Item::new("Cancel", "cancel"),
-                Item::new("Confirm", "confirm"),
-            ],
+            Some(Modal::Confirm(action)) => {
+                let mut rows = vec![
+                    Item::new("Cancel", "cancel"),
+                    Item::new("Confirm", "confirm"),
+                ];
+                if let ConfirmAction::Platform(task) = action {
+                    let (page, key) = match task {
+                        reborn_core::PlatformTask::UpdateApply => {
+                            ("update", "confirm:update_apply")
+                        }
+                        reborn_core::PlatformTask::UpdateCancel => {
+                            ("update", "confirm:update_cancel")
+                        }
+                        reborn_core::PlatformTask::UpdateRollback => {
+                            ("update", "confirm:update_rollback")
+                        }
+                        reborn_core::PlatformTask::StorageBenchmark => {
+                            ("benchmarks", "confirm:storage_benchmark")
+                        }
+                        reborn_core::PlatformTask::LibraryBenchmark => {
+                            ("benchmarks", "confirm:library_benchmark")
+                        }
+                        _ => ("", ""),
+                    };
+                    rows[1].enabled = platform::rows(m, page)
+                        .iter()
+                        .any(|row| row.key == key && row.enabled);
+                }
+                rows
+            }
             None => vec![],
         }
     }
@@ -640,6 +784,24 @@ impl Ui {
                 }
                 ConfirmAction::PowerOff => ("Power off?", "The player will shut down safely."),
                 ConfirmAction::Reboot => ("Reboot?", "The player will restart safely."),
+                ConfirmAction::Platform(task) => match task {
+                    reborn_core::PlatformTask::UpdateApply => (
+                        "Install & Restart?",
+                        "Verified root only. Keep external power connected.",
+                    ),
+                    reborn_core::PlatformTask::UpdateRollback => (
+                        "Restore previous root?",
+                        "Restart into verified system recovery.",
+                    ),
+                    reborn_core::PlatformTask::UpdateCancel => (
+                        "Cancel queued update?",
+                        "The installed system will stay unchanged.",
+                    ),
+                    _ => (
+                        "Run advanced check?",
+                        "Private scratch writes. Your music is not used.",
+                    ),
+                },
             },
             Some(Modal::ContextMenu) => ("Track options", "Choose an action for the focused item."),
             None => ("", ""),
@@ -647,11 +809,61 @@ impl Ui {
     }
 
     pub fn action(&mut self, m: &mut AppModel, tracks: &[Track], action: Action) -> Effect {
+        if !m.screen_off {
+            self.normalize(m, tracks);
+        }
+        // Installing/restoring the root must not compete with navigation,
+        // shutdown or playback. The platform owns the resulting restart.
+        if matches!(
+            m.platform.busy,
+            Some(
+                reborn_core::PlatformTask::UpdateApply | reborn_core::PlatformTask::UpdateRollback
+            )
+        ) {
+            return match action {
+                Action::ScreenWake => Effect::ScreenWake,
+                Action::VolumeUp => Effect::AdjustVolume(2),
+                Action::VolumeDown => Effect::AdjustVolume(-2),
+                _ => Effect::None,
+            };
+        }
+        match action {
+            Action::ScreenSleep => return Effect::ScreenSleep,
+            Action::ScreenWake => return Effect::ScreenWake,
+            Action::PlayPause => return Effect::TogglePlayback,
+            Action::ShowNowPlaying
+                if !m.screen_off
+                    && m.navigation.modal.is_none()
+                    && !self.text_entry
+                    && self.pairing.is_none() =>
+            {
+                Self::go(m, Screen::NowPlaying, "");
+                return Effect::None;
+            }
+            Action::PreviousTrack => return Effect::PreviousTrack,
+            Action::NextTrack => return Effect::NextTrack,
+            Action::SeekBackward => return Effect::Seek(-30_000),
+            Action::SeekForward => return Effect::Seek(30_000),
+            Action::VolumeUp => return Effect::AdjustVolume(2),
+            Action::VolumeDown => return Effect::AdjustVolume(-2),
+            _ => {}
+        }
+        if m.screen_off {
+            return Effect::None;
+        }
         if self.pairing.is_some() {
             return match action {
                 Action::Select => {
                     self.pairing = None;
-                    Effect::ConfirmPairing(true)
+                    Effect::ConfirmPairing(self.pairing_focus == 0)
+                }
+                Action::WheelClockwise(_) | Action::NavigateDown => {
+                    self.pairing_focus = 1;
+                    Effect::None
+                }
+                Action::WheelCounterClockwise(_) | Action::NavigateUp => {
+                    self.pairing_focus = 0;
+                    Effect::None
                 }
                 Action::Back => {
                     self.pairing = None;
@@ -664,20 +876,11 @@ impl Ui {
             return self.entry(action);
         }
         match action {
-            Action::ScreenSleep => return Effect::ScreenSleep,
-            Action::ScreenWake => return Effect::ScreenWake,
-            Action::PlayPause => return Effect::TogglePlayback,
-            Action::ShowNowPlaying => {
-                Self::go(m, Screen::NowPlaying, "");
-                return Effect::None;
-            }
-            Action::PreviousTrack => return Effect::PreviousTrack,
-            Action::NextTrack => return Effect::NextTrack,
-            Action::SeekBackward => return Effect::Seek(-30_000),
-            Action::SeekForward => return Effect::Seek(30_000),
-            Action::VolumeUp => return Effect::AdjustVolume(2),
-            Action::VolumeDown => return Effect::AdjustVolume(-2),
             Action::Home => {
+                if m.navigation.modal.is_some() {
+                    Self::back(m);
+                    return Effect::None;
+                }
                 Self::home(m);
                 return Effect::None;
             }
@@ -691,31 +894,29 @@ impl Ui {
                 return Effect::None;
             }
             Action::ContextMenu => {
-                if m.navigation.modal.is_none() {
-                    let rows = self.rows(m, tracks);
-                    if rows.get(m.navigation.focus).is_some_and(|row| row.enabled) {
-                        m.navigation.context_target = Some(m.navigation.focus);
-                        if !self.context_rows(m, tracks).is_empty() {
-                            m.navigation.modal = Some(Modal::ContextMenu);
-                            m.navigation.modal_focus = 0;
-                        } else {
-                            m.navigation.context_target = None;
-                        }
+                if m.navigation.modal.is_none()
+                    && self
+                        .row_at(m, tracks, m.navigation.focus)
+                        .is_some_and(|row| row.enabled)
+                {
+                    m.navigation.context_target = Some(m.navigation.focus);
+                    m.navigation.context_key =
+                        self.row_at(m, tracks, m.navigation.focus).map(|r| r.key);
+                    if !self.context_rows(m, tracks).is_empty() {
+                        m.navigation.modal = Some(Modal::ContextMenu);
+                        m.navigation.modal_focus = 0;
+                    } else {
+                        m.navigation.context_target = None;
+                        m.navigation.context_key = None;
                     }
                 }
                 return Effect::None;
             }
             Action::WheelClockwise(steps) => {
-                if m.screen == Screen::NowPlaying {
-                    return Effect::AdjustVolume((steps as i8).saturating_mul(2));
-                }
                 self.move_focus(m, tracks, steps as i32);
                 return Effect::None;
             }
             Action::WheelCounterClockwise(steps) => {
-                if m.screen == Screen::NowPlaying {
-                    return Effect::AdjustVolume(-((steps as i8).saturating_mul(2)));
-                }
                 self.move_focus(m, tracks, -(steps as i32));
                 return Effect::None;
             }
@@ -729,53 +930,141 @@ impl Ui {
             }
             Action::NavigateLeft | Action::NavigateRight => return Effect::None,
             Action::Select => {}
+            _ => return Effect::None,
         }
         if m.navigation.modal.is_some() {
             return self.modal_action(m, tracks);
         }
-        let rows = self.rows(m, tracks);
-        let Some(row) = rows.get(m.navigation.focus).filter(|row| row.enabled) else {
+        if self.row_count(m, tracks) == 0
+            || (m.screen == Screen::NowPlaying && m.current().is_none())
+        {
+            if m.screen == Screen::Queue || m.screen == Screen::NowPlaying {
+                Self::go(m, Screen::Music, "");
+                return Effect::None;
+            }
+            return Effect::ScanLibrary;
+        }
+        let Some(row) = self
+            .row_at(m, tracks, m.navigation.focus)
+            .filter(|row| row.enabled)
+        else {
             return Effect::None;
         };
         self.select_row(m, tracks, &row.key.clone())
     }
 
     fn move_focus(&mut self, m: &mut AppModel, tracks: &[Track], delta: i32) {
-        let count = if m.navigation.modal.is_some() {
-            self.modal_rows(m, tracks).len()
-        } else {
-            match m.screen {
-                Screen::Tracks | Screen::Artist | Screen::Album => {
-                    let actions = match m.screen {
-                        Screen::Artist => 1,
-                        Screen::Album => 4,
-                        _ => 0,
-                    };
-                    actions
-                        + tracks
-                            .iter()
-                            .filter(|t| track_matches(t, &m.navigation.filter))
-                            .count()
-                }
-                Screen::Queue => m.queue.len(),
-                _ => self.rows(m, tracks).len(),
-            }
-        };
-        let Some(last) = count.checked_sub(1) else {
+        if delta == 0 {
             return;
+        }
+        let modal = m.navigation.modal.is_some();
+        let rows = if modal {
+            Some(self.modal_rows(m, tracks))
+        } else if !Self::is_catalog(m.screen) && m.screen != Screen::Queue {
+            Some(self.rows(m, tracks))
+        } else {
+            None
         };
-        let focus = if m.navigation.modal.is_some() {
+        let count = rows
+            .as_ref()
+            .map(|r| r.len())
+            .unwrap_or_else(|| self.row_count(m, tracks));
+        if count == 0 {
+            return;
+        }
+        let focus = if modal {
             &mut m.navigation.modal_focus
         } else {
             &mut m.navigation.focus
         };
-        *focus = (*focus as i32 + delta).clamp(0, last as i32) as usize;
-        if m.navigation.modal.is_none() {
-            m.navigation.scroll = m.navigation.scroll.min(*focus);
+        let mut next = (*focus as i32 + delta).clamp(0, count as i32 - 1) as usize;
+        if let Some(rows) = rows {
+            let step = delta.signum();
+            while !rows[next].enabled {
+                let n = next as i32 + step;
+                if n < 0 || n >= count as i32 {
+                    return;
+                }
+                next = n as usize;
+            }
+        }
+        *focus = next;
+        if !modal {
+            let visible = if matches!(m.screen, Screen::Album | Screen::Artist) {
+                3
+            } else {
+                5
+            };
+            if next < m.navigation.scroll {
+                m.navigation.scroll = next;
+            } else if next >= m.navigation.scroll + visible {
+                m.navigation.scroll = next + 1 - visible;
+            }
         }
     }
 
     fn select_row(&mut self, m: &mut AppModel, tracks: &[Track], key: &str) -> Effect {
+        if let Some(index) = key
+            .strip_prefix("jump_to:")
+            .and_then(|s| s.parse::<usize>().ok())
+        {
+            Self::back(m);
+            m.navigation.focus = index;
+            m.navigation.scroll = index.saturating_sub(2);
+            return Effect::None;
+        }
+        if key == "wifi_disconnect" {
+            return Effect::WifiDisconnect;
+        }
+        if key == "stop_playback" {
+            return Effect::StopPlayback;
+        }
+        if key == "codec_sbc" {
+            return Effect::SetCodecPreference(reborn_core::CodecPreference::Sbc);
+        }
+        if key == "codec_auto" {
+            return Effect::SetCodecPreference(reborn_core::CodecPreference::Auto);
+        }
+        if key == "back" {
+            Self::back(m);
+            return Effect::None;
+        }
+        if key == "quick_settings" {
+            Self::go(m, Screen::QuickSettings, "");
+            return Effect::None;
+        }
+        if let Some(page) = key
+            .strip_prefix("page:")
+            .or_else(|| key.strip_prefix("value:").map(|_| key))
+        {
+            Self::go(m, Screen::Platform, page);
+            return Effect::None;
+        }
+        if let Some(name) = key
+            .strip_prefix("task:")
+            .or_else(|| key.strip_prefix("confirm:"))
+        {
+            use reborn_core::PlatformTask::*;
+            let task = match name {
+                "health" => Health,
+                "update_check" => UpdateCheck,
+                "update_stage" => UpdateStage,
+                "update_apply" => UpdateApply,
+                "update_cancel" => UpdateCancel,
+                "update_rollback" => UpdateRollback,
+                "export" => Export,
+                "storage_benchmark" => StorageBenchmark,
+                "library_benchmark" => LibraryBenchmark,
+                "network" => NetworkCheck,
+                _ => Refresh,
+            };
+            if key.starts_with("confirm:") {
+                m.navigation.modal = Some(Modal::Confirm(ConfirmAction::Platform(task)));
+                m.navigation.modal_focus = 0;
+                return Effect::None;
+            }
+            return Effect::Platform(task);
+        }
         match m.screen {
             Screen::Home => match key {
                 "music" => Self::go(m, Screen::Music, ""),
@@ -795,8 +1084,17 @@ impl Ui {
             },
             Screen::Artists => Self::go(m, Screen::Artist, key),
             Screen::Albums => Self::go(m, Screen::Album, key),
-            Screen::Folders => Self::go(m, Screen::Tracks, key),
+            Screen::Folders => {
+                if key.starts_with("track:") {
+                    return self.play_track(m, tracks, key);
+                }
+                Self::go(m, Screen::Folders, key)
+            }
             Screen::Artist | Screen::Album | Screen::Tracks => {
+                if key == "artist_albums" {
+                    Self::go(m, Screen::Albums, m.navigation.filter.clone());
+                    return Effect::None;
+                }
                 if key.starts_with("track:") {
                     return self.play_track(m, tracks, key);
                 }
@@ -828,20 +1126,38 @@ impl Ui {
                     .strip_prefix("queue:")
                     .and_then(|value| value.parse::<usize>().ok())
                 {
-                    if m.queue.get(index).is_some() {
+                    let index = m
+                        .queue_entry_ids
+                        .iter()
+                        .position(|id| id.0 == index as u64)
+                        .or_else(|| m.queue_entry_ids.is_empty().then_some(index));
+                    if let Some(index) = index.filter(|i| *i < m.queue.len()) {
                         Self::go(m, Screen::NowPlaying, "");
                         return Effect::PlayQueue(index);
                     }
                 }
             }
-            Screen::Connectivity => match key {
+            Screen::Connectivity | Screen::QuickSettings => match key {
                 "bluetooth" => Self::go(m, Screen::Bluetooth, ""),
                 "wifi" => Self::go(m, Screen::Wifi, ""),
+                "settings" => Self::go(m, Screen::Settings, ""),
+                "display" => Self::go(m, Screen::SettingsDisplay, ""),
+                "output" => Self::go(m, Screen::SettingsAudio, ""),
                 _ => {}
             },
-            Screen::Bluetooth | Screen::SettingsBluetooth => return self.bluetooth_action(key),
+            Screen::Bluetooth | Screen::SettingsBluetooth => {
+                if key.starts_with("bt_device:") {
+                    m.navigation.context_target = Some(m.navigation.focus);
+                    m.navigation.context_key = Some(key.into());
+                    m.navigation.modal = Some(Modal::ContextMenu);
+                    m.navigation.modal_focus = 0;
+                    return Effect::None;
+                }
+                return self.bluetooth_action(key);
+            }
             Screen::Wifi | Screen::SettingsWifi => return self.wifi_action(key),
             Screen::Settings => match key {
+                "connectivity" => Self::go(m, Screen::Connectivity, ""),
                 "audio" => Self::go(m, Screen::SettingsAudio, ""),
                 "playback" => Self::go(m, Screen::SettingsPlayback, ""),
                 "library" => Self::go(m, Screen::SettingsLibrary, ""),
@@ -860,7 +1176,7 @@ impl Ui {
                     if let Some(path) = self
                         .bluetooth_devices
                         .iter()
-                        .find(|item| item.label.contains("connected"))
+                        .find(|item| item.secondary == "Connected")
                         .map(|item| item.key.clone())
                     {
                         return Effect::BluetoothDevice {
@@ -902,20 +1218,10 @@ impl Ui {
                 _ => {}
             },
             Screen::SettingsLibrary => match key {
-                "internal" => self.flash("Internal storage · library source"),
-                "sd" => self.flash(
-                    if m.sources.iter().any(|source| {
-                        matches!(source.kind, MediaSource::SdCard(_)) && source.online
-                    }) {
-                        "SD card available"
-                    } else {
-                        "Insert an SD card to use it"
-                    },
-                ),
+                "internal" | "sd" => Self::go(m, Screen::Platform, "storage"),
                 "scan_library" => return Effect::ScanLibrary,
                 "rebuild_library" => {
-                    m.navigation.modal = Some(Modal::Confirm(ConfirmAction::RebuildLibrary));
-                    m.navigation.modal_focus = 0;
+                    Self::go(m, Screen::Platform, "reset_library");
                 }
                 _ => {}
             },
@@ -956,12 +1262,22 @@ impl Ui {
                 }
             }
             Screen::NowPlaying => match key {
+                "now_options" => {
+                    m.navigation.context_target = Some(0);
+                    m.navigation.modal = Some(Modal::ContextMenu);
+                    m.navigation.modal_focus = 0;
+                }
+                "queue" => Self::go(m, Screen::Queue, ""),
                 "previous" => return Effect::PreviousTrack,
                 "toggle" => return Effect::TogglePlayback,
                 "next" => return Effect::NextTrack,
                 _ => {}
             },
-            Screen::TextEntry | Screen::Pairing => {}
+            Screen::TextEntry
+            | Screen::Pairing
+            | Screen::Platform
+            | Screen::TrackInfo
+            | Screen::LibraryIndex => {}
         }
         Effect::None
     }
@@ -1047,7 +1363,7 @@ impl Ui {
                     .bluetooth_devices
                     .iter()
                     .find(|item| item.key == path)
-                    .is_some_and(|item| item.label.contains("connected"));
+                    .is_some_and(|item| item.secondary == "Connected");
                 Effect::BluetoothDevice {
                     path,
                     operation: if connected { "disconnect" } else { "connect" }.into(),
@@ -1067,6 +1383,16 @@ impl Ui {
                 .map(Effect::WifiSaved)
                 .unwrap_or(Effect::None),
             _ => {
+                if self
+                    .networks
+                    .iter()
+                    .any(|n| n.key == key && n.secondary.contains("Open"))
+                {
+                    return Effect::WifiConnect {
+                        ssid: key.into(),
+                        password: String::new(),
+                    };
+                }
                 self.ssid = key.into();
                 self.password.clear();
                 self.letter = 0;
@@ -1078,7 +1404,7 @@ impl Ui {
 
     fn modal_action(&mut self, m: &mut AppModel, tracks: &[Track]) -> Effect {
         let rows = self.modal_rows(m, tracks);
-        let Some(row) = rows.get(m.navigation.modal_focus) else {
+        let Some(row) = rows.get(m.navigation.modal_focus).filter(|r| r.enabled) else {
             return Effect::None;
         };
         match m.navigation.modal.clone() {
@@ -1102,35 +1428,38 @@ impl Ui {
                 if row.key == "cancel" {
                     m.navigation.modal = None;
                     m.navigation.context_target = None;
+                    m.navigation.context_key = None;
                     return Effect::None;
                 }
                 let effect = match confirm {
                     ConfirmAction::ForgetBluetooth => m
                         .navigation
-                        .context_target
-                        .and_then(|target| target.checked_sub(3))
-                        .and_then(|index| self.bluetooth_devices.get(index))
-                        .map(|device| Effect::BluetoothDevice {
-                            path: device.key.clone(),
+                        .context_key
+                        .as_deref()
+                        .and_then(|s| s.strip_prefix("bt_device:"))
+                        .filter(|path| self.bluetooth_devices.iter().any(|d| d.key == *path))
+                        .map(|path| Effect::BluetoothDevice {
+                            path: path.into(),
                             operation: "forget".into(),
                         })
                         .unwrap_or(Effect::None),
                     ConfirmAction::ForgetWifi => m
                         .navigation
-                        .context_target
-                        .and_then(|target| target.checked_sub(2))
-                        .and_then(|index| self.saved_networks.get(index))
-                        .and_then(|network| network.key.strip_prefix("saved:"))
-                        .and_then(|id| id.parse().ok())
+                        .context_key
+                        .as_deref()
+                        .and_then(|s| s.strip_prefix("saved:"))
+                        .and_then(|s| s.parse().ok())
                         .map(Effect::WifiForget)
                         .unwrap_or(Effect::None),
                     ConfirmAction::ClearQueue => Effect::ClearQueue,
                     ConfirmAction::RebuildLibrary => Effect::RebuildLibrary,
                     ConfirmAction::PowerOff => Effect::PowerOff,
                     ConfirmAction::Reboot => Effect::Reboot,
+                    ConfirmAction::Platform(task) => Effect::Platform(task),
                 };
                 m.navigation.modal = None;
                 m.navigation.context_target = None;
+                m.navigation.context_key = None;
                 effect
             }
             Some(Modal::ContextMenu) => {
@@ -1138,11 +1467,21 @@ impl Ui {
                     m.navigation.modal = None;
                     return Effect::None;
                 };
-                let source_key = self
-                    .rows(m, tracks)
-                    .get(target)
-                    .map(|item| item.key.clone())
+                let source_key = m
+                    .navigation
+                    .context_key
+                    .clone()
+                    .or_else(|| self.row_at(m, tracks, target).map(|r| r.key))
                     .unwrap_or_default();
+                let queue_target = source_key
+                    .strip_prefix("queue:")
+                    .and_then(|s| s.parse::<u64>().ok())
+                    .and_then(|id| {
+                        m.queue_entry_ids
+                            .iter()
+                            .position(|entry| entry.0 == id)
+                            .or_else(|| m.queue_entry_ids.is_empty().then_some(target))
+                    });
                 let track_index = if m.screen == Screen::NowPlaying {
                     m.current()
                         .and_then(|current| tracks.iter().position(|track| track.id == current.id))
@@ -1164,7 +1503,74 @@ impl Ui {
                 }
                 m.navigation.modal = None;
                 m.navigation.context_target = None;
+                m.navigation.context_key = None;
                 match menu_key.as_str() {
+                    "letter_index" => {
+                        let mut catalog = self.catalog.borrow_mut();
+                        catalog.ensure(m, tracks);
+                        let mut letters = std::collections::BTreeMap::new();
+                        for (i, row) in catalog.rows.iter().enumerate() {
+                            let label = match row {
+                                catalog::Row::Track(index) => {
+                                    let t = &tracks[*index];
+                                    if t.title.is_empty() {
+                                        &t.filename
+                                    } else {
+                                        &t.title
+                                    }
+                                }
+                                catalog::Row::Item(item) => &item.label,
+                            };
+                            let letter = label
+                                .chars()
+                                .next()
+                                .filter(char::is_ascii_alphabetic)
+                                .map(|c| c.to_ascii_uppercase())
+                                .unwrap_or('#');
+                            letters.entry(letter).or_insert(i);
+                        }
+                        self.letter_index = letters
+                            .into_iter()
+                            .map(|(letter, index)| {
+                                Item::new(letter.to_string(), format!("jump_to:{index}"))
+                                    .with_secondary("Jump to the first matching item")
+                            })
+                            .collect();
+                        drop(catalog);
+                        Self::go(m, Screen::LibraryIndex, "");
+                        Effect::None
+                    }
+                    "bt_connect" | "bt_output" => source_key
+                        .strip_prefix("bt_device:")
+                        .and_then(|path| self.bluetooth_devices.iter().find(|d| d.key == path))
+                        .map(|device| Effect::BluetoothDevice {
+                            path: device.key.clone(),
+                            operation: if menu_key == "bt_output" {
+                                "output"
+                            } else if device.secondary == "Connected" {
+                                "disconnect"
+                            } else if device.secondary == "Paired" {
+                                "connect"
+                            } else {
+                                "pair"
+                            }
+                            .into(),
+                        })
+                        .unwrap_or(Effect::None),
+                    "bt_info" => {
+                        Self::go(m, Screen::Platform, "bluetooth");
+                        Effect::None
+                    }
+                    "wifi_info" => {
+                        Self::go(m, Screen::Platform, "network");
+                        Effect::None
+                    }
+                    "wifi_connect" => source_key
+                        .strip_prefix("saved:")
+                        .and_then(|s| s.parse().ok())
+                        .map(Effect::WifiSaved)
+                        .unwrap_or(Effect::None),
+                    "wifi_disconnect" => Effect::WifiDisconnect,
                     "play" => track_index.map(Effect::Play).unwrap_or(Effect::None),
                     "play_next" => track_index.map(Effect::PlayNext).unwrap_or(Effect::None),
                     "add_queue" => track_index.map(Effect::AddToQueue).unwrap_or(Effect::None),
@@ -1201,21 +1607,27 @@ impl Ui {
                         Effect::None
                     }
                     "track_info" => {
-                        self.flash(
-                            track_index
-                                .and_then(|i| tracks.get(i))
-                                .map(track_info)
-                                .unwrap_or_else(|| "Track information unavailable".into()),
+                        Self::go(
+                            m,
+                            Screen::TrackInfo,
+                            track_index.map(|i| i.to_string()).unwrap_or_default(),
                         );
                         Effect::None
                     }
-                    "queue_remove" => Effect::QueueRemove(target),
+                    "audio_info" => {
+                        Self::go(m, Screen::Platform, "audio");
+                        Effect::None
+                    }
+                    "queue_play" => queue_target.map(Effect::PlayQueue).unwrap_or(Effect::None),
+                    "queue_remove" => queue_target
+                        .map(Effect::QueueRemove)
+                        .unwrap_or(Effect::None),
                     "queue_up" => Effect::QueueMove {
-                        index: target,
+                        index: queue_target.unwrap_or(usize::MAX),
                         delta: -1,
                     },
                     "queue_down" => Effect::QueueMove {
-                        index: target,
+                        index: queue_target.unwrap_or(usize::MAX),
                         delta: 1,
                     },
                     "clear_queue" => {
@@ -1232,25 +1644,25 @@ impl Ui {
     }
 
     fn entry(&mut self, action: Action) -> Effect {
+        let count = LETTERS.len() + 3;
         match action {
-            Action::NavigateUp => self.letter = (self.letter + LETTERS.len() - 1) % LETTERS.len(),
-            Action::NavigateDown => self.letter = (self.letter + 1) % LETTERS.len(),
-            Action::WheelClockwise(steps) => {
-                self.letter = (self.letter + usize::from(steps)) % LETTERS.len()
+            Action::WheelClockwise(n) => self.letter = (self.letter + usize::from(n)) % count,
+            Action::WheelCounterClockwise(n) => {
+                self.letter = (self.letter + count - usize::from(n) % count) % count
             }
-            Action::WheelCounterClockwise(steps) => {
-                self.letter = (self.letter + LETTERS.len() - usize::from(steps) % LETTERS.len())
-                    % LETTERS.len()
-            }
-            Action::Select => {
+            Action::NavigateUp => self.letter = (self.letter + count - 1) % count,
+            Action::NavigateDown => self.letter = (self.letter + 1) % count,
+            Action::Select if self.letter < LETTERS.len() => {
                 if self.password.len() < 63 {
                     self.password.push(LETTERS[self.letter] as char);
                 }
             }
-            Action::NavigateLeft | Action::PreviousTrack => {
+            Action::Select if self.letter == LETTERS.len() => {
                 self.password.pop();
             }
-            Action::ContextMenu => {
+            Action::ContextMenu | Action::Select
+                if action == Action::ContextMenu || self.letter == LETTERS.len() + 1 =>
+            {
                 if self.password.len() >= 8 {
                     self.text_entry = false;
                     return Effect::WifiConnect {
@@ -1258,8 +1670,9 @@ impl Ui {
                         password: std::mem::take(&mut self.password),
                     };
                 }
+                self.flash("Use at least 8 characters for a secured network");
             }
-            Action::Back | Action::Home => {
+            Action::Back | Action::Home | Action::Select => {
                 self.password.clear();
                 self.text_entry = false;
             }
@@ -1289,19 +1702,14 @@ impl Ui {
     }
 }
 
-pub fn font_atlas() -> Vec<u8> {
+pub fn font_atlas() -> &'static [u8] {
     include_bytes!(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../../assets/fonts/reborn-ui.rgba"
     ))
-    .to_vec()
 }
-pub fn display_font_atlas() -> Vec<u8> {
-    include_bytes!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../../assets/fonts/reborn-display.rgba"
-    ))
-    .to_vec()
+pub fn display_font_atlas() -> &'static [u8] {
+    font_atlas()
 }
 pub fn icons_atlas() -> Vec<u8> {
     include_bytes!(concat!(
@@ -1319,6 +1727,9 @@ fn display_or_unknown(value: &str) -> &str {
     }
 }
 fn track_matches(track: &Track, filter: &str) -> bool {
+    if !track.online {
+        return false;
+    }
     if let Some(value) = filter.strip_prefix("artist:") {
         return track.artist == value;
     }
@@ -1332,23 +1743,12 @@ fn track_matches(track: &Track, filter: &str) -> bool {
         return track
             .path
             .parent()
-            .is_some_and(|parent| parent.to_string_lossy().starts_with(value));
+            .is_some_and(|parent| parent.starts_with(value));
     }
     true
 }
 fn album_filter(track: &Track) -> String {
     format!("album:{}\u{1f}{}", track.album_artist, track.album)
-}
-fn album_filter_label(value: &str) -> &str {
-    value.split_once('\u{1f}').map_or(value, |(_, album)| album)
-}
-fn track_info(track: &Track) -> String {
-    format!(
-        "{} · {} · {} Hz",
-        display_or_unknown(&track.codec),
-        display_or_unknown(&track.album),
-        track.sample_rate
-    )
 }
 fn replay_gain_label(mode: reborn_core::ReplayGainMode) -> &'static str {
     match mode {
@@ -1413,11 +1813,17 @@ mod tests {
         }
     }
     #[test]
-    fn wheel_on_now_playing_changes_volume_only() {
+    fn wheel_on_now_playing_moves_focus_and_dedicated_volume_is_global() {
         let mut ui = Ui::default();
         let mut app = model(Screen::NowPlaying);
+        app.queue = vec![preview_track()];
         assert_eq!(
             ui.action(&mut app, &[], Action::WheelClockwise(1)),
+            Effect::None
+        );
+        assert_eq!(app.navigation.focus, 1);
+        assert_eq!(
+            ui.action(&mut app, &[], Action::VolumeUp),
             Effect::AdjustVolume(2)
         );
         assert_eq!(app.playback, reborn_core::PlaybackState::Stopped);
@@ -1465,7 +1871,7 @@ mod tests {
         let ui = Ui::default();
         let app = model(Screen::SettingsAudio);
         let labels = ui.rows(&app, &[]);
-        assert!(labels.iter().any(|row| row.label == "Equalizer"));
+        assert!(!labels.iter().any(|row| row.label == "Equalizer"));
         assert!(labels.iter().any(|row| row.label == "Audio Info"));
         assert!(!labels.iter().any(|row| row.label.contains("/ Tone")));
     }
@@ -1481,6 +1887,7 @@ mod tests {
     fn context_menu_is_explicit_and_focusable() {
         let track = Track {
             title: "Example".into(),
+            online: true,
             ..Default::default()
         };
         let mut ui = Ui::default();
@@ -1518,8 +1925,8 @@ mod tests {
         };
         let tracks = vec![other, first, selected];
         let cases = [
-            (Screen::Album, "album:Echoes", 5),
-            (Screen::Artist, "artist:Northark", 2),
+            (Screen::Album, "album:Echoes", 2),
+            (Screen::Artist, "artist:Northark", 3),
             (Screen::Tracks, "folder:/data/music/selected", 1),
         ];
 
@@ -1587,22 +1994,25 @@ mod tests {
             let mut ui = Ui::default();
             let mut app = model(Screen::Album);
             app.navigation.filter = "album:Echoes".into();
-            app.navigation.focus = row;
-
+            ui.action(&mut app, &tracks, Action::ContextMenu);
+            app.navigation.modal_focus = row;
             assert_eq!(ui.action(&mut app, &tracks, Action::Select), expected);
         }
     }
     #[test]
     fn destructive_actions_default_to_cancel() {
         let mut ui = Ui::default();
-        let mut app = model(Screen::SettingsLibrary);
-        app.navigation.focus = 3;
+        let mut app = model(Screen::Home);
+        ui.action(&mut app, &[], Action::PowerMenu);
+        assert_eq!(app.navigation.modal_focus, 2);
+        ui.action(&mut app, &[], Action::WheelCounterClockwise(2));
         ui.action(&mut app, &[], Action::Select);
         assert_eq!(
             app.navigation.modal,
-            Some(Modal::Confirm(ConfirmAction::RebuildLibrary))
+            Some(Modal::Confirm(ConfirmAction::PowerOff))
         );
         assert_eq!(app.navigation.modal_focus, 0);
+        assert_eq!(ui.action(&mut app, &[], Action::Select), Effect::None);
     }
     #[test]
     fn large_filtered_pages_keep_catalog_identity_and_visible_focus() {
@@ -1676,14 +2086,17 @@ mod tests {
         let draw = ui.draw(&AppModel::default(), &[], "ok", false, PowerView::default());
         let glyphs = draw
             .iter()
-            .filter_map(|q| q.glyph.map(char::from))
+            .filter_map(|q| q.glyph.and_then(|g| char::from_u32(g as u32)))
             .collect::<String>();
         assert!(!glyphs.contains("secretpass"));
     }
     #[test]
     fn font_and_icon_assets_have_fixed_dimensions() {
-        assert_eq!(font_atlas().len(), 256 * 128 * 4);
-        assert_eq!(display_font_atlas().len(), 256 * 128 * 4);
+        assert_eq!(font_atlas().len(), 1024 * 1024 * 4);
+        assert_eq!(display_font_atlas().len(), 1024 * 1024 * 4);
         assert_eq!(icons_atlas().len(), 192 * 160 * 4);
     }
 }
+
+#[cfg(test)]
+mod tests_v1;

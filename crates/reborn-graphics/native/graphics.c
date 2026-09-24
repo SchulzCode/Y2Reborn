@@ -106,7 +106,7 @@ typedef struct {
   EGLDisplay display;
   EGLSurface window;
   EGLContext context;
-  GLuint program, vbo, white, font, display_font, icons, art;
+  GLuint program, vbo, white, font, display_font, icons, art, collection_art;
   struct flip flip;
   char info[1024];
 } RbGraphics;
@@ -129,14 +129,15 @@ void rb_graphics_close(RbGraphics *g) {
       glDeleteBuffers(1, &g->vbo);
     if (g->font)
       glDeleteTextures(1, &g->font);
-    if (g->display_font)
-      glDeleteTextures(1, &g->display_font);
+    /* display uses the same licensed sans atlas */
     if (g->icons)
       glDeleteTextures(1, &g->icons);
     if (g->white)
       glDeleteTextures(1, &g->white);
     if (g->art)
       glDeleteTextures(1, &g->art);
+    if (g->collection_art)
+      glDeleteTextures(1, &g->collection_art);
   }
   if (g->current)
     gbm_surface_release_buffer(g->surface, g->current);
@@ -358,9 +359,14 @@ int rb_graphics_open(RbGraphics **out, const uint8_t *ui_font,
   glViewport(0, 0, g->width, g->height);
   uint8_t white[] = {255, 255, 255, 255};
   g->white = texture(1, 1, white);
-  g->font = texture(256, 128, ui_font);
-  g->display_font = texture(256, 128, display_font);
+  g->font = texture(1024, 1024, ui_font);
+  (void)display_font;
+  g->display_font = g->font;
   g->icons = texture(192, 160, icons);
+  g->collection_art = texture(1, 1, white);
+  glBindTexture(GL_TEXTURE_2D, g->collection_art);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
   g->art = texture(1, 1, white);
   /* Album art is also used as a full-screen backdrop by the product UI.
    * Linear filtering keeps that treatment photographic instead of blocky;
@@ -399,7 +405,7 @@ void rb_graphics_quad(RbGraphics *g, float x, float y, float w, float h,
                       uint32_t color, int glyph, int icon, int display_font,
                       int art) {
   glBindTexture(GL_TEXTURE_2D,
-                art ? g->art
+                art == 2 ? g->collection_art : art ? g->art
                     : icon >= 0 ? g->icons
                     : glyph >= 0 ? display_font ? g->display_font : g->font
                                  : g->white);
@@ -410,8 +416,8 @@ void rb_graphics_quad(RbGraphics *g, float x, float y, float w, float h,
     glUniform4f(glGetUniformLocation(g->program, "texbox"), (icon % 6) / 6.f,
                 (icon / 6) / 5.f, 1 / 6.f, 1 / 5.f);
   else if (glyph >= 0 && !art)
-    glUniform4f(glGetUniformLocation(g->program, "texbox"), (glyph % 16) / 16.f,
-                (glyph / 16) / 8.f, 1 / 16.f, 1 / 8.f);
+    glUniform4f(glGetUniformLocation(g->program, "texbox"), (glyph % 32) / 32.f,
+                (glyph / 32) / 32.f, 1 / 32.f, 1 / 32.f);
   else
     glUniform4f(glGetUniformLocation(g->program, "texbox"), 0, 0, 1, 1);
   glUniform4f(glGetUniformLocation(g->program, "tint"),
@@ -419,8 +425,8 @@ void rb_graphics_quad(RbGraphics *g, float x, float y, float w, float h,
               ((color >> 8) & 255) / 255.f, (color & 255) / 255.f);
   glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 }
-int rb_graphics_art(RbGraphics *g, const uint8_t *p) {
-  glBindTexture(GL_TEXTURE_2D, g->art);
+int rb_graphics_art(RbGraphics *g, const uint8_t *p, int collection) {
+  glBindTexture(GL_TEXTURE_2D, collection ? g->collection_art : g->art);
   glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 160, 160, 0, GL_RGBA,
                GL_UNSIGNED_BYTE, p);
   return glGetError() == GL_NO_ERROR ? 0 : -EIO;
