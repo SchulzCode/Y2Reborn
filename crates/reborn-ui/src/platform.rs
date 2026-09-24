@@ -54,6 +54,28 @@ fn kib(v: &Value) -> String {
 fn entries(v: &Value) -> impl Iterator<Item = &Value> {
     v.as_array().into_iter().flatten()
 }
+fn capability_label(key: &str) -> String {
+    match key {
+        "telemetry" => "Platform Observations",
+        "health" => "Platform Health",
+        "storage" => "Storage",
+        "wifi" => "Wi-Fi",
+        "bluetooth" => "Bluetooth",
+        "usb_device" => "USB Device / PC Transfer",
+        "usb_host" => "USB Host",
+        "audio" => "Wired Audio",
+        "power_observation" => "Power Observations",
+        "low_battery_shutdown" => "Low-Battery Shutdown",
+        "deep_suspend" => "Deep Suspend",
+        "cpuidle" => "CPU Idle",
+        "system_watchdog" => "System Watchdog",
+        "ota" => "Signed Root Update",
+        "automatic_bootimg_update" => "Automatic Boot Image Update",
+        "shutdown" => "Shutdown / Restart",
+        _ => return key.replace('_', " "),
+    }
+    .into()
+}
 pub fn enabled(m: &AppModel, key: &str) -> bool {
     m.platform.capabilities["capabilities"][key]["enabled"] == true
 }
@@ -153,7 +175,7 @@ pub fn rows(m: &AppModel, id: &str) -> Vec<Item> {
                     } else {
                         "Qualification pending"
                     };
-                    r.push(fact(key, format!("Implemented: {}. Enabled: {}. Physically qualified: {}. Gate: {}. Reason: {}",value(&c["implemented"]),value(&c["enabled"]),value(&c["qualified"]),value(&c["gate"]),value(&c["reason"]))).with_secondary(format!("{state} · {qualification}")));
+                    r.push(fact(&capability_label(key), format!("Implemented: {}. Enabled: {}. Physically qualified: {}. Gate: {}. Reason: {}",value(&c["implemented"]),value(&c["enabled"]),value(&c["qualified"]),value(&c["gate"]),value(&c["reason"]))).with_secondary(format!("{state} · {qualification}")));
                 }
             }
             for (name, key) in [
