@@ -153,7 +153,7 @@ pub fn rows(m: &AppModel, id: &str) -> Vec<Item> {
                     } else {
                         "Qualification pending"
                     };
-                    r.push(fact(key, format!("{state} · {qualification}")));
+                    r.push(fact(key, format!("Implemented: {}. Enabled: {}. Physically qualified: {}. Gate: {}. Reason: {}",value(&c["implemented"]),value(&c["enabled"]),value(&c["qualified"]),value(&c["gate"]),value(&c["reason"]))).with_secondary(format!("{state} · {qualification}")));
                 }
             }
             for (name, key) in [
@@ -183,6 +183,14 @@ pub fn rows(m: &AppModel, id: &str) -> Vec<Item> {
                     ));
                 }
             }
+            r.push(field(
+                "CPU idle states",
+                &p.capabilities["capabilities"]["cpuidle"]["states"],
+            ));
+            r.push(field(
+                "Wired enabled formats",
+                &p.capabilities["capabilities"]["audio"]["enabled_formats"],
+            ));
             r.push(field(
                 "Wired enabled rates",
                 &p.capabilities["capabilities"]["audio"]["enabled_rates_hz"],
@@ -444,6 +452,31 @@ pub fn rows(m: &AppModel, id: &str) -> Vec<Item> {
                 "Reconnect state",
                 &s["bluetooth"]["reconnect"]["state"],
             ));
+            if entries(&bt["pcms"]).next().is_none() {
+                for label in [
+                    "Active codec",
+                    "PCM format",
+                    "PCM rate (Hz)",
+                    "PCM channels",
+                ] {
+                    r.push(fact(label, "Unavailable · no observed playback transport"));
+                }
+            }
+            let first = [
+                "Device",
+                "Active codec",
+                "PCM format",
+                "PCM rate (Hz)",
+                "PCM channels",
+                "Preference",
+                "Codec Preference",
+            ];
+            r.sort_by_key(|row| {
+                first
+                    .iter()
+                    .position(|label| *label == row.label)
+                    .unwrap_or(first.len())
+            });
             r
         }
         "codec" => {

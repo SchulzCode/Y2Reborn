@@ -579,7 +579,9 @@ impl Ui {
         rows[1].enabled = self.wifi.available && self.wifi.powered && !self.wifi.scan.active();
         rows.extend(self.saved_networks.iter().cloned());
         rows.extend(self.networks.iter().cloned());
-        rows.push(Item::new("Disconnect", "wifi_disconnect"));
+        let mut disconnect = Item::new("Disconnect", "wifi_disconnect");
+        disconnect.enabled = self.wifi.available && self.wifi.powered;
+        rows.push(disconnect);
         rows.push(Item::new("Network Details", "page:network"));
         if let Some(error) = &self.wifi.error {
             rows.push(
@@ -697,7 +699,7 @@ impl Ui {
                 {
                     let connected = device.secondary == "Connected";
                     let paired = device.secondary == "Paired" || connected;
-                    vec![
+                    let mut rows = vec![
                         Item::new(
                             if connected {
                                 "Disconnect"
@@ -711,7 +713,9 @@ impl Ui {
                         Item::new("Use for Audio", "bt_output"),
                         Item::new("Forget Device", "bt_forget"),
                         Item::new("Codec & Audio Details", "bt_info"),
-                    ]
+                    ];
+                    rows[1].enabled = connected;
+                    rows
                 } else {
                     vec![]
                 }
@@ -1019,13 +1023,37 @@ impl Ui {
     }
 
     fn select_row(&mut self, m: &mut AppModel, tracks: &[Track], key: &str) -> Effect {
-        if let Some(index) = key
-            .strip_prefix("jump_to:")
-            .and_then(|s| s.parse::<usize>().ok())
-        {
+        if let Some(letter) = key.strip_prefix("jump_to:").and_then(|s| s.chars().next()) {
             Self::back(m);
-            m.navigation.focus = index;
-            m.navigation.scroll = index.saturating_sub(2);
+            let mut catalog = self.catalog.borrow_mut();
+            catalog.ensure(m, tracks);
+            let target = catalog.rows.iter().position(|row| {
+                let label = match row {
+                    catalog::Row::Track(i) => {
+                        let t = &tracks[*i];
+                        if t.title.is_empty() {
+                            &t.filename
+                        } else {
+                            &t.title
+                        }
+                    }
+                    catalog::Row::Item(i) => &i.label,
+                };
+                label
+                    .chars()
+                    .next()
+                    .filter(char::is_ascii_alphabetic)
+                    .map(|c| c.to_ascii_uppercase())
+                    .unwrap_or('#')
+                    == letter
+            });
+            drop(catalog);
+            if let Some(index) = target {
+                m.navigation.focus = index;
+                m.navigation.scroll = index.saturating_sub(2);
+            } else {
+                self.flash("This section is no longer in the library");
+            }
             return Effect::None;
         }
         if key == "wifi_disconnect" {
@@ -1546,8 +1574,8 @@ impl Ui {
                         }
                         self.letter_index = letters
                             .into_iter()
-                            .map(|(letter, index)| {
-                                Item::new(letter.to_string(), format!("jump_to:{index}"))
+                            .map(|(letter, _index)| {
+                                Item::new(letter.to_string(), format!("jump_to:{letter}"))
                                     .with_secondary("Jump to the first matching item")
                             })
                             .collect();

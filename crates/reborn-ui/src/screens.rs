@@ -200,7 +200,11 @@ fn list(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], has_art: bool, 
                     t.album.as_str(),
                     format!(
                         "{} · {} tracks",
-                        crate::display_or_unknown(&t.album_artist),
+                        crate::display_or_unknown(if t.album_artist.is_empty() {
+                            &t.artist
+                        } else {
+                            &t.album_artist
+                        }),
                         count.saturating_sub(1)
                     ),
                 )

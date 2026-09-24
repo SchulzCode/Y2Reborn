@@ -52,8 +52,9 @@ impl Catalog {
                 }
                 for ((album, artist), t) in albums {
                     self.push(
-                        Item::new(display_or_unknown(album), album_filter(t))
-                            .with_secondary(display_or_unknown(artist)),
+                        Item::new(display_or_unknown(album), album_filter(t)).with_secondary(
+                            display_or_unknown(if artist.is_empty() { &t.artist } else { artist }),
+                        ),
                     );
                 }
             }
