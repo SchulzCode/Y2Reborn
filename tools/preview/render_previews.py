@@ -25,7 +25,7 @@ def draw_quad(canvas: Image.Image, quad: dict, ui_font: Image.Image, display_fon
     x, y = int(round(quad["x"])), int(round(quad["y"]))
     w, h = max(1, int(round(quad["w"]))), max(1, int(round(quad["h"])))
     tint = rgba(quad["color"])
-    if quad.get("artwork"):
+    if quad.get("artwork") or quad.get("collection_artwork"):
         layer = artwork.resize((w, h), Image.Resampling.BILINEAR).convert("RGBA")
         layer.putalpha(ImageChops.multiply(layer.getchannel("A"), Image.new("L", (w, h), tint[3])))
     elif quad.get("icon") is not None:
@@ -37,7 +37,7 @@ def draw_quad(canvas: Image.Image, quad: dict, ui_font: Image.Image, display_fon
         layer.putalpha(ImageChops.multiply(mask, Image.new("L", (w, h), tint[3])))
     elif quad.get("glyph") is not None:
         index = int(quad["glyph"])
-        source = (display_font if quad.get("display_font") else ui_font).crop(((index % 16) * 16, (index // 16) * 16, (index % 16 + 1) * 16, (index // 16 + 1) * 16))
+        source = (display_font if quad.get("display_font") else ui_font).crop(((index % 32) * 32, (index // 32) * 32, (index % 32 + 1) * 32, (index // 32 + 1) * 32))
         layer = source.resize((w, h), Image.Resampling.BILINEAR).convert("RGBA")
         mask = layer.getchannel("A")
         layer = Image.new("RGBA", (w, h), tint)
@@ -51,13 +51,13 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("preview_dir", type=Path)
     parser.add_argument("--output", type=Path, default=None)
-    parser.add_argument("--artwork", type=Path, default=Path("Reborn_Y2_UI_Implementation_Pack/artwork_samples/northark_a_brighter_silence_sample.png"))
+    parser.add_argument("--artwork", type=Path, default=Path("docs/ui/fixtures/album-art.png"))
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[2]
     output = args.output or args.preview_dir / "png"
     output.mkdir(parents=True, exist_ok=True)
-    ui_font = texture(root / "assets/fonts/reborn-ui.rgba", 256, 128)
-    display_font = texture(root / "assets/fonts/reborn-display.rgba", 256, 128)
+    ui_font = texture(root / "assets/fonts/reborn-ui.rgba", 1024, 1024)
+    display_font = ui_font
     icons = texture(root / "assets/icons/reborn-icons.rgba", 192, 160)
     artwork = Image.open(root / args.artwork).convert("RGBA")
     for spec in sorted(args.preview_dir.glob("*.json")):
@@ -68,7 +68,16 @@ def main() -> int:
         for quad in document["quads"]:
             draw_quad(canvas, quad, ui_font, display_font, icons, artwork)
         canvas.convert("RGB").save(output / f"{spec.stem}.png")
-    print(f"wrote preview PNGs to {output}")
+    # Contact sheet keeps each source screen at its native dimensions.
+    images = sorted(p for p in output.glob("*.png") if p.stem != "contact-sheet")
+    sheet = Image.new("RGB", (480 * 3, 386 * ((len(images) + 2) // 3)), (15, 18, 21))
+    labels = ImageDraw.Draw(sheet)
+    for i, path in enumerate(images):
+        x, y = i % 3 * 480, i // 3 * 386
+        labels.text((x + 16, y + 7), path.stem, fill=(242,240,235))
+        sheet.paste(Image.open(path), (x, y + 26))
+    sheet.save(output / "contact-sheet.png")
+    print(f"wrote {len(images)} 480×360 preview PNGs and contact sheet to {output}")
     return 0
 
 

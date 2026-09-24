@@ -1,0 +1,306 @@
+{
+  "schema": "org.reborn.ui-preview/v1",
+  "implementation_commit": "c47e2226ee64079351f40b5f78f51b5d9c09b999",
+  "resolution": [
+    480,
+    360
+  ],
+  "fixture_data_only": true,
+  "physical_qualification": false,
+  "renderer": "Production reborn-ui draw quads rasterized on host with the shipped glyph/icon atlases",
+  "screens": [
+    {
+      "file": "album-detail.png",
+      "sha256": "1a385abc80c9ff72c20c6f5bc5afb0bdc851274397086457056cd8c6ffe3588b"
+    },
+    {
+      "file": "albums.png",
+      "sha256": "d5e06da684621202cdd1ff43eb1807e7be9e590014a1a655b40c0281e0505c57"
+    },
+    {
+      "file": "artist.png",
+      "sha256": "c8396a59c7651edc14727187355b456df3179b568846b679d16ae72409c16641"
+    },
+    {
+      "file": "artists.png",
+      "sha256": "28b4f628651afe2939680614c29e4812cf4898d8862a5a047f78e2f0910dac62"
+    },
+    {
+      "file": "audio-error.png",
+      "sha256": "c358db648459af81f70f69636c7fbba4552166c1e8e5697f785b27233f00ca0d"
+    },
+    {
+      "file": "audio-settings.png",
+      "sha256": "51f9a1c28bf743aa0466237e561409eb07617ba0bd4734913a746a2b558caa55"
+    },
+    {
+      "file": "bluetooth-unavailable.png",
+      "sha256": "f8ba6443d0963d617231ee4259b71ca03b76ff8b29c5e41a5740c2ecfb3afeee"
+    },
+    {
+      "file": "bluetooth.png",
+      "sha256": "e1ffa30f6acb7d3c2a66a803a5e3be04a6f45cb819b0aa59e023b99aa69bb03f"
+    },
+    {
+      "file": "boot.png",
+      "sha256": "c51c9f7d2605f2c833724f906ca3959a9812715ccfd398fe18e58336097109f1"
+    },
+    {
+      "file": "clock-untrusted.png",
+      "sha256": "ba9ce18b41b4f430ad7d93c108dda3d20d1843774e5e42ce7ec697e41803228a"
+    },
+    {
+      "file": "connectivity.png",
+      "sha256": "58570dfc280bf44021ae9ad979a765599011e8216cc97325d50a30a27e5c1d83"
+    },
+    {
+      "file": "diagnostics.png",
+      "sha256": "de409f0cf715ae3b10be8cd1b6e781474dd437d9a9c53130ef27c3588fe43a52"
+    },
+    {
+      "file": "display-settings.png",
+      "sha256": "e1d839baa339a24406fe4e6f979e6f70005f2018a6eb7a72273f4cabf9608127"
+    },
+    {
+      "file": "empty-library.png",
+      "sha256": "bad07f13f6ebe32926404c01909f5277dbbd536ca69a86548f8fd5df9214b6db"
+    },
+    {
+      "file": "folders.png",
+      "sha256": "8f86847b4868904bcf5bfdee43dc0ba44bb9260738cc2bcdd381782b5cb93062"
+    },
+    {
+      "file": "home.png",
+      "sha256": "6eaf2f31d2f8c8e4867bb495f1be05f7d2367066a08fbfc1e1c40398f8f231f7"
+    },
+    {
+      "file": "letter-index.png",
+      "sha256": "debf812a13c2b62002d2c6ef701d94afdd9690d265819dbc49491f1b56bfe94f"
+    },
+    {
+      "file": "library-scan-interrupted.png",
+      "sha256": "8d7e5a50cde881b83894e931341ee711ca40ea363831ed94455b0e707f19e8aa"
+    },
+    {
+      "file": "library-settings.png",
+      "sha256": "62bb871f0736d9d965012e0a65586d38582c294a5fff26f4f451c7c3bc3cd250"
+    },
+    {
+      "file": "long-metadata.png",
+      "sha256": "7c56e063b0a6cd7da521bab44c077363147dbe209802a7e87035090d0c2e534b"
+    },
+    {
+      "file": "low-storage.png",
+      "sha256": "f195371af2bce1bc715b87268393d09fb14730be2a50ef19f6bf71caee856602"
+    },
+    {
+      "file": "missing-metadata.png",
+      "sha256": "2b3feb790b2068f3e2d3102a6bf809378ad62eb591dd3a688382fe105f5a1d7c"
+    },
+    {
+      "file": "music.png",
+      "sha256": "3b5333231106006dd05624ecfd4942cbc2d2180c4ef8810b516150ed87cce028"
+    },
+    {
+      "file": "now-playing.png",
+      "sha256": "d352c494b52d0c45224790ee58926978230b84130a5a52aca640b8ac723bca86"
+    },
+    {
+      "file": "operation-error.png",
+      "sha256": "6dde24ca2b3603f3bd84aeabf70ba6b9e6a08ac8b4e6ac9cf74ba7a3b790e709"
+    },
+    {
+      "file": "pairing.png",
+      "sha256": "f830e451a684370e8c7182ae21fd9441a572518efcabab466a363fef27a3d4a9"
+    },
+    {
+      "file": "platform-about.png",
+      "sha256": "2a7264fde085b45647463f55043ea1f96a6941bcc25d8cdfdfb34b2ced4dcca7"
+    },
+    {
+      "file": "platform-audio.png",
+      "sha256": "471ffaf514dd7ff823cbda0701a8395cb0185cc16dd8739a6f51e8342d10bdc7"
+    },
+    {
+      "file": "platform-backup.png",
+      "sha256": "cc902442b9b75556be6c4c54ddb048f0764940a3c07610cdd21765eba9725752"
+    },
+    {
+      "file": "platform-benchmarks.png",
+      "sha256": "a4dd99ad2a065ee399c4cd14f9a76d4ab5a360e659a804a30f34d8cd2f180d94"
+    },
+    {
+      "file": "platform-bluetooth.png",
+      "sha256": "6e2fdbe93dab15193e52d9c3fca90816d4409404b97d8d1dc5627b65ce5f3ea6"
+    },
+    {
+      "file": "platform-boot.png",
+      "sha256": "eb7acdbd4006fbf80021b1215560a5266510a22254cefa2366b1ac95ce15a349"
+    },
+    {
+      "file": "platform-capabilities.png",
+      "sha256": "222d626ec090e06f88abfd395f73e71136de194f0a4d55f72b60c85dc9ec0698"
+    },
+    {
+      "file": "platform-clock.png",
+      "sha256": "1aedb84bbfe5fc2f79ea49cf60fce2193f8f294a6864d28fa6a92493bb9897aa"
+    },
+    {
+      "file": "platform-codec.png",
+      "sha256": "2b3438c7a084c32b4ddcd162cd04c769039c093fb09782d8fb798d6697982dbc"
+    },
+    {
+      "file": "platform-cpu.png",
+      "sha256": "652d9d27b55ff6afbf3a3b3dfb558936344cad1e3e9d255cc577105d6053f72e"
+    },
+    {
+      "file": "platform-health.png",
+      "sha256": "c9d9d07957041ed680384b54fbaa0ea4949407792cf8e1c9e4f031e8e1243685"
+    },
+    {
+      "file": "platform-maintenance.png",
+      "sha256": "fcee7172cb07289585e3448735543910eb4ebc161d77c667946c9781aec917d4"
+    },
+    {
+      "file": "platform-network.png",
+      "sha256": "d3952158d63daee9b0fa228316e83d2bd54ce8a4c5dccebe19600701fdaeadde"
+    },
+    {
+      "file": "platform-power.png",
+      "sha256": "af4a626033c21cfa8be3c9d4f67d2e0475ada1adb3e73c3e672913f21b0e7a11"
+    },
+    {
+      "file": "platform-storage.png",
+      "sha256": "937a7327b84fa4f633ff2849868351f60d811917dd5cb495ffff46ac9b64a0e6"
+    },
+    {
+      "file": "platform-thermal.png",
+      "sha256": "ad2b5697739e484c485c855dd2d581eacd7d15cf6d08bdbd529f460dc1173517"
+    },
+    {
+      "file": "platform-update.png",
+      "sha256": "75c1eb7b209215a33030c2d2caa13596187d2e019e097134e0d2fc68369ea81e"
+    },
+    {
+      "file": "platform-update_diag.png",
+      "sha256": "72acabd57c2a9364f44788889746689e2fa69b90480f96ddf78b0ed1dbe77f27"
+    },
+    {
+      "file": "platform-usb.png",
+      "sha256": "f2fd9ed83c1aa08312f5d4c240569b28e9dac8c466825b32cf8275c9f68977cc"
+    },
+    {
+      "file": "platform-versions.png",
+      "sha256": "931fa485daee8ef99febc66f4a51359e912ee029084bdd5e9154ef5b3dedc1f8"
+    },
+    {
+      "file": "playback-settings.png",
+      "sha256": "f905c6f0bf6b00a7141ae6492b4cc3a1a2e8b39efaec0530bc16486f920129b5"
+    },
+    {
+      "file": "power-menu.png",
+      "sha256": "bfb651b9b1883730403bddfeaf0e790551c1d80c595b0abf5b605db1dd915875"
+    },
+    {
+      "file": "queue-context.png",
+      "sha256": "b8fed6b06dca2f9e5ff2e22e4d674d00be7a5442f8bdaea1d7ae0f03ebc1f100"
+    },
+    {
+      "file": "queue.png",
+      "sha256": "2e6a470a7f98e07f434a0165e53076c40ab69b95b2c9173a5e839ab3fdf719a1"
+    },
+    {
+      "file": "quick-settings.png",
+      "sha256": "bfb57274c63453b376475375efd0660fbc23969ebe5a9c3f5b5e247be8ae4998"
+    },
+    {
+      "file": "sd-mounted.png",
+      "sha256": "af1adb5ffb1e0e48d840491cb43a4ca8d4f44a1b06ca5f9157e5a4438a648046"
+    },
+    {
+      "file": "sd-removed.png",
+      "sha256": "da4f338c70731a1924dd61abdd2ba8d3342cae935d4a0379d49431f7f2bc6fe8"
+    },
+    {
+      "file": "settings.png",
+      "sha256": "0f5c597e8dfb02133ce68aba96ef9f54056478c80a45e946efd9a278b1ebb755"
+    },
+    {
+      "file": "songs.png",
+      "sha256": "521f2ec49391181e00b51dca545f06e9658039d3cf13a58d824710266fdc0485"
+    },
+    {
+      "file": "system.png",
+      "sha256": "7b417c22779f001382d28b90b7277ac08ed8abdde7f223b04a79027c53f94273"
+    },
+    {
+      "file": "track-info.png",
+      "sha256": "020c37b2479b1a525ff42bb693216d843e79ce841be0b07028650dbfaa9d7571"
+    },
+    {
+      "file": "unicode-metadata.png",
+      "sha256": "455a487a1cda49c59dc35901cd749dcf6106ceb60d49978d7fd15cab73ddf28e"
+    },
+    {
+      "file": "update-confirm.png",
+      "sha256": "e73f0d1ffb62cb56245c5f67639dada2b431ced1ada80b1f489efaffa811c5e3"
+    },
+    {
+      "file": "update-failed.png",
+      "sha256": "72f664d1d2a9040d42762fc10e62b237e52e9c103b6c91ea7d732be8d5c49abf"
+    },
+    {
+      "file": "update-installing.png",
+      "sha256": "e820c0b5b25a68732c2db8371ed54b713577fff3c86b19a02fbafbe7af8b6ca3"
+    },
+    {
+      "file": "update-unavailable.png",
+      "sha256": "b0b26e46ea18c92fa876ccaa07787c1882247abb65ad91c52b39c7e34cfbe6d1"
+    },
+    {
+      "file": "update-working.png",
+      "sha256": "aa3424952e8a84897b99d4dbb90ec3ae67a543a89831b3d3f1a8a0e2418c1624"
+    },
+    {
+      "file": "usb-disconnected.png",
+      "sha256": "b80d5f74815213ea9a410859f077240ea075e5e1e55d8549cdcf5bd0553a9768"
+    },
+    {
+      "file": "wifi-acquiring-ip.png",
+      "sha256": "5ddf35f737848ae818030e36c6bd504df4716d7df2ff33931d149c632cb4a1ae"
+    },
+    {
+      "file": "wifi-failed.png",
+      "sha256": "3e3e82957c0361b43172d01603bdda1aa0bd73cbc6f41d3c8513fe1403af7843"
+    },
+    {
+      "file": "wifi-off.png",
+      "sha256": "1a53535f377c02ae9cb52111c496f4ea712f48d7f1a8c731d799ffe8b5fdb6b0"
+    },
+    {
+      "file": "wifi-password.png",
+      "sha256": "d187b493f6b0d6ec498cdb22eeb615a9c1e6bf1c34bdbbe1b6bb08bc613ec268"
+    },
+    {
+      "file": "wifi.png",
+      "sha256": "a165d4f7bf4973c59c23a471bd390c559c48efdc0c8992069e63e7c17e98a222"
+    }
+  ],
+  "contact_sheet": {
+    "file": "contact-sheet.png",
+    "sha256": "a3b0ce047fc66b70042e99bdd6298a9e79b5a4e2e8fecf08b70324b985678feb"
+  },
+  "visual_review": {
+    "native_size_reviewed": true,
+    "passes": 3,
+    "corrected": [
+      "dialog consequences and focus visibility",
+      "long metadata and safe Unicode fallback",
+      "storage capacities and unavailable states",
+      "capability labels and explicit qualification",
+      "active Bluetooth PCM prominence",
+      "partial scan recovery and current-library letter jumps"
+    ],
+    "remaining": "Physical panel legibility, input feel and target performance require owner review."
+  }
+}
