@@ -615,6 +615,9 @@ impl Ui {
     }
 
     fn context_rows(&self, m: &AppModel, tracks: &[Track]) -> Vec<Item> {
+        if m.screen == Screen::NowPlaying && m.current().is_none() {
+            return vec![];
+        }
         let selected_key = m.navigation.context_key.clone().or_else(|| {
             m.navigation
                 .context_target
@@ -654,7 +657,7 @@ impl Ui {
                 Item::new("Add to Queue", "album_queue"),
                 Item::new("Audio Information", "audio_info"),
             ],
-            Screen::Tracks | Screen::Artist | Screen::NowPlaying => vec![
+            Screen::Tracks | Screen::NowPlaying => vec![
                 Item::new("Play", "play"),
                 Item::new("Play Next", "play_next"),
                 Item::new("Add to Queue", "add_queue"),

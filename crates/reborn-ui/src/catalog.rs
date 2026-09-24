@@ -135,6 +135,10 @@ impl Catalog {
                     .enumerate()
                     .filter(|(_, t)| t.online && track_matches(t, &m.navigation.filter))
                     .collect();
+                if ids.is_empty() {
+                    self.rows.clear();
+                    return;
+                }
                 if m.screen == Screen::Tracks && m.navigation.filter.is_empty() {
                     ids.sort_by_cached_key(|(_, t)| {
                         if t.title.is_empty() {

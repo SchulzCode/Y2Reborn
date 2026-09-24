@@ -174,7 +174,7 @@ fn list(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], has_art: bool, 
         String::new()
     };
     components::title(c, &screen_title(m), &detail);
-    if collection {
+    if collection && count > 0 {
         visible = 3;
         top = 170.;
         let t = ui.collection_track(m, tracks);

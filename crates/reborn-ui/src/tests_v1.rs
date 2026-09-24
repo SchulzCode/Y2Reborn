@@ -478,3 +478,23 @@ fn only_preferences_and_session_survive_serialization() {
     );
     assert_eq!(loaded.queue.len(), m.queue.len());
 }
+
+#[test]
+fn empty_collections_offer_recovery_instead_of_inert_play_actions() {
+    let mut ui = Ui::default();
+    for screen in [Screen::Album, Screen::Artist] {
+        let mut m = AppModel {
+            screen,
+            ..Default::default()
+        };
+        assert!(ui.rows(&m, &[]).is_empty());
+        assert_eq!(ui.model_action(&mut m, Action::Select), Effect::ScanLibrary);
+        focus(&ui, &m);
+    }
+    let mut m = AppModel {
+        screen: Screen::NowPlaying,
+        ..Default::default()
+    };
+    ui.model_action(&mut m, Action::ContextMenu);
+    assert_eq!(m.navigation.modal, None);
+}
