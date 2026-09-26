@@ -110,6 +110,45 @@ pub struct PowerView {
     pub charging: bool,
 }
 
+#[derive(Clone, Debug, Default)]
+pub struct BluetoothDeviceView {
+    pub path: String,
+    pub name: String,
+    pub paired: bool,
+    pub bonded: bool,
+    pub connected: bool,
+    pub audio_ready: bool,
+}
+
+impl BluetoothDeviceView {
+    fn saved_pairing(&self) -> bool {
+        self.paired && self.bonded
+    }
+    fn usable_audio(&self) -> bool {
+        self.saved_pairing() && self.connected && self.audio_ready
+    }
+    fn operation(&self) -> &'static str {
+        if !self.saved_pairing() {
+            "pair"
+        } else if self.connected {
+            "disconnect"
+        } else {
+            "connect"
+        }
+    }
+    fn description(&self) -> &'static str {
+        if !self.saved_pairing() {
+            if self.connected { "Pairing required" } else { "Available" }
+        } else if self.usable_audio() {
+            "Audio ready"
+        } else if self.connected {
+            "Connected; audio unavailable"
+        } else {
+            "Paired"
+        }
+    }
+}
+
 /// Presentation-owned transient state. Playback, queue, navigation, settings,
 /// and screen state remain authoritative in `AppModel`; services are reached
 /// only through the typed `Effect` returned by `action`.
@@ -121,7 +160,7 @@ pub struct Ui {
     pub bluetooth: RadioView,
     pub networks: Vec<Item>,
     pub saved_networks: Vec<Item>,
-    pub bluetooth_devices: Vec<Item>,
+    pub bluetooth_devices: Vec<BluetoothDeviceView>,
     pub pairing: Option<String>,
     pub pairing_focus: usize,
     pub collection_art: Option<(String, i64)>,
@@ -546,9 +585,9 @@ impl Ui {
         rows[0].enabled = self.bluetooth.available;
         rows[1].enabled =
             self.bluetooth.available && self.bluetooth.powered && !self.bluetooth.scan.active();
-        rows.extend(self.bluetooth_devices.iter().cloned().map(|device| {
-            Item::new(device.label, format!("bt_device:{}", device.key))
-                .with_secondary(device.secondary)
+        rows.extend(self.bluetooth_devices.iter().map(|device| {
+            Item::new(&device.name, format!("bt_device:{}", device.path))
+                .with_secondary(device.description())
         }));
         rows.push(Item::new("Codec & Audio Details", "page:bluetooth"));
         if let Some(error) = &self.bluetooth.error {
@@ -698,18 +737,16 @@ impl Ui {
                     .as_deref()
                     .and_then(|key| key.strip_prefix("bt_device:"));
                 if let Some(device) =
-                    path.and_then(|p| self.bluetooth_devices.iter().find(|d| d.key == p))
+                    path.and_then(|p| self.bluetooth_devices.iter().find(|d| d.path == p))
                 {
-                    let connected = device.secondary == "Connected";
-                    let paired = device.secondary == "Paired" || connected;
                     let mut rows = vec![
                         Item::new(
-                            if connected {
-                                "Disconnect"
-                            } else if paired {
-                                "Connect"
-                            } else {
+                            if !device.saved_pairing() {
                                 "Pair & Connect"
+                            } else if device.connected {
+                                "Disconnect"
+                            } else {
+                                "Connect"
                             },
                             "bt_connect",
                         ),
@@ -717,7 +754,7 @@ impl Ui {
                         Item::new("Forget Device", "bt_forget"),
                         Item::new("Codec & Audio Details", "bt_info"),
                     ];
-                    rows[1].enabled = connected;
+                    rows[1].enabled = device.usable_audio();
                     rows
                 } else {
                     vec![]
@@ -1222,8 +1259,8 @@ impl Ui {
                     if let Some(path) = self
                         .bluetooth_devices
                         .iter()
-                        .find(|item| item.secondary == "Connected")
-                        .map(|item| item.key.clone())
+                        .find(|device| device.usable_audio())
+                        .map(|device| device.path.clone())
                     {
                         return Effect::BluetoothDevice {
                             path,
@@ -1405,15 +1442,14 @@ impl Ui {
             "wired_output" => Effect::Output(AudioOutput::Wired),
             key if key.starts_with("bt_device:") => {
                 let path = key.trim_start_matches("bt_device:").to_owned();
-                let connected = self
+                let device = self
                     .bluetooth_devices
                     .iter()
-                    .find(|item| item.key == path)
-                    .is_some_and(|item| item.secondary == "Connected");
-                Effect::BluetoothDevice {
+                    .find(|device| device.path == path);
+                device.map(|device| Effect::BluetoothDevice {
                     path,
-                    operation: if connected { "disconnect" } else { "connect" }.into(),
-                }
+                    operation: device.operation().into(),
+                }).unwrap_or(Effect::None)
             }
             _ => Effect::None,
         }
@@ -1483,7 +1519,7 @@ impl Ui {
                         .context_key
                         .as_deref()
                         .and_then(|s| s.strip_prefix("bt_device:"))
-                        .filter(|path| self.bluetooth_devices.iter().any(|d| d.key == *path))
+                        .filter(|path| self.bluetooth_devices.iter().any(|d| d.path == *path))
                         .map(|path| Effect::BluetoothDevice {
                             path: path.into(),
                             operation: "forget".into(),
@@ -1588,17 +1624,14 @@ impl Ui {
                     }
                     "bt_connect" | "bt_output" => source_key
                         .strip_prefix("bt_device:")
-                        .and_then(|path| self.bluetooth_devices.iter().find(|d| d.key == path))
+                        .and_then(|path| self.bluetooth_devices.iter().find(|d| d.path == path))
+                        .filter(|device| menu_key != "bt_output" || device.usable_audio())
                         .map(|device| Effect::BluetoothDevice {
-                            path: device.key.clone(),
+                            path: device.path.clone(),
                             operation: if menu_key == "bt_output" {
                                 "output"
-                            } else if device.secondary == "Connected" {
-                                "disconnect"
-                            } else if device.secondary == "Paired" {
-                                "connect"
                             } else {
-                                "pair"
+                                device.operation()
                             }
                             .into(),
                         })

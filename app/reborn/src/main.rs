@@ -2039,15 +2039,18 @@ fn run() -> Result<(), String> {
                 }
                 let connected = s.devices.iter().find(|device| device.connected);
                 let connection = if let Some(device) = connected {
-                    let connection = s
+                    if !device.paired || !device.bonded {
+                        format!("Pairing required: {}", device.name)
+                    } else {
+                        s
                         .pcms
                         .iter()
                         .find(|pcm| pcm.is_a2dp_playback_for(&device.path))
                         .and_then(|pcm| pcm.codec.as_deref())
                         .filter(|codec| !codec.is_empty())
                         .map(|codec| format!("Connected: {} · {}", device.name, codec))
-                        .unwrap_or_else(|| format!("Connected: {}", device.name));
-                    connection
+                        .unwrap_or_else(|| format!("{} · Audio unavailable", device.name))
+                    }
                 } else if s.discovering {
                     "Bluetooth discovery active".into()
                 } else {
@@ -2068,13 +2071,14 @@ fn run() -> Result<(), String> {
                     .devices
                     .iter()
                     .map(|d| {
-                        Item::new(d.name.clone(), d.path.clone()).with_secondary(if d.connected {
-                            "Connected"
-                        } else if d.paired {
-                            "Paired"
-                        } else {
-                            "Available"
-                        })
+                        reborn_ui::BluetoothDeviceView {
+                            path: d.path.clone(),
+                            name: d.name.clone(),
+                            paired: d.paired,
+                            bonded: d.bonded,
+                            connected: d.connected,
+                            audio_ready: s.pcms.iter().any(|pcm| pcm.is_a2dp_playback_for(&d.path)),
+                        }
                     })
                     .collect();
                 let pairing = s.pending.as_ref().map(|p| {
