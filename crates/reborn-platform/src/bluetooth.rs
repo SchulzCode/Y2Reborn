@@ -30,6 +30,10 @@ pub struct Device {
     pub name: String,
     pub address: String,
     pub paired: bool,
+    #[serde(default)]
+    pub bonded: bool,
+    #[serde(default)]
+    pub trusted: bool,
     pub connected: bool,
     pub audio: bool,
 }
@@ -106,7 +110,95 @@ struct Pending {
     display: Pairing,
     started: Instant,
 }
-type Operations = Arc<Mutex<HashMap<u32, (u64, Instant, String, String, Option<std::fs::File>)>>>;
+struct Operation {
+    id: u64,
+    started: Instant,
+    method: String,
+    path: String,
+    owner: String,
+    lease: Option<std::fs::File>,
+    pairing: Option<PairableWindow>,
+}
+type Operations = Arc<Mutex<HashMap<u32, Operation>>>;
+
+// Pair() alone does not make Linux bondable: hci_io_capa_request_evt strips
+// bonding authentication when Adapter1.Pairable is false. Keep a bounded
+// window on the same BlueZ owner, then restore the owner's previous policy.
+struct PairableWindow {
+    owner: String,
+    adapter: String,
+    previous: bool,
+    timeout: u32,
+}
+impl PairableWindow {
+    fn begin(c: &Connection, owner: &str, adapter: &str) -> Result<Self, String> {
+        let proxy = c.with_proxy(owner, adapter, Duration::from_secs(3));
+        let window = Self {
+            owner: owner.into(),
+            adapter: adapter.into(),
+            previous: proxy.get("org.bluez.Adapter1", "Pairable").map_err(dbus_error)?,
+            timeout: proxy.get("org.bluez.Adapter1", "PairableTimeout").map_err(dbus_error)?,
+        };
+        // The daemon timer closes the window even if Reborn crashes. It is
+        // longer than our operation deadline, never an indefinite permission.
+        let result = proxy.set("org.bluez.Adapter1", "PairableTimeout", 90u32)
+            .and_then(|()| proxy.set("org.bluez.Adapter1", "Pairable", true))
+            .map_err(dbus_error);
+        if let Err(error) = result {
+            let _ = window.restore(c);
+            return Err(error);
+        }
+        Ok(window)
+    }
+    fn restore(self, c: &Connection) -> Result<(), String> {
+        // Unique name prevents a delayed cleanup from changing a new daemon.
+        let proxy = c.with_proxy(self.owner, self.adapter, Duration::from_secs(3));
+        proxy.set("org.bluez.Adapter1", "Pairable", self.previous).map_err(dbus_error)?;
+        proxy.set("org.bluez.Adapter1", "PairableTimeout", self.timeout).map_err(dbus_error)
+    }
+}
+impl Operation {
+    fn restore_pairable(&mut self, c: &Connection) -> Result<(), String> {
+        self.pairing.take().map_or(Ok(()), |window| window.restore(c))
+    }
+    fn send(&self, c: &Connection) -> Result<u32, String> {
+        let message = Message::new_method_call(&self.owner, &self.path, "org.bluez.Device1", &self.method)
+            .map_err(|_| "invalid D-Bus path".to_string())?;
+        c.send(message).map_err(|_| "D-Bus send failed".into())
+    }
+    fn reply(&mut self, c: &Connection, msg: &mut Message) -> Result<Option<u32>, String> {
+        msg.as_result().map_err(dbus_error)?;
+        if self.method == "Pair" {
+            let proxy = c.with_proxy(&self.owner, &self.path, Duration::from_secs(3));
+            let paired: bool = proxy.get("org.bluez.Device1", "Paired").map_err(dbus_error)?;
+            let bonded: bool = proxy.get("org.bluez.Device1", "Bonded").map_err(dbus_error)?;
+            if !paired || !bonded {
+                return Err("Pairing did not create a saved bond; put the headset in pairing mode and retry".into());
+            }
+            proxy.set("org.bluez.Device1", "Trusted", true).map_err(dbus_error)?;
+            self.restore_pairable(c)?;
+            if self.lease.is_some() { write_intent("connect_pending")?; }
+            self.method = "Connect".into();
+            self.started = Instant::now();
+            return self.send(c).map(Some);
+        }
+        if self.method == "Connect" && self.lease.is_some() { write_intent("connect")?; }
+        Ok(None)
+    }
+    fn cancel(&mut self, c: &Connection) {
+        if self.method == "Pair" {
+            let _ = c.with_proxy(&self.owner, &self.path, Duration::from_secs(2))
+                .method_call::<(), _, _, _>("org.bluez.Device1", "CancelPairing", ());
+        }
+        let _ = self.restore_pairable(c);
+        if self.lease.is_some() { let _ = write_intent("uncertain"); }
+    }
+}
+fn cancel_operations(c: &Connection, operations: &Operations) {
+    if let Ok(mut ops) = operations.lock() {
+        for (_, mut operation) in ops.drain() { operation.cancel(c); }
+    }
+}
 
 fn user_intent(operation: &str) -> Result<Option<std::fs::File>, String> {
     if !Path::new("/etc/y2linux/platform-contract").exists() {
@@ -276,6 +368,8 @@ fn status(c: &Connection) -> Result<(String, Status), String> {
                 name: text(p, "Alias"),
                 address: text(p, "Address"),
                 paired: yes(p, "Paired"),
+                bonded: yes(p, "Bonded"),
+                trusted: yes(p, "Trusted"),
                 connected: yes(p, "Connected"),
                 audio,
             });
@@ -628,27 +722,27 @@ impl Bluetooth {
                         }
                     };
                     let operations:Operations=Arc::new(Mutex::new(HashMap::new()));
+                    let (completed_tx, completed_rx) = sync_channel::<Option<String>>(16);
                     for kind in [dbus::MessageType::MethodReturn,dbus::MessageType::Error] {
-                        let ops=operations.clone();let observer=log.clone();let mut rule=MatchRule::new();rule.msg_type=Some(kind);
+                        let ops=operations.clone();let observer=log.clone();let completed=completed_tx.clone();let mut rule=MatchRule::new();rule.msg_type=Some(kind);
                         c.start_receive(rule,Box::new(move|mut msg,connection|{
-                            if let Some(serial)=msg.get_reply_serial(){if let Ok(mut ops)=ops.lock(){if let Some((id,_,method,path,lease))=ops.remove(&serial){
-                                match msg.as_result(){
-                                    Ok(_) => {
-                                        if method == "Connect" && lease.is_some() { let _=write_intent("connect"); }
-                                        let mut trusted = None;
-                                        if method == "Pair" {
-                                            let result: Result<(), dbus::Error> = connection
-                                                .with_proxy("org.bluez", path.as_str(), Duration::from_secs(5))
-                                                .set("org.bluez.Device1", "Trusted", true);
-                                            trusted = Some(result.is_ok());
-                                            if let Err(e) = result {
-                                                observer.add("bluetooth_errors", 1.);
-                                                observer.emit(Level::Error,"bluetooth","trust_failed",&dbus_error(e),Some(id),json!({"method":"Pair","path":path,"recovery_attempted":false}));
-                                            }
-                                        }
-                                        observer.emit(Level::Info,"bluetooth","operation_completed","BlueZ operation completed",Some(id),json!({"method":method,"trusted":trusted}));
-                                    },
-                                    Err(e)=>{observer.add("bluetooth_errors",1.);observer.emit(Level::Error,"bluetooth","operation_failed",&dbus_error(e),Some(id),json!({"interface":"org.bluez.Device1","method":method,"recovery_attempted":false}));}
+                            if let Some(serial)=msg.get_reply_serial(){if let Ok(mut ops)=ops.lock(){if let Some(mut operation)=ops.remove(&serial){
+                                match operation.reply(connection, &mut msg) {
+                                    Ok(Some(next)) => {
+                                        observer.emit(Level::Info,"bluetooth","pair_bonded","Bond saved; audio connection requested",Some(operation.id),json!({"trusted":true}));
+                                        ops.insert(next, operation);
+                                    }
+                                    Ok(None) => {
+                                        observer.emit(Level::Info,"bluetooth","operation_completed","BlueZ operation completed",Some(operation.id),json!({"method":operation.method}));
+                                        let _ = completed.try_send(None);
+                                    }
+                                    Err(mut error) => {
+                                        if let Err(cleanup) = operation.restore_pairable(connection) { error.push_str(&format!("; Pairable restoration failed: {cleanup}")); }
+                                        if operation.lease.is_some() { let _=write_intent("uncertain"); }
+                                        observer.add("bluetooth_errors",1.);
+                                        observer.emit(Level::Error,"bluetooth","operation_failed",&error,Some(operation.id),json!({"interface":"org.bluez.Device1","method":operation.method,"recovery_attempted":false}));
+                                        let _ = completed.try_send(Some(error));
+                                    }
                                 }
                             }}}true
                         }));
@@ -826,7 +920,7 @@ impl Bluetooth {
                     let mut operation_error = None;
                     loop {
                         if c.process(Duration::from_millis(20)).is_err() {
-                            if operations.lock().map(|ops| ops.values().any(|op| op.4.is_some())).unwrap_or(false) { let _ = write_intent("uncertain"); }
+                            cancel_operations(&c, &operations);
                             current.available = false;
                             current.error = Some("Bluetooth service disconnected".into());
                             if current.scan.active() { current.scan = RadioScan::Failed { message: "Bluetooth service disconnected".into() }; }
@@ -834,7 +928,13 @@ impl Bluetooth {
                             break;
                         }
                         let mut changed = false;
-                        if let Ok(mut ops)=operations.lock(){ops.retain(|_,(id,start,method,_,lease)|{if start.elapsed()>Duration::from_secs(70){if lease.is_some(){let _=write_intent("uncertain");}log.add("bluetooth_errors",1.);log.emit(Level::Error,"bluetooth","operation_timeout","BlueZ operation deadline exceeded",Some(*id),json!({"method":method}));false}else{true}});}
+                        if let Ok(mut ops)=operations.lock(){ops.retain(|_,operation|{if operation.started.elapsed()>Duration::from_secs(70){operation.cancel(&c);log.add("bluetooth_errors",1.);log.emit(Level::Error,"bluetooth","operation_timeout","BlueZ operation deadline exceeded",Some(operation.id),json!({"method":operation.method}));operation_error=Some("Bluetooth operation timed out".into());current.error=operation_error.clone();changed=true;false}else{true}});}
+                        while let Ok(error) = completed_rx.try_recv() {
+                            operation_error = error;
+                            current.error = operation_error.clone();
+                            refresh = Instant::now() - Duration::from_secs(5);
+                            changed = true;
+                        }
                         if refresh.elapsed() > Duration::from_secs(2) {
                             match status(&c) {
                                 Ok((a, mut s)) => {
@@ -912,11 +1012,15 @@ impl Bluetooth {
                         }
                         let command = match rx.try_recv() {
                             Ok(c) => Some(c),
-                            Err(std::sync::mpsc::TryRecvError::Disconnected) => return,
+                            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                                cancel_operations(&c, &operations);
+                                return;
+                            }
                             Err(_) => None,
                         };
                         if let Some(cmd) = command {
                             if matches!(cmd, Command::Stop) {
+                                cancel_operations(&c, &operations);
                                 return;
                             }
                             let id = log.correlation();
@@ -1012,20 +1116,22 @@ impl Bluetooth {
                                         r.map_err(dbus_error)
                                         }); r
                                     } else {
-                                        // Send asynchronous method calls on the Agent's own connection so callbacks are dispatched by this worker.
-                                        let message = Message::new_method_call(
-                                            "org.bluez",
-                                            &path,
-                                            "org.bluez.Device1",
-                                            member,
-                                        )
-                                        .map_err(|_| "invalid D-Bus path".to_string());
-                                        message.and_then(|m| {
+                                        // Pair and subsequent Connect share the Agent's
+                                        // connection and operation lease. Pairable is
+                                        // bounded, restored on completion/cancel/error.
+                                        (|| {
+                                            if operations.lock().map_err(|_| "Bluetooth operation lock poisoned")?.len() >= 16 {
+                                                return Err("Too many Bluetooth operations".into());
+                                            }
                                             let lease=user_intent(match member {"Pair"=>"pair","Disconnect"=>"disconnect",_=>"connect"})?;
-                                            c.send(m)
-                                                .map(|serial| {if let Ok(mut ops)=operations.lock(){if ops.len()<16{ops.insert(serial,(id,Instant::now(),member.into(),path.clone(),lease));}}})
-                                                .map_err(|_| "D-Bus send failed".into())
-                                        })
+                                            let owner=current.bluez_owner.as_deref().ok_or("BlueZ owner unavailable")?;
+                                            let mut operation=Operation { id, started:Instant::now(), method:member.into(), path:path.clone(), owner:owner.into(), lease,
+                                                pairing: if member == "Pair" { Some(PairableWindow::begin(&c,owner,&adapter)?) } else { None } };
+                                            match operation.send(&c) {
+                                                Ok(serial) => { operations.lock().map_err(|_| "Bluetooth operation lock poisoned")?.insert(serial,operation); Ok(()) }
+                                                Err(error) => { operation.cancel(&c); Err(error) }
+                                            }
+                                        })()
                                     }
                                 }
                             };
@@ -1190,6 +1296,17 @@ mod tests {
         let pcm_rate_for_method = pcm_rate.clone();
         let recreate_pcm = Arc::new(AtomicBool::new(false));
         let recreate_pcm_out = recreate_pcm.clone();
+        let pair_mode = Arc::new(AtomicUsize::new(0));
+        let pair_mode_out = pair_mode.clone();
+        let pairable = Arc::new(AtomicBool::new(false));
+        let pairable_out = pairable.clone();
+        let pair_timeout = Arc::new(AtomicUsize::new(180));
+        let pair_timeout_out = pair_timeout.clone();
+        let connects = Arc::new(AtomicUsize::new(0));
+        let connects_out = connects.clone();
+        let cancelled = Arc::new(AtomicUsize::new(0));
+        let cancelled_out = cancelled.clone();
+        let (mut paired, mut bonded, mut trusted, mut peer_connected) = (false, false, false, false);
         let mut powered = false;
         let mut discovering = false;
         let mut found = false;
@@ -1245,8 +1362,10 @@ mod tests {
                                     "Address".into(),
                                     Variant(Box::new("01:02:03:04:05:06".to_string())),
                                 );
-                                properties.insert("Paired".into(), Variant(Box::new(false)));
-                                properties.insert("Connected".into(), Variant(Box::new(false)));
+                                properties.insert("Paired".into(), Variant(Box::new(paired)));
+                                properties.insert("Bonded".into(), Variant(Box::new(bonded)));
+                                properties.insert("Trusted".into(), Variant(Box::new(trusted)));
+                                properties.insert("Connected".into(), Variant(Box::new(peer_connected)));
                                 properties.insert(
                                     "UUIDs".into(),
                                     Variant(Box::new(vec![
@@ -1262,10 +1381,47 @@ mod tests {
                         reply = reply.append1(objects);
                     }
                     "Set" => {
-                        let (_, property, value): (String, String, Variant<bool>) =
+                        let (_, property, value): (String, String, Variant<Box<dyn RefArg>>) =
                             msg.read3().unwrap();
-                        assert_eq!(property, "Powered");
-                        powered = value.0;
+                        match property.as_str() {
+                            "Powered" => powered = value.0.as_i64() == Some(1),
+                            "Pairable" => pairable_out.store(value.0.as_i64() == Some(1), Ordering::Relaxed),
+                            "PairableTimeout" => pair_timeout_out.store(value.0.as_u64().unwrap() as usize, Ordering::Relaxed),
+                            "Trusted" => trusted = value.0.as_i64() == Some(1),
+                            _ => panic!("unexpected property {property}"),
+                        }
+                    }
+                    "Get" => {
+                        let (_, property): (String, String) = msg.read2().unwrap();
+                        reply = match property.as_str() {
+                            "Pairable" => reply.append1(Variant(pairable_out.load(Ordering::Relaxed))),
+                            "PairableTimeout" => reply.append1(Variant(pair_timeout_out.load(Ordering::Relaxed) as u32)),
+                            "Paired" => reply.append1(Variant(paired)),
+                            "Bonded" => reply.append1(Variant(bonded)),
+                            _ => panic!("unexpected property {property}"),
+                        };
+                    }
+                    "Pair" => {
+                        assert!(pairable_out.load(Ordering::Relaxed));
+                        assert_eq!(pair_timeout_out.load(Ordering::Relaxed), 90);
+                        paired = false; bonded = false; trusted = false; peer_connected = false;
+                        match pair_mode_out.load(Ordering::Relaxed) {
+                            0 => { paired = true; bonded = true; }
+                            1 => paired = true, // successful Pair reply without persistent keys
+                            2 => reply = msg.error(&"org.bluez.Error.AuthenticationRejected".into(), c"injected pairing rejection"),
+                            3 => return true, // owner cancels an unanswered Pair
+                            _ => unreachable!(),
+                        }
+                    }
+                    "Connect" => {
+                        assert!(paired && bonded && trusted);
+                        assert!(!pairable_out.load(Ordering::Relaxed));
+                        assert_eq!(pair_timeout_out.load(Ordering::Relaxed), 180);
+                        peer_connected = true;
+                        connects_out.fetch_add(1, Ordering::Relaxed);
+                    }
+                    "CancelPairing" => {
+                        cancelled_out.fetch_add(1, Ordering::Relaxed);
                     }
                     "StartDiscovery" => {
                         assert!(powered, "must power on before discovery");
@@ -1416,6 +1572,23 @@ mod tests {
         assert!(!complete.discovering);
         assert_eq!(starts.load(Ordering::Relaxed), 1);
         assert_eq!(stops.load(Ordering::Relaxed), 1);
+        let peer = complete.devices[0].path.clone();
+        pair_mode.store(1, Ordering::Relaxed);
+        bt.commands.send(Command::Pair(peer.clone())).unwrap();
+        wait(&bt.events, |s| s.error.as_deref().is_some_and(|e| e.contains("saved bond")));
+        assert_eq!(connects.load(Ordering::Relaxed), 0);
+        assert!(!pairable.load(Ordering::Relaxed));
+        assert_eq!(pair_timeout.load(Ordering::Relaxed), 180);
+        pair_mode.store(2, Ordering::Relaxed);
+        bt.commands.send(Command::Pair(peer.clone())).unwrap();
+        wait(&bt.events, |s| s.error.as_deref().is_some_and(|e| e.contains("AuthenticationRejected")));
+        assert_eq!(connects.load(Ordering::Relaxed), 0);
+        assert!(!pairable.load(Ordering::Relaxed));
+        pair_mode.store(0, Ordering::Relaxed);
+        bt.commands.send(Command::Pair(peer.clone())).unwrap();
+        let connected = wait(&bt.events, |s| s.devices.iter().any(|d| d.bonded && d.trusted && d.connected));
+        assert!(connected.error.is_none());
+        assert_eq!(connects.load(Ordering::Relaxed), 1);
         fail.store(true, Ordering::Relaxed);
         bt.commands.send(Command::Scan(true)).unwrap();
         wait(&bt.events, |s| matches!(s.scan, RadioScan::Failed { .. }));
@@ -1426,8 +1599,20 @@ mod tests {
         let off = wait(&bt.events, |s| !s.powered);
         assert_eq!(off.scan, RadioScan::Idle);
         assert!(off.error.is_none());
+        bt.commands.send(Command::Power(true)).unwrap();
+        wait(&bt.events, |s| s.powered);
+        pair_mode.store(3, Ordering::Relaxed);
+        bt.commands.send(Command::Pair(peer)).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while !pairable.load(Ordering::Relaxed) && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(10));
+        }
+        assert!(pairable.load(Ordering::Relaxed));
         bt.commands.send(Command::Stop).unwrap();
         while bt.events.recv_timeout(Duration::from_secs(2)).is_ok() {}
+        assert_eq!(cancelled.load(Ordering::Relaxed), 1);
+        assert!(!pairable.load(Ordering::Relaxed));
+        assert_eq!(pair_timeout.load(Ordering::Relaxed), 180);
         stop.store(true, Ordering::Relaxed);
         server.join().unwrap();
         drop(bt);

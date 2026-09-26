@@ -151,6 +151,20 @@ fn open(path: &Path) -> Result<Connection, OpenFailure> {
             .map_err(|error| classify_open_error(error, OpenStage::Migration))?;
     }
     quick_check(&c)?;
+    // Additive indexes preserve the v1 file format and rollback compatibility.
+    // Y2 20k-track measurements: ordered pages ~95 -> 5 ms, artist ~42 -> 5 ms,
+    // album ~38 -> 1.4 ms. The small album index avoids another ~1.5 MiB and
+    // extra title-index maintenance compared with a second covering index.
+    let browse_indexes: i64 = c
+        .query_row("SELECT count(*) FROM sqlite_schema WHERE type='index' AND name IN ('tracks_browse', 'tracks_browse_album')", [], |row| row.get(0))
+        .map_err(|error| classify_open_error(error, OpenStage::Migration))?;
+    if browse_indexes != 2 {
+        c.execute_batch("BEGIN IMMEDIATE;
+ CREATE INDEX IF NOT EXISTS tracks_browse ON tracks(artist,album,disc,track,title,path) WHERE deleted=0;
+ CREATE INDEX IF NOT EXISTS tracks_browse_album ON tracks(album) WHERE deleted=0;
+ COMMIT;")
+            .map_err(|error| classify_open_error(error, OpenStage::Migration))?;
+    }
     Ok(c)
 }
 fn from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Track> {
@@ -178,7 +192,19 @@ fn from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Track> {
 }
 const SELECT:&str="SELECT t.id,t.source_id,t.path,t.filename,t.size,t.mtime,t.title,t.artist,t.album,t.album_artist,t.track,t.disc,t.duration_ms,t.codec,t.sample_rate,t.channels,t.bitrate,t.artwork,s.online FROM tracks t JOIN sources s ON s.id=t.source_id";
 fn list(c: &Connection, f: &Filter) -> Result<Vec<Track>, String> {
-    let sql=format!("{SELECT} WHERE t.deleted=0 AND (?1 IS NULL OR t.artist=?1) AND (?2 IS NULL OR t.album=?2) AND (?3 IS NULL OR substr(t.path,1,length(?3))=?3) ORDER BY t.artist,t.album,t.disc,t.track,t.title,t.path LIMIT ?4 OFFSET ?5");
+    let mut sql = format!("{SELECT} WHERE t.deleted=0");
+    // Keep values bound, but expose actual predicates to SQLite so it can seek
+    // to an artist/album instead of scanning optional-parameter OR branches.
+    if f.artist.is_some() {
+        sql.push_str(" AND t.artist=?1");
+    }
+    if f.album.is_some() {
+        sql.push_str(" AND t.album=?2");
+    }
+    if f.folder.is_some() {
+        sql.push_str(" AND substr(t.path,1,length(?3))=?3");
+    }
+    sql.push_str(" ORDER BY t.artist,t.album,t.disc,t.track,t.title,t.path LIMIT ?4 OFFSET ?5");
     let mut q = c.prepare(&sql).map_err(err)?;
     let rows = q
         .query_map(
@@ -1318,6 +1344,49 @@ mod consistency_tests {
         c.execute("INSERT INTO sources VALUES('sd','/media/sd',1)", [])
             .unwrap();
         (p, c)
+    }
+    #[test]
+    fn v1_index_upgrade_preserves_all_filter_combinations_and_rows() {
+        let (path, mut c) = setup("browse-upgrade");
+        let artist = "Artist ' OR 1=1 --";
+        let album = "Album %_";
+        let folder = "/media/sd/音楽%_/";
+        let tracks = (0..24).map(|i| Track {
+            source_id: "sd".into(),
+            path: PathBuf::from(format!("{}{i}.flac", if i / 4 % 2 == 0 { folder } else { "/media/sd/other/" })),
+            artist: if i % 2 == 0 { artist.into() } else { "Another".into() },
+            album: if i / 2 % 2 == 0 { album.into() } else { "Other album".into() },
+            title: format!("Track {i:02}"),
+            track: i + 1,
+            ..Default::default()
+        }).collect();
+        batch(&mut c, tracks, 1).unwrap();
+        // Reproduce an existing schema-v1 database, including offline/deleted
+        // state. Upgrade must not discard state or require a schema bump.
+        c.execute_batch("DROP INDEX tracks_browse; DROP INDEX tracks_browse_album;
+                         UPDATE sources SET online=0; UPDATE tracks SET deleted=1 WHERE id=1;").unwrap();
+        drop(c);
+        let c = open(&path).unwrap();
+        assert_eq!(c.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0)).unwrap(), 1);
+        for mask in 0..8 {
+            let f = Filter {
+                artist: (mask & 1 != 0).then(|| artist.into()),
+                album: (mask & 2 != 0).then(|| album.into()),
+                folder: (mask & 4 != 0).then(|| folder.into()),
+                offset: 1, limit: 2,
+            };
+            let old = format!("{SELECT} WHERE t.deleted=0 AND (?1 IS NULL OR t.artist=?1) AND (?2 IS NULL OR t.album=?2) AND (?3 IS NULL OR substr(t.path,1,length(?3))=?3) ORDER BY t.artist,t.album,t.disc,t.track,t.title,t.path LIMIT ?4 OFFSET ?5");
+            let mut statement = c.prepare(&old).unwrap();
+            let expected = statement.query_map(params![f.artist,f.album,f.folder,f.limit,f.offset], from_row)
+                .unwrap().collect::<rusqlite::Result<Vec<_>>>().unwrap();
+            let actual = list(&c, &f).unwrap();
+            assert!(!actual.is_empty());
+            assert!(actual.iter().all(|track| !track.online));
+            assert_eq!(serde_json::to_value(actual).unwrap(), serde_json::to_value(expected).unwrap(), "filter mask {mask}");
+        }
+        assert_eq!(c.query_row("SELECT count(*) FROM tracks", [], |r| r.get::<_, i64>(0)).unwrap(),24);
+        drop(c);
+        fs::remove_file(path).unwrap();
     }
     #[test]
     fn offline_retains_tracks() {
