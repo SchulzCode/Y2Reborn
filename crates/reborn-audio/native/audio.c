@@ -236,9 +236,14 @@ void rb_sink_close(RbSink *s) {
 int rb_sink_open(const char *name, unsigned rate, unsigned format, int wired,
                  RbSink **out, RbParams *params) {
   int r;
-  if (format != 1 && format != 2 && format != 3)
+  if (!name || !out || !params)
     return -EINVAL;
   *out = NULL;
+  memset(params, 0, sizeof(*params));
+  if (strlen(name) >= sizeof(params->device))
+    return -ENAMETOOLONG;
+  if (format != 1 && format != 2 && format != 3)
+    return -EINVAL;
   RbSink *s = calloc(1, sizeof(*s));
   if (!s)
     return -ENOMEM;
@@ -324,6 +329,7 @@ int rb_sink_open(const char *name, unsigned rate, unsigned format, int wired,
   params->format = format;
   params->channels = 2;
   params->hardware_mixer_gain_cdb = wired ? -2400 : INT32_MIN;
+  snprintf(params->device, sizeof(params->device), "%s", name);
   *out = s;
   return 0;
 fail:

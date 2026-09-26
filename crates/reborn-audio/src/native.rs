@@ -540,6 +540,42 @@ mod format_tests {
     use super::*;
 
     #[test]
+    fn opened_pcm_preserves_the_planned_device_contract() {
+        let directory = std::env::temp_dir().join(format!(
+            "reborn-open-contract-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir(&directory).unwrap();
+        let log = Observer::new(&directory).unwrap();
+        for rate in [44_100, 48_000] {
+            // ALSA's null PCM exercises the real C probe/open boundary without
+            // requiring a sound card, a Bluetooth peer, or the wired mixer.
+            let (spec, _) = AlsaSink::plan_named(
+                "null", AudioOutput::Wired, rate, false, PcmFormat::S16LE,
+                true, None, log.clone(), 1,
+            ).unwrap();
+            let sink = AlsaSink::open_named(
+                "null", rate, spec.format, false, Some(&spec), log.clone(), 1,
+            ).unwrap();
+            let opened = sink.parameters();
+            assert_eq!(opened.device, "null");
+            assert_eq!(opened.rate, rate);
+            assert_eq!(opened.format, spec.format);
+            assert_eq!(opened.channels, 2);
+            drop(sink);
+
+            let mut wrong_device = spec;
+            wrong_device.device = "a-different-pcm".into();
+            assert!(AlsaSink::open_named(
+                "null", rate, wrong_device.format, false, Some(&wrong_device),
+                log.clone(), 1,
+            ).is_err());
+        }
+        drop(log);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
     fn s24_code_maps_to_alsa_24_valid_bits_in_a_32_bit_container() {
         let mut valid_bits = 0;
         let mut physical_bits = 0;
