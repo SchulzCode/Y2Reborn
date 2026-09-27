@@ -139,7 +139,11 @@ impl BluetoothDeviceView {
     }
     fn description(&self) -> &'static str {
         if !self.saved_pairing() {
-            if self.connected { "Pairing required" } else { "Available" }
+            if self.connected {
+                "Pairing required"
+            } else {
+                "Available"
+            }
         } else if self.usable_audio() {
             "Audio ready"
         } else if self.connected {
@@ -1447,10 +1451,12 @@ impl Ui {
                     .bluetooth_devices
                     .iter()
                     .find(|device| device.path == path);
-                device.map(|device| Effect::BluetoothDevice {
-                    path,
-                    operation: device.operation().into(),
-                }).unwrap_or(Effect::None)
+                device
+                    .map(|device| Effect::BluetoothDevice {
+                        path,
+                        operation: device.operation().into(),
+                    })
+                    .unwrap_or(Effect::None)
             }
             _ => Effect::None,
         }

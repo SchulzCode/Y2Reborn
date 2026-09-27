@@ -410,9 +410,17 @@ fn bluetooth_link_without_a_saved_bond_keeps_pairing_available() {
     ] {
         let path = "/org/bluez/hci0/dev_HEADPHONES";
         let mut ui = Ui {
-            bluetooth: RadioView { available: true, powered: true, ..Default::default() },
+            bluetooth: RadioView {
+                available: true,
+                powered: true,
+                ..Default::default()
+            },
             bluetooth_devices: vec![BluetoothDeviceView {
-                path: path.into(), name: "Headphones".into(), paired, bonded, connected,
+                path: path.into(),
+                name: "Headphones".into(),
+                paired,
+                bonded,
+                connected,
                 audio_ready: ready,
             }],
             ..Default::default()
@@ -422,18 +430,26 @@ fn bluetooth_link_without_a_saved_bond_keeps_pairing_available() {
         let rows = ui.modal_rows_public(&m, &m.library.tracks);
         assert_eq!(rows[0].label, label);
         assert_eq!(rows[1].enabled, output);
-        assert_eq!(ui.model_action(&mut m, Action::Select), Effect::BluetoothDevice {
-            path: path.into(), operation: operation.into(),
-        });
+        assert_eq!(
+            ui.model_action(&mut m, Action::Select),
+            Effect::BluetoothDevice {
+                path: path.into(),
+                operation: operation.into(),
+            }
+        );
 
         // Re-read live readiness if the transport vanishes while its menu is open.
         if output {
             activate(&mut ui, &mut m, &format!("bt_device:{path}"));
             m.navigation.modal_focus = 1;
             ui.bluetooth_devices[0].audio_ready = false;
-            assert_ne!(ui.model_action(&mut m, Action::Select), Effect::BluetoothDevice {
-                path: path.into(), operation: "output".into(),
-            });
+            assert_ne!(
+                ui.model_action(&mut m, Action::Select),
+                Effect::BluetoothDevice {
+                    path: path.into(),
+                    operation: "output".into(),
+                }
+            );
         }
     }
 }

@@ -136,12 +136,17 @@ impl PairableWindow {
         let window = Self {
             owner: owner.into(),
             adapter: adapter.into(),
-            previous: proxy.get("org.bluez.Adapter1", "Pairable").map_err(dbus_error)?,
-            timeout: proxy.get("org.bluez.Adapter1", "PairableTimeout").map_err(dbus_error)?,
+            previous: proxy
+                .get("org.bluez.Adapter1", "Pairable")
+                .map_err(dbus_error)?,
+            timeout: proxy
+                .get("org.bluez.Adapter1", "PairableTimeout")
+                .map_err(dbus_error)?,
         };
         // The daemon timer closes the window even if Reborn crashes. It is
         // longer than our operation deadline, never an indefinite permission.
-        let result = proxy.set("org.bluez.Adapter1", "PairableTimeout", 90u32)
+        let result = proxy
+            .set("org.bluez.Adapter1", "PairableTimeout", 90u32)
             .and_then(|()| proxy.set("org.bluez.Adapter1", "Pairable", true))
             .map_err(dbus_error);
         if let Err(error) = result {
@@ -153,50 +158,72 @@ impl PairableWindow {
     fn restore(self, c: &Connection) -> Result<(), String> {
         // Unique name prevents a delayed cleanup from changing a new daemon.
         let proxy = c.with_proxy(self.owner, self.adapter, Duration::from_secs(3));
-        proxy.set("org.bluez.Adapter1", "Pairable", self.previous).map_err(dbus_error)?;
-        proxy.set("org.bluez.Adapter1", "PairableTimeout", self.timeout).map_err(dbus_error)
+        proxy
+            .set("org.bluez.Adapter1", "Pairable", self.previous)
+            .map_err(dbus_error)?;
+        proxy
+            .set("org.bluez.Adapter1", "PairableTimeout", self.timeout)
+            .map_err(dbus_error)
     }
 }
 impl Operation {
     fn restore_pairable(&mut self, c: &Connection) -> Result<(), String> {
-        self.pairing.take().map_or(Ok(()), |window| window.restore(c))
+        self.pairing
+            .take()
+            .map_or(Ok(()), |window| window.restore(c))
     }
     fn send(&self, c: &Connection) -> Result<u32, String> {
-        let message = Message::new_method_call(&self.owner, &self.path, "org.bluez.Device1", &self.method)
-            .map_err(|_| "invalid D-Bus path".to_string())?;
+        let message =
+            Message::new_method_call(&self.owner, &self.path, "org.bluez.Device1", &self.method)
+                .map_err(|_| "invalid D-Bus path".to_string())?;
         c.send(message).map_err(|_| "D-Bus send failed".into())
     }
     fn reply(&mut self, c: &Connection, msg: &mut Message) -> Result<Option<u32>, String> {
         msg.as_result().map_err(dbus_error)?;
         if self.method == "Pair" {
             let proxy = c.with_proxy(&self.owner, &self.path, Duration::from_secs(3));
-            let paired: bool = proxy.get("org.bluez.Device1", "Paired").map_err(dbus_error)?;
-            let bonded: bool = proxy.get("org.bluez.Device1", "Bonded").map_err(dbus_error)?;
+            let paired: bool = proxy
+                .get("org.bluez.Device1", "Paired")
+                .map_err(dbus_error)?;
+            let bonded: bool = proxy
+                .get("org.bluez.Device1", "Bonded")
+                .map_err(dbus_error)?;
             if !paired || !bonded {
                 return Err("Pairing did not create a saved bond; put the headset in pairing mode and retry".into());
             }
-            proxy.set("org.bluez.Device1", "Trusted", true).map_err(dbus_error)?;
+            proxy
+                .set("org.bluez.Device1", "Trusted", true)
+                .map_err(dbus_error)?;
             self.restore_pairable(c)?;
-            if self.lease.is_some() { write_intent("connect_pending")?; }
+            if self.lease.is_some() {
+                write_intent("connect_pending")?;
+            }
             self.method = "Connect".into();
             self.started = Instant::now();
             return self.send(c).map(Some);
         }
-        if self.method == "Connect" && self.lease.is_some() { write_intent("connect")?; }
+        if self.method == "Connect" && self.lease.is_some() {
+            write_intent("connect")?;
+        }
         Ok(None)
     }
     fn cancel(&mut self, c: &Connection) {
         if self.method == "Pair" {
-            let _ = c.with_proxy(&self.owner, &self.path, Duration::from_secs(2))
+            let _ = c
+                .with_proxy(&self.owner, &self.path, Duration::from_secs(2))
                 .method_call::<(), _, _, _>("org.bluez.Device1", "CancelPairing", ());
         }
         let _ = self.restore_pairable(c);
-        if self.lease.is_some() { let _ = write_intent("uncertain"); }
+        if self.lease.is_some() {
+            let _ = write_intent("uncertain");
+        }
     }
 }
 fn cancel_operations(c: &Connection, operations: &Operations) {
     if let Ok(mut ops) = operations.lock() {
-        for (_, mut operation) in ops.drain() { operation.cancel(c); }
+        for (_, mut operation) in ops.drain() {
+            operation.cancel(c);
+        }
     }
 }
 
@@ -1307,7 +1334,8 @@ mod tests {
         let connects_out = connects.clone();
         let cancelled = Arc::new(AtomicUsize::new(0));
         let cancelled_out = cancelled.clone();
-        let (mut paired, mut bonded, mut trusted, mut peer_connected) = (false, false, false, false);
+        let (mut paired, mut bonded, mut trusted, mut peer_connected) =
+            (false, false, false, false);
         let mut powered = false;
         let mut discovering = false;
         let mut found = false;
@@ -1366,7 +1394,8 @@ mod tests {
                                 properties.insert("Paired".into(), Variant(Box::new(paired)));
                                 properties.insert("Bonded".into(), Variant(Box::new(bonded)));
                                 properties.insert("Trusted".into(), Variant(Box::new(trusted)));
-                                properties.insert("Connected".into(), Variant(Box::new(peer_connected)));
+                                properties
+                                    .insert("Connected".into(), Variant(Box::new(peer_connected)));
                                 properties.insert(
                                     "UUIDs".into(),
                                     Variant(Box::new(vec![
@@ -1386,8 +1415,11 @@ mod tests {
                             msg.read3().unwrap();
                         match property.as_str() {
                             "Powered" => powered = value.0.as_i64() == Some(1),
-                            "Pairable" => pairable_out.store(value.0.as_i64() == Some(1), Ordering::Relaxed),
-                            "PairableTimeout" => pair_timeout_out.store(value.0.as_u64().unwrap() as usize, Ordering::Relaxed),
+                            "Pairable" => {
+                                pairable_out.store(value.0.as_i64() == Some(1), Ordering::Relaxed)
+                            }
+                            "PairableTimeout" => pair_timeout_out
+                                .store(value.0.as_u64().unwrap() as usize, Ordering::Relaxed),
                             "Trusted" => trusted = value.0.as_i64() == Some(1),
                             _ => panic!("unexpected property {property}"),
                         }
@@ -1395,8 +1427,11 @@ mod tests {
                     "Get" => {
                         let (_, property): (String, String) = msg.read2().unwrap();
                         reply = match property.as_str() {
-                            "Pairable" => reply.append1(Variant(pairable_out.load(Ordering::Relaxed))),
-                            "PairableTimeout" => reply.append1(Variant(pair_timeout_out.load(Ordering::Relaxed) as u32)),
+                            "Pairable" => {
+                                reply.append1(Variant(pairable_out.load(Ordering::Relaxed)))
+                            }
+                            "PairableTimeout" => reply
+                                .append1(Variant(pair_timeout_out.load(Ordering::Relaxed) as u32)),
                             "Paired" => reply.append1(Variant(paired)),
                             "Bonded" => reply.append1(Variant(bonded)),
                             _ => panic!("unexpected property {property}"),
@@ -1405,11 +1440,22 @@ mod tests {
                     "Pair" => {
                         assert!(pairable_out.load(Ordering::Relaxed));
                         assert_eq!(pair_timeout_out.load(Ordering::Relaxed), 90);
-                        paired = false; bonded = false; trusted = false; peer_connected = false;
+                        paired = false;
+                        bonded = false;
+                        trusted = false;
+                        peer_connected = false;
                         match pair_mode_out.load(Ordering::Relaxed) {
-                            0 => { paired = true; bonded = true; }
+                            0 => {
+                                paired = true;
+                                bonded = true;
+                            }
                             1 => paired = true, // successful Pair reply without persistent keys
-                            2 => reply = msg.error(&"org.bluez.Error.AuthenticationRejected".into(), c"injected pairing rejection"),
+                            2 => {
+                                reply = msg.error(
+                                    &"org.bluez.Error.AuthenticationRejected".into(),
+                                    c"injected pairing rejection",
+                                )
+                            }
                             3 => return true, // owner cancels an unanswered Pair
                             _ => unreachable!(),
                         }
@@ -1576,18 +1622,28 @@ mod tests {
         let peer = complete.devices[0].path.clone();
         pair_mode.store(1, Ordering::Relaxed);
         bt.commands.send(Command::Pair(peer.clone())).unwrap();
-        wait(&bt.events, |s| s.error.as_deref().is_some_and(|e| e.contains("saved bond")));
+        wait(&bt.events, |s| {
+            s.error.as_deref().is_some_and(|e| e.contains("saved bond"))
+        });
         assert_eq!(connects.load(Ordering::Relaxed), 0);
         assert!(!pairable.load(Ordering::Relaxed));
         assert_eq!(pair_timeout.load(Ordering::Relaxed), 180);
         pair_mode.store(2, Ordering::Relaxed);
         bt.commands.send(Command::Pair(peer.clone())).unwrap();
-        wait(&bt.events, |s| s.error.as_deref().is_some_and(|e| e.contains("AuthenticationRejected")));
+        wait(&bt.events, |s| {
+            s.error
+                .as_deref()
+                .is_some_and(|e| e.contains("AuthenticationRejected"))
+        });
         assert_eq!(connects.load(Ordering::Relaxed), 0);
         assert!(!pairable.load(Ordering::Relaxed));
         pair_mode.store(0, Ordering::Relaxed);
         bt.commands.send(Command::Pair(peer.clone())).unwrap();
-        let connected = wait(&bt.events, |s| s.devices.iter().any(|d| d.bonded && d.trusted && d.connected));
+        let connected = wait(&bt.events, |s| {
+            s.devices
+                .iter()
+                .any(|d| d.bonded && d.trusted && d.connected)
+        });
         assert!(connected.error.is_none());
         assert_eq!(connects.load(Ordering::Relaxed), 1);
         fail.store(true, Ordering::Relaxed);

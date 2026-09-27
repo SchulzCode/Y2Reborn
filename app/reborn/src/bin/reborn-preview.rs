@@ -102,11 +102,16 @@ fn ui() -> Ui {
     ui.saved_networks = vec![Item::new("Studio", "saved:7").with_secondary("Saved")];
     ui.bluetooth_devices = vec![
         reborn_ui::BluetoothDeviceView {
-            name: "Studio Headphones".into(), path: "/org/bluez/hci0/dev_PREVIEW".into(),
-            paired: true, bonded: true, connected: true, audio_ready: true,
+            name: "Studio Headphones".into(),
+            path: "/org/bluez/hci0/dev_PREVIEW".into(),
+            paired: true,
+            bonded: true,
+            connected: true,
+            audio_ready: true,
         },
         reborn_ui::BluetoothDeviceView {
-            name: "Portable Speaker".into(), path: "/org/bluez/hci0/dev_OTHER".into(),
+            name: "Portable Speaker".into(),
+            path: "/org/bluez/hci0/dev_OTHER".into(),
             ..Default::default()
         },
     ];
