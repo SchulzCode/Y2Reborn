@@ -464,10 +464,26 @@ impl Wifi {
         })
     }
 }
+// Control socket failures are missing observations, not radio link events.
+// Keep the last known association for counters only; the UI still receives the
+// current ERROR/STARTING state and must not present stale connectivity as live.
+fn association_transition(previous: &mut Option<bool>, state: &str) -> (bool, bool) {
+    let connected = match state {
+        "COMPLETED" => true,
+        "OFF" | "DISCONNECTED" | "INACTIVE" | "INTERFACE_DISABLED" => false,
+        _ => return (false, false),
+    };
+    let connects = connected && *previous != Some(true);
+    let disconnects = !connected && *previous == Some(true);
+    *previous = Some(connected);
+    (connects, disconnects)
+}
+
 fn run(log: Observer, rx: Receiver<Command>, et: SyncSender<Status>, paths: Paths) {
     let mut current = Status::default();
     let mut scan: Option<Scan> = None;
     let mut last = String::new();
+    let mut last_association = None;
     let mut operation_error = None;
     let mut refresh = Instant::now() - Duration::from_secs(4);
     let mut publish = true;
@@ -622,9 +638,11 @@ fn run(log: Observer, rx: Receiver<Command>, et: SyncSender<Status>, paths: Path
                 Some(id),
                 json!({"state":current.state,"ip":current.ip}),
             );
-            if current.state == "COMPLETED" {
+            let (connected, disconnected) =
+                association_transition(&mut last_association, &current.state);
+            if connected {
                 log.add("wifi_connects", 1.);
-            } else if last == "COMPLETED" {
+            } else if disconnected {
                 log.add("wifi_disconnects", 1.);
             }
             last = current.state.clone();
@@ -701,6 +719,50 @@ pub fn saved_test(id: u32) -> Result<serde_json::Value, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn missing_control_samples_and_scans_do_not_invent_link_cycles() {
+        let mut previous = None;
+        assert_eq!(
+            association_transition(&mut previous, "STARTING"),
+            (false, false)
+        );
+        assert_eq!(
+            association_transition(&mut previous, "COMPLETED"),
+            (true, false)
+        );
+        for state in [
+            "ERROR",
+            "STARTING",
+            "SCANNING",
+            "GROUP_HANDSHAKE",
+            "unknown",
+        ] {
+            assert_eq!(association_transition(&mut previous, state), (false, false));
+            assert_eq!(
+                association_transition(&mut previous, "COMPLETED"),
+                (false, false)
+            );
+        }
+        assert_eq!(
+            association_transition(&mut previous, "DISCONNECTED"),
+            (false, true)
+        );
+        assert_eq!(
+            association_transition(&mut previous, "ERROR"),
+            (false, false)
+        );
+        assert_eq!(
+            association_transition(&mut previous, "ASSOCIATING"),
+            (false, false)
+        );
+        assert_eq!(
+            association_transition(&mut previous, "COMPLETED"),
+            (true, false)
+        );
+        assert_eq!(association_transition(&mut previous, "OFF"), (false, true));
+        assert_eq!(association_transition(&mut previous, "OFF"), (false, false));
+    }
+
     #[test]
     fn platform_readiness_rejects_old_boot_and_stale_online_claims() {
         let value =
