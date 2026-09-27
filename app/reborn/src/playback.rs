@@ -1810,10 +1810,20 @@ mod tests {
         assert_eq!(frames.load(Ordering::Acquire), 4096);
         let samples = samples.lock().unwrap();
         assert!(samples[..512].iter().all(|s| *s == 0));
-        assert!(samples[800..1024].iter().all(|s| *s == 1 << 28));
-        assert!(samples[1300..1536].iter().all(|s| *s == 0));
-        assert!(samples[1820..2048].iter().all(|s| *s == 1 << 24));
-        assert!(samples[2400..].iter().all(|s| *s == 1 << 28));
+        // A volume update can race one already rendered 73-frame partial
+        // write. After that write plus the five-millisecond ramp, the exact
+        // target must hold; this bound is independent of host scheduling.
+        let settled_after = 73 + 44_100 / 200;
+        assert!(samples[512 + settled_after..1024]
+            .iter()
+            .all(|s| *s == 1 << 28));
+        assert!(samples[1024 + settled_after..1536].iter().all(|s| *s == 0));
+        assert!(samples[1536 + settled_after..2048]
+            .iter()
+            .all(|s| *s == 1 << 24));
+        assert!(samples[2048 + settled_after..]
+            .iter()
+            .all(|s| *s == 1 << 28));
         drop(samples);
         playback.shutdown(82).unwrap();
     }
