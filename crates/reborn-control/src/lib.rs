@@ -236,6 +236,12 @@ impl Server {
             .spawn(move || {
                 let mut clients: Vec<Client> = vec![];
                 loop {
+                    // With no clients there are no deadlines or replies to service.
+                    // Block in accept so an idle player does not wake 100 times/s.
+                    // Existing clients retain bounded nonblocking servicing.
+                    if listener.set_nonblocking(!clients.is_empty()).is_err() {
+                        break;
+                    }
                     if let Ok((stream, _)) = listener.accept() {
                         if clients.len() < 8 {
                             let _ = stream.set_nonblocking(true);
@@ -402,6 +408,68 @@ mod tests {
         };
         assert_eq!(parse(&serde_json::to_vec(&r).unwrap()).unwrap().id, 42);
     }
+    #[test]
+    fn idle_accept_and_partial_client_do_not_delay_other_requests() {
+        let root = std::env::temp_dir().join(format!(
+            "reborn-control-idle-{}-{}",
+            std::process::id(),
+            reborn_observability::wall_ms()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("control.sock");
+        let server = Server::spawn(&path, Observer::new(&root.join("logs")).unwrap()).unwrap();
+        // The listener has been idle before its first client arrives.
+        thread::sleep(Duration::from_millis(50));
+        let mut partial = UnixStream::connect(&path).unwrap();
+        partial.write_all(b"{\"version\":").unwrap();
+        let client_path = path.clone();
+        let client = thread::spawn(move || {
+            call(
+                &client_path,
+                &Request {
+                    version: 1,
+                    id: 42,
+                    command: Command::Status,
+                },
+            )
+        });
+        let envelope = server
+            .requests
+            .recv_timeout(Duration::from_secs(2))
+            .unwrap();
+        assert_eq!(envelope.request.id, 42);
+        envelope
+            .reply
+            .send(Response::error(42, "test response"))
+            .unwrap();
+        assert_eq!(client.join().unwrap().unwrap().id, 42);
+        drop(partial);
+        // Return to no clients, then accept a second request without a polling tick.
+        thread::sleep(Duration::from_millis(50));
+        let client_path = path.clone();
+        let client = thread::spawn(move || {
+            call(
+                &client_path,
+                &Request {
+                    version: 1,
+                    id: 43,
+                    command: Command::Status,
+                },
+            )
+        });
+        let envelope = server
+            .requests
+            .recv_timeout(Duration::from_secs(2))
+            .unwrap();
+        assert_eq!(envelope.request.id, 43);
+        envelope
+            .reply
+            .send(Response::error(43, "test response"))
+            .unwrap();
+        assert_eq!(client.join().unwrap().unwrap().id, 43);
+        fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn safe_test_discovery() {
         assert_eq!(TESTS.iter().filter(|(_, audible)| *audible).count(), 2);
