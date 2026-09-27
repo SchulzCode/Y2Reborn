@@ -12,6 +12,7 @@ pub enum Class {
     PlaybackNormal,
     PlaybackHeavy,
     Interactive,
+    ArtworkDecode,
     LibraryScan,
     NetworkTransfer,
     Maintenance,
@@ -23,6 +24,7 @@ impl Class {
             Self::PlaybackNormal => "PlaybackNormal",
             Self::PlaybackHeavy => "PlaybackHeavy",
             Self::Interactive => "Interactive",
+            Self::ArtworkDecode => "ArtworkDecode",
             Self::LibraryScan => "LibraryScan",
             Self::NetworkTransfer => "NetworkTransfer",
             Self::Maintenance => "Maintenance",
@@ -44,10 +46,15 @@ pub struct Hints {
 }
 impl Hints {
     pub fn publish(&mut self, class: Class) {
-        if self
-            .last
-            .is_some_and(|(old, when)| old == class && when.elapsed() < Duration::from_secs(1))
-        {
+        if self.last.is_some_and(|(old, when)| {
+            old == class
+                && when.elapsed()
+                    < if class == Class::Interactive {
+                        Duration::from_millis(50)
+                    } else {
+                        Duration::from_secs(1)
+                    }
+        }) {
             return;
         }
         if self.file.is_none() {
@@ -69,10 +76,32 @@ impl Hints {
             }
         }
     }
+    pub fn clear(&mut self) {
+        self.file = None;
+        self.last = None;
+    }
     pub fn interactive(&mut self) {
         // Each input gets a short lease; no continuous fixed-MHz selection.
-        self.last = None;
         self.publish(Class::Interactive);
+    }
+}
+/// Independent scoped hint. Dropping its descriptor releases kernel QoS;
+/// a wedged application also loses the hint after the bounded lease expiry.
+pub struct CpuWorkloadLease {
+    hints: Hints,
+    class: Class,
+}
+impl CpuWorkloadLease {
+    pub fn acquire_workload_hint(class: Class) -> Self {
+        let mut hints = Hints::default();
+        hints.publish(class);
+        Self { hints, class }
+    }
+    pub fn renew(&mut self) {
+        self.hints.publish(self.class);
+    }
+    pub fn release_workload_hint(self) {
+        drop(self);
     }
 }
 pub fn playback_class(playing: bool, heavy: bool, scanning: bool) -> Class {

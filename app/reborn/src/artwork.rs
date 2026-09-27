@@ -109,6 +109,9 @@ impl Drop for Worker {
     }
 }
 fn load(key: &Key, cancel: Cancel) -> Option<Vec<u8>> {
+    let _cpu_hint = reborn_platform::workload::CpuWorkloadLease::acquire_workload_hint(
+        reborn_platform::workload::Class::ArtworkDecode,
+    );
     if let Ok(mut decoder) = Decoder::open(&key.path, 44100, cancel) {
         if decoder.metadata.artwork {
             if let Ok(pixels) = decoder.artwork() {

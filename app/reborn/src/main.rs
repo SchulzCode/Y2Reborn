@@ -1638,6 +1638,7 @@ fn run() -> Result<(), String> {
         .map_err(|e| e.to_string())?;
     let mut inputs = inputs;
     let mut workload_hints = reborn_platform::workload::Hints::default();
+    let mut interaction_hints = reborn_platform::workload::Hints::default();
     let (mut periodic, mut checkpoint, mut render_time) = (
         Instant::now(),
         Instant::now(),
@@ -1776,9 +1777,14 @@ fn run() -> Result<(), String> {
             rt.dirty.mark_render();
         }
         rt.poll_pending_reconfiguration();
+        if rt.model.screen_off {
+            interaction_hints.clear();
+        }
         if let Some(input) = &mut inputs {
             for event in input.poll() {
-                workload_hints.interactive();
+                if !rt.model.screen_off {
+                    interaction_hints.interactive();
+                }
                 if let Some((_, _, _, events)) = &mut monitor {
                     if events.len() < 512 {
                         events.push(
