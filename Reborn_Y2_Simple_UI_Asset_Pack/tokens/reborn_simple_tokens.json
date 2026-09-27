@@ -1,0 +1,80 @@
+{
+  "meta": {
+    "product": "Reborn",
+    "device": "Y2",
+    "screen": {
+      "width": 480,
+      "height": 360
+    },
+    "touch": false,
+    "design_variant": "Simple Minimal"
+  },
+  "colors": {
+    "background": "#090B0D",
+    "backgroundRaised": "#0F1215",
+    "panel": "#15191D",
+    "panelAlt": "#1B2025",
+    "divider": "#2B3036",
+    "textPrimary": "#F2F0EB",
+    "textSecondary": "#A7A9AC",
+    "textMuted": "#74787E",
+    "accent": "#E7C98B",
+    "accentBright": "#FFE2A4",
+    "focusFill": "#201C16",
+    "track": "#3B4148"
+  },
+  "typography": {
+    "family": {
+      "ui": [
+        "Inter",
+        "Noto Sans",
+        "DejaVu Sans"
+      ]
+    },
+    "sizesPx": {
+      "hero": 26,
+      "screenTitle": 20,
+      "section": 18,
+      "rowPrimary": 15,
+      "body": 14,
+      "secondary": 12,
+      "micro": 10
+    },
+    "weights": {
+      "regular": 400,
+      "medium": 500,
+      "semibold": 600
+    }
+  },
+  "spacingPx": {
+    "base": 4,
+    "xs": 4,
+    "sm": 8,
+    "md": 12,
+    "lg": 16,
+    "xl": 24,
+    "screenMargin": 16
+  },
+  "radiiPx": {
+    "small": 6,
+    "medium": 10,
+    "large": 14,
+    "pill": 999
+  },
+  "layout": {
+    "statusBarHeight": 28,
+    "footerBarHeight": 36,
+    "minRowHeight": 42,
+    "preferredVisibleRows": 5,
+    "albumArtNowPlaying": 164,
+    "albumThumb": 40,
+    "leftSidebarWidth": 118
+  },
+  "focus": {
+    "outlineWidth": 2,
+    "outlineColor": "#FFE2A4",
+    "fill": "#201C16",
+    "glowRadiusPx": 4,
+    "behavior": "single focus target only"
+  }
+}

@@ -1,0 +1,7 @@
+QWidget { background:#090B0D; color:#F2F0EB; font-family:"Inter","Noto Sans",sans-serif; }
+QFrame[role="panel"] { background:#15191D; border:1px solid #2B3036; border-radius:10px; }
+QLabel[role="secondary"] { color:#A7A9AC; }
+QLabel[role="muted"] { color:#74787E; }
+QWidget[focused="true"] { background:#201C16; border:2px solid #FFE2A4; border-radius:10px; }
+QProgressBar { background:#3B4148; border:none; border-radius:2px; min-height:4px; max-height:4px; }
+QProgressBar::chunk { background:#E7C98B; border-radius:2px; }
