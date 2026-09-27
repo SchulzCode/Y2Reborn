@@ -1635,6 +1635,7 @@ fn run() -> Result<(), String> {
         })
         .map_err(|e| e.to_string())?;
     let mut inputs = inputs;
+    let mut workload_hints = reborn_platform::workload::Hints::default();
     let (mut periodic, mut checkpoint, mut render_time) = (
         Instant::now(),
         Instant::now(),
@@ -1775,6 +1776,7 @@ fn run() -> Result<(), String> {
         rt.poll_pending_reconfiguration();
         if let Some(input) = &mut inputs {
             for event in input.poll() {
+                workload_hints.interactive();
                 if let Some((_, _, _, events)) = &mut monitor {
                     if events.len() < 512 {
                         events.push(
@@ -2289,6 +2291,14 @@ fn run() -> Result<(), String> {
             let _ = reply.try_send(response);
         }
         if periodic.elapsed() > Duration::from_secs(2) {
+            workload_hints.publish(reborn_platform::workload::playback_class(
+                matches!(
+                    rt.model.playback,
+                    PlaybackState::Playing | PlaybackState::Buffering
+                ),
+                rt.model.settings.crossfade_ms > 0,
+                rt.model.library.scanning,
+            ));
             periodic = Instant::now();
             let next_power = power::status();
             if next_power["supplies"] != rt.power["supplies"] {
@@ -2531,7 +2541,10 @@ fn power_view(status: &Value) -> PowerView {
     let charging = battery
         .and_then(|supply| supply["status"].as_str())
         .is_some_and(|status| matches!(status, "Charging" | "Full"));
-    PowerView { charging }
+    PowerView {
+        charging,
+        percent: power::battery_percent(status),
+    }
 }
 
 fn main() {

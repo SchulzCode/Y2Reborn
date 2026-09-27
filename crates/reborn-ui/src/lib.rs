@@ -108,6 +108,7 @@ impl RadioView {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct PowerView {
     pub charging: bool,
+    pub percent: Option<u8>,
 }
 
 #[derive(Clone, Debug, Default)]

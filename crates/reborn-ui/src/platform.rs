@@ -284,8 +284,18 @@ pub fn rows(m: &AppModel, id: &str) -> Vec<Item> {
         "power" => {
             let mut r = vec![fact(
                 "Battery level",
-                "Percentage and runtime are unavailable",
+                s["power"]["soc_percent"]
+                    .as_u64()
+                    .filter(|p| *p <= 100)
+                    .map(|p| format!("{p}%"))
+                    .unwrap_or_else(|| "Percentage unavailable".into()),
             )];
+            r.push(field("SOC source", &s["power"]["soc_source"]));
+            r.push(field("SOC confidence", &s["power"]["soc_confidence"]));
+            r.push(field(
+                "Calibration",
+                &s["power"]["battery"]["calibration_source"],
+            ));
             for supply in entries(&s["power"]["supplies"]) {
                 r.push(fact(
                     &value(&supply["name"]),
@@ -323,7 +333,14 @@ pub fn rows(m: &AppModel, id: &str) -> Vec<Item> {
                 "Low-battery policy",
                 &s["power"]["low_battery"]["state"],
             ));
-            r.push(fact("Measured current / pack temperature", "Unavailable"));
+            r.push(field(
+                "Measured current (uA)",
+                &s["power"]["measured_current_ua"],
+            ));
+            r.push(field(
+                "Pack temperature (mC)",
+                &s["power"]["pack_temperature"],
+            ));
             r
         }
         "storage" => {

@@ -210,8 +210,18 @@ pub fn status_bar(
         c.icon("bluetooth", 378., 5., 18., color::TEXT_SECONDARY);
     }
     c.icon("battery", 438., 4., 22., color::TEXT_SECONDARY);
+    if let Some(percent) = power.percent.filter(|p| *p <= 100) {
+        c.text_box(
+            400.,
+            8.,
+            36.,
+            &format!("{percent}%"),
+            type_scale::SECONDARY,
+            color::TEXT_SECONDARY,
+        );
+    }
     if power.charging {
-        c.text(414., 7., "+", type_scale::BODY, color::ACCENT_GOLD);
+        c.text(466., 7., "+", type_scale::BODY, color::ACCENT_GOLD);
     }
 }
 pub fn title(c: &mut Canvas, name: &str, detail: &str) {

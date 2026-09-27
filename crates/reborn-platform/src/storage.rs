@@ -61,7 +61,7 @@ pub fn sources(music: &Path) -> Vec<Source> {
             if !internal && !Path::new(&m.device).exists() {
                 continue;
             }
-            let uuid =
+            let mut uuid =
                 super::filesystem_uuid(&m.device).unwrap_or_else(|| format!("device:{}", m.device));
             let observed_mount = mountinfo
                 .iter()
@@ -72,6 +72,11 @@ pub fn sources(music: &Path) -> Vec<Source> {
                     .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok());
                 let boot =
                     fs::read_to_string("/proc/sys/kernel/random/boot_id").unwrap_or_default();
+                if uuid.starts_with("device:") {
+                    if let Some(identity) = claim.as_ref().and_then(uuidless_identity) {
+                        uuid = identity;
+                    }
+                }
                 let instance = claim.as_ref().and_then(|v| {
                     let device = v["device_id"].as_str()?;
                     if device.len() > 24 || !device.bytes().all(|b| b.is_ascii_digit() || b == b':')
@@ -131,13 +136,44 @@ fn sd_claim_matches(
         c["schema"].as_u64() == Some(1)
             && !boot.is_empty()
             && c["boot_id"].as_str() == Some(boot)
-            && c["uuid"].as_str() == Some(uuid)
+            && (c["uuid"].as_str() == Some(uuid)
+                || (c["uuid"].is_null()
+                    && c["identity"]["id"]
+                        .as_str()
+                        .is_some_and(|id| uuid == format!("cid:{id}"))))
             && mount.is_some()
             && c["mount_id"].as_u64() == mount
             && c["state"].as_str() == Some("Ready")
             && instance.is_some()
             && c["source_instance"].as_str() == instance
     })
+}
+fn uuidless_identity(claim: &serde_json::Value) -> Option<String> {
+    let device = claim["device_id"].as_str()?;
+    if !device.bytes().all(|b| b.is_ascii_digit() || b == b':') || device.len() > 24 {
+        return None;
+    }
+    let entry = fs::canonicalize(format!("/sys/dev/block/{device}")).ok()?;
+    if !entry.to_string_lossy().contains("/11240000.mmc/") {
+        return None;
+    }
+    for field in ["start", "size"] {
+        let current = fs::read_to_string(entry.join(field)).ok()?;
+        if claim["identity"]["geometry"][field].as_str() != Some(current.trim()) {
+            return None;
+        }
+    }
+    let disk = if entry.join("partition").exists() {
+        entry.parent()?
+    } else {
+        &entry
+    };
+    let cid = fs::read_to_string(disk.join("device/cid")).ok()?;
+    if claim["identity"]["cid"].as_str() != Some(cid.trim()) {
+        return None;
+    }
+    let id = claim["identity"]["id"].as_str()?;
+    (id.len() == 64 && id.bytes().all(|c| c.is_ascii_hexdigit())).then(|| format!("cid:{id}"))
 }
 pub fn platform_manages_media() -> bool {
     Path::new("/etc/y2linux/platform-contract").exists()

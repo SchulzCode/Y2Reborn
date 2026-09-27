@@ -32,8 +32,32 @@ pub fn status() -> Value {
         }
         supplies.push(item);
     }
-    json!({"supplies":supplies,"backlight":backlight().map(|p|p.to_string_lossy().into_owned()),
-        "platform":fs::read("/run/y2/power.json").ok().and_then(|b|serde_json::from_slice::<Value>(&b).ok())})
+    let boot = fs::read_to_string("/proc/sys/kernel/random/boot_id").unwrap_or_default();
+    let platform = fs::read("/run/y2/power.json")
+        .ok()
+        .filter(|b| b.len() <= 8192)
+        .and_then(|b| serde_json::from_slice::<Value>(&b).ok())
+        .filter(|v| {
+            crate::native::monotonic_seconds().is_some_and(|now| fresh_record(v, boot.trim(), now))
+        });
+    json!({"supplies":supplies,"backlight":backlight().map(|p|p.to_string_lossy().into_owned()),"platform":platform})
+}
+fn fresh_record(value: &Value, boot: &str, now: f64) -> bool {
+    value["boot_id"].as_str() == Some(boot)
+        && !boot.is_empty()
+        && value["monotonic_ns"].as_u64().is_some_and(|ns| {
+            let age = now - ns as f64 / 1_000_000_000.;
+            (0.0..5.0).contains(&age)
+        })
+}
+pub fn battery_percent(status: &Value) -> Option<u8> {
+    let battery = &status["platform"]["battery"];
+    let source = battery["source"].as_str()?;
+    if !matches!(source, "fuel_gauge" | "hybrid" | "voltage_estimate") {
+        return None;
+    }
+    let percent = battery["percent"].as_u64()?;
+    (percent <= 100).then_some(percent as u8)
 }
 fn backlight() -> Option<PathBuf> {
     fs::read_dir("/sys/class/backlight")
