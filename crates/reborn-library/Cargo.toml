@@ -11,3 +11,4 @@ rusqlite.workspace = true
 reborn-core = { path = "../reborn-core" }
 reborn-media = { path = "../reborn-media" }
 reborn-observability = { path = "../reborn-observability" }
+reborn-platform = { path = "../reborn-platform" }

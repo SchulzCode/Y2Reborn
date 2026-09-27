@@ -26,6 +26,8 @@ use std::{
     time::{Duration, Instant},
 };
 struct Runtime {
+    playback_hints: reborn_platform::workload::Hints,
+    interaction_hints: reborn_platform::workload::Hints,
     model: AppModel,
     ui: Ui,
     platform_dashboard: Option<reborn_platform::dashboard::Dashboard>,
@@ -418,6 +420,13 @@ impl Runtime {
         }
     }
     fn load(&mut self) -> Result<(), String> {
+        // Restore coordinator-owned cores before decoder/device startup.
+        self.playback_hints
+            .publish(reborn_platform::workload::playback_class(
+                true,
+                self.model.settings.crossfade_ms > 0 || self.model.settings.eq_enabled,
+                false,
+            ));
         self.reconfiguration_attempted = true;
         let track = self.model.current().cloned().ok_or("queue is empty")?;
         if !track.path.is_file() {
@@ -557,6 +566,7 @@ impl Runtime {
         }
     }
     fn pause(&mut self) {
+        self.playback_hints.clear();
         self.abandon_pending_reconfiguration();
         self.log.emit(
             Level::Info,
@@ -1021,6 +1031,7 @@ impl Runtime {
                 .try_send(bluetooth::Command::Confirm(ok))
                 .map_err(|_| "Bluetooth busy")?,
             Effect::ScreenSleep => {
+                self.interaction_hints.clear();
                 if self.model.screen_off {
                     return Ok(());
                 }
@@ -1545,6 +1556,8 @@ fn run() -> Result<(), String> {
     )
     .map_err(|e| e.to_string())?;
     let mut rt = Runtime {
+        playback_hints: reborn_platform::workload::Hints::default(),
+        interaction_hints: reborn_platform::workload::Hints::default(),
         model,
         ui,
         platform_observer: if headless {
@@ -1637,8 +1650,7 @@ fn run() -> Result<(), String> {
         })
         .map_err(|e| e.to_string())?;
     let mut inputs = inputs;
-    let mut workload_hints = reborn_platform::workload::Hints::default();
-    let mut interaction_hints = reborn_platform::workload::Hints::default();
+    let mut workload_tick = Instant::now();
     let (mut periodic, mut checkpoint, mut render_time) = (
         Instant::now(),
         Instant::now(),
@@ -1778,12 +1790,12 @@ fn run() -> Result<(), String> {
         }
         rt.poll_pending_reconfiguration();
         if rt.model.screen_off {
-            interaction_hints.clear();
+            rt.interaction_hints.clear();
         }
         if let Some(input) = &mut inputs {
             for event in input.poll() {
                 if !rt.model.screen_off {
-                    interaction_hints.interactive();
+                    rt.interaction_hints.interactive();
                 }
                 if let Some((_, _, _, events)) = &mut monitor {
                     if events.len() < 512 {
@@ -2295,15 +2307,19 @@ fn run() -> Result<(), String> {
             };
             let _ = reply.try_send(response);
         }
+        if workload_tick.elapsed() >= Duration::from_secs(1) {
+            workload_tick = Instant::now();
+            rt.playback_hints
+                .publish(reborn_platform::workload::playback_class(
+                    matches!(
+                        rt.model.playback,
+                        PlaybackState::Playing | PlaybackState::Buffering
+                    ),
+                    rt.model.settings.crossfade_ms > 0 || rt.model.settings.eq_enabled,
+                    false, // The scanner owns its independent scoped lease.
+                ));
+        }
         if periodic.elapsed() > Duration::from_secs(2) {
-            workload_hints.publish(reborn_platform::workload::playback_class(
-                matches!(
-                    rt.model.playback,
-                    PlaybackState::Playing | PlaybackState::Buffering
-                ),
-                rt.model.settings.crossfade_ms > 0,
-                rt.model.library.scanning,
-            ));
             periodic = Instant::now();
             let next_power = power::status();
             if next_power["supplies"] != rt.power["supplies"] {

@@ -265,6 +265,7 @@ dependencies = [
  "reborn-core",
  "reborn-media",
  "reborn-observability",
+ "reborn-platform",
  "rusqlite",
  "serde",
  "serde_json",

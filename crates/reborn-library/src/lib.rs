@@ -669,6 +669,9 @@ fn scan_sources_with_identity(
     stop: &AtomicBool,
     identity_is_current: impl Fn(&Source) -> bool,
 ) -> Result<ScanMetrics, String> {
+    let mut workload = reborn_platform::workload::CpuWorkloadLease::acquire_workload_hint(
+        reborn_platform::workload::Class::LibraryScan,
+    );
     let start = Instant::now();
     let id = log.correlation();
     let seen = reborn_observability::wall_ms() as i64;
@@ -734,6 +737,7 @@ fn scan_sources_with_identity(
                 }
             };
             for entry in entries {
+                workload.renew();
                 let entry = match entry {
                     Ok(e) => e,
                     Err(_) => {
