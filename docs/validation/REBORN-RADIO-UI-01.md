@@ -1,5 +1,10 @@
 # REBORN-RADIO-UI-01 — scan feedback correction
 
+<!-- knowledge-base-scope: scoped-validation-record -->
+> **Historical record.** The dates, candidate identity, "current" claims,
+> next steps and permissions below belong to this recorded boundary. See
+> [current state](../CURRENT_REBORN_STATE.md) for the latest physically observed result.
+
 **Built and validated; stop for owner manual installation.** The running device
 still has source `6209f48`. This correction has not been installed or physically
 qualified. It builds on the owner-installed, working splash update and keeps its

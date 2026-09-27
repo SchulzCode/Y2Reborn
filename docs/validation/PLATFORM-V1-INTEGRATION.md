@@ -1,5 +1,11 @@
 # Platform v1 application integration
 
+**Historical software candidate.** The pair below remains exact for that build,
+not the Fix01 image. [Current Reborn state](../CURRENT_REBORN_STATE.md) and the
+[Fix01 physical report](../../../Y2Linux/docs/validation/Y2-CPU-FINAL-FIX01-PHYSICAL-QUALIFICATION.md)
+now show all eight real workload producers and bounded wired playback, while the
+paired CPU platform fails deeper idle, high-OPP and suspend acceptance.
+
 The validated candidate source pair is Linux
 `d04b95aaff713edf943042d97a4c6134ca19fc24` / Reborn
 `6c8aa128550ec80addd08ef3145e9d5a846ddf2e`. Closing commits change documentation

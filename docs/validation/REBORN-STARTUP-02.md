@@ -1,5 +1,10 @@
 # Reborn startup latency correction
 
+<!-- knowledge-base-scope: scoped-validation-record -->
+> **Historical record.** The dates, candidate identity, "current" claims,
+> next steps and permissions below belong to this recorded boundary. See
+> [current state](../CURRENT_REBORN_STATE.md) for the latest physically observed result.
+
 The owner-installed audio candidate was inspected read-only after the report
 that the startup splash remained visible for too long. The retained boot trace
 showed the splash visible at `0.828 s`, Y2ROOT completing its handoff at

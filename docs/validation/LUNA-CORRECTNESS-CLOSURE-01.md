@@ -1,5 +1,10 @@
 # Luna correctness closure 01
 
+<!-- knowledge-base-scope: scoped-validation-record -->
+> **Historical record.** The dates, candidate identity, "current" claims,
+> next steps and permissions below belong to this recorded boundary. See
+> [current state](../CURRENT_REBORN_STATE.md) for the latest physically observed result.
+
 Started: 2026-09-22. Final candidate evidence updated: 2026-09-23. This is a
 software-only closure record for the finite findings in the latest independent
 review. No physical Y2 was accessed, paired, configured, flashed, or tested.

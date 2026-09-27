@@ -1,5 +1,11 @@
 # Luna stabilization review — source findings
 
+**Historical review scope, 2026-09-22.** This review found specific software
+defects at the revisions it inspected. See the
+[later correctness closure](../validation/LUNA-CORRECTNESS-CLOSURE-01.md) and
+[current application state](../CURRENT_REBORN_STATE.md) before interpreting
+remaining-work or release statements as current.
+
 2026-09-22. Companion to [CURRENT_PROJECT_STATE.md](CURRENT_PROJECT_STATE.md), which contains the complete project overview, dependency assessment and test-failure classification. No implementation changes, builds, device access or flashing were performed by this review.
 
 Scope: Reborn `011884b7…` → `8a1443d…`; Linux `be7e64c…` → `8e5b53b…`. Source findings below distinguish a reproducible sample defect from source-traced control/error paths; they are not claimed physical reproductions.

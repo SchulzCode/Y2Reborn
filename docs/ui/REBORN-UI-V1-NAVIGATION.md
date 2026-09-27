@@ -1,5 +1,10 @@
 # Reborn UI v1 navigation and focus map
 
+<!-- knowledge-base-scope: ui-design-/-scoped-candidate -->
+> **Historical record.** The dates, candidate identity, "current" claims,
+> next steps and permissions below belong to this recorded boundary. See
+> [current state](../CURRENT_REBORN_STATE.md) for the latest physically observed result.
+
 All rows traverse top-to-bottom in displayed order, skipping disabled actions.
 Visible windows contain five rows, or three below album/artist art. Counter shows
 position/total. Select opens/acts; Back restores parent filter/focus/scroll. Long

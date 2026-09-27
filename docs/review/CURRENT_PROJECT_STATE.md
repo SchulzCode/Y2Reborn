@@ -1,5 +1,13 @@
 # Current Y2Linux + Y2Reborn project state
 
+**Historical 2026-09-22 review at the exact commits below.** Its "current",
+"next" and unmet-implementation findings describe that audit snapshot. Some
+software defects were later corrected and real Fix01 workload/playback behavior
+was tested; the overall CPU platform still fails acceptance. Use
+[current Reborn state](../CURRENT_REBORN_STATE.md) and the paired
+[Linux state](../../../Y2Linux/docs/CURRENT_PLATFORM_STATE.md) for today's
+status. The original review conclusions remain available as dated evidence.
+
 **Review date: 2026-09-22. Read-only engineering review; documentation is the only change.**
 
 ## 1. Executive summary
@@ -346,7 +354,10 @@ These are distinct from implemented-but-unqualified SBC, Wi-Fi association, char
 | Public alpha | **Not ready** | Private-alpha evidence plus distributable inputs/assets, ownership-neutral provisioning, supported-hardware statement, reproducible acquisition and clear installation/recovery/support boundaries. Do not distribute owner keys/bonds/calibration. |
 | Beta / stable | **Not ready** | Sustained playback/memory/storage endurance, power and suspend qualification for advertised behavior, fault recovery, performance/UX polish and maintained regression/release evidence. |
 
-The current package is [software-modernization-01](../../../Y2Linux/out/y2linux-reborn-software-modernization-01/manifest.json). Its identity/contents are useful build evidence; its name and passing validators do not elevate its readiness level.
+The package inspected in this historical review was the private local
+`Y2Linux/out/y2linux-reborn-software-modernization-01/manifest.json`. Its exact
+contents were useful build evidence at the time; the ignored `out/` path is not
+a public documentation link, and its name/validators do not elevate readiness.
 
 ## 14. Next development paths
 

@@ -1,5 +1,12 @@
 # Reborn UI v1 implementation and candidate report
 
+**Historical software receipt.** Its unchanged candidate identities and
+owner-review status refer to that UI build. A later installed Fix01 image
+physically exercised real wheel/workload paths, but no separate visual,
+accessibility or analog playback acceptance was made. See
+[current application state](../CURRENT_REBORN_STATE.md) and the
+[Fix01 physical report](../../../Y2Linux/docs/validation/Y2-CPU-FINAL-FIX01-PHYSICAL-QUALIFICATION.md).
+
 Status: software candidate ready for owner-controlled physical review. No device
 access, flash, push, history rewrite, identity change or platform implementation
 change occurred. Existing user documentation, untracked design/review material and

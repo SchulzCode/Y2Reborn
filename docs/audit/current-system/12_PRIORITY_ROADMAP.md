@@ -1,5 +1,10 @@
 # Proposed correction sequence — no implementation authorization
 
+<!-- knowledge-base-scope: historical-audit/review -->
+> **Historical record.** The dates, candidate identity, "current" claims,
+> next steps and permissions below belong to this recorded boundary. See
+> [current state](../../CURRENT_REBORN_STATE.md) for the latest physically observed result.
+
 This is the audit's proposed order, not a newly activated implementation milestone. Before activating/closing/crossing a major boundary or expanding hardware/memory/production scope, repeat the [standing roadmap/gap audit](../../../../Y2Linux/docs/planning/roadmap-gap-audit.md#standing-milestone-boundary-rule) with real evidence and update the authoritative roadmap. Owner selection is required after this audit. Do not infer permission to flash, change charging, reclaim memory or enable S32 from this list.
 
 ## P0 — must fix before continuing feature work

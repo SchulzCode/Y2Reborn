@@ -1,5 +1,10 @@
 # Executed checks and provenance limits
 
+<!-- knowledge-base-scope: historical-audit/review -->
+> **Historical record.** The dates, candidate identity, "current" claims,
+> next steps and permissions below belong to this recorded boundary. See
+> [current state](../../CURRENT_REBORN_STATE.md) for the latest physically observed result.
+
 Date: 2026-09-22. Repository HEADs are in [scope](00_SCOPE_AND_EVIDENCE.md). All tests were host-side; no SSH, USB-device command, flashing or power/radio operation was issued. No Cargo/kernel/Buildroot build was run. Test scripts used their own temporary directories; production source/configuration was not edited. Only this audit directory was added.
 
 ## Commands actually executed

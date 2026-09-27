@@ -1,5 +1,10 @@
 # Executive assessment
 
+<!-- knowledge-base-scope: historical-audit/review -->
+> **Historical record.** The dates, candidate identity, "current" claims,
+> next steps and permissions below belong to this recorded boundary. See
+> [current state](../../CURRENT_REBORN_STATE.md) for the latest physically observed result.
+
 **Keep the architecture; stabilize its integration contracts.** This is a substantial working embedded-platform foundation with a credible application skeleton, not a production-ready music player. The largest problems are specific lifecycle/state/data-integrity defects and unclosed physical qualification—not a need for another framework, another UI rewrite, or more abstraction layers.
 
 Assessment: platform layering is generally sound; application layering is promising but incompletely enforced; release engineering and validation are behind implementation. Overall **PARTIAL / HIGH confidence**. Public beta or stable claims would be premature. A tightly scoped owner/developer alpha becomes credible after the P0 correctness work and P1 installation, power, persistence and audio evidence gates.

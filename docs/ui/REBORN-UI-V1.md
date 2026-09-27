@@ -1,5 +1,11 @@
 # Reborn UI v1
 
+**Software design/candidate scope.** The real Fix01 run exercised wheel key
+events, semantic Interactive/Artwork/Playback/Scan leases and bounded playback,
+but it was not a visual-legibility, analog-listening or full UI endurance review.
+See [current Reborn state](../CURRENT_REBORN_STATE.md) and the
+[physical report](../../../Y2Linux/docs/validation/Y2-CPU-FINAL-FIX01-PHYSICAL-QUALIFICATION.md).
+
 Owner-review software candidate for the 480×360 Y2 and frozen Y2Linux Platform
 v1. This is a native GLES application with a wheel and physical buttons. It has
 no touch, mouse, swipe, drag, hover, gesture unlock or on-screen transport buttons.

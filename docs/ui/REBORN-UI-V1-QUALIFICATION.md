@@ -1,5 +1,10 @@
 # Reborn UI v1 owner qualification
 
+<!-- knowledge-base-scope: ui-design-/-scoped-candidate -->
+> **Historical record.** The dates, candidate identity, "current" claims,
+> next steps and permissions below belong to this recorded boundary. See
+> [current state](../CURRENT_REBORN_STATE.md) for the latest physically observed result.
+
 Software candidate only. No screenshot, host test or ARM emulation result is a
 physical pass. Confirm the candidate hashes and exact required Platform v1
 BOOTIMG before any owner-controlled installation. Ordinary review/update must

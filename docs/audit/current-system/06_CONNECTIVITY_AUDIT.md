@@ -1,5 +1,10 @@
 # Connectivity audit
 
+<!-- knowledge-base-scope: historical-audit/review -->
+> **Historical record.** The dates, candidate identity, "current" claims,
+> next steps and permissions below belong to this recorded boundary. See
+> [current state](../../CURRENT_REBORN_STATE.md) for the latest physically observed result.
+
 ## Shared hardware authority
 
 **IMPLEMENTED / HIGH; limited physical functions VERIFIED.** The native stack has one CONSYS kernel owner for shared rails, reset, SPM domains, BTIF/DMA, STP/WMT commands, firmware and calibration. Wi-Fi is exposed through cfg80211; Bluetooth through HCI/BlueZ. Reborn is not running a second vendor hardware-control stack.

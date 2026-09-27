@@ -1,5 +1,10 @@
 # Reborn UI v1 native previews
 
+<!-- knowledge-base-scope: ui-design-/-scoped-candidate -->
+> **Historical record.** The dates, candidate identity, "current" claims,
+> next steps and permissions below belong to this recorded boundary. See
+> [current state](../../../CURRENT_REBORN_STATE.md) for the latest physically observed result.
+
 69 individual PNGs at exactly 480×360, plus a contact sheet preserving the native
 screen size. All content is isolated preview fixture data, including the artwork;
 it is not installed in the player. These are actual production layout/text/icon

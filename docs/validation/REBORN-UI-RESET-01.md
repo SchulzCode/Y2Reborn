@@ -1,5 +1,10 @@
 # Reborn UI reset 01
 
+<!-- knowledge-base-scope: scoped-validation-record -->
+> **Historical record.** The dates, candidate identity, "current" claims,
+> next steps and permissions below belong to this recorded boundary. See
+> [current state](../CURRENT_REBORN_STATE.md) for the latest physically observed result.
+
 This is the presentation-layer reset for the supplied Reborn Y2 UI
 Implementation Pack. It keeps the existing playback, media, library, storage,
 radio, power, persistence, diagnostics, and service architecture. Y2Linux was

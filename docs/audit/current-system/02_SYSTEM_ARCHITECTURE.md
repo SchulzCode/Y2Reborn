@@ -1,5 +1,10 @@
 # Actual system architecture
 
+<!-- knowledge-base-scope: historical-audit/review -->
+> **Historical record.** The dates, candidate identity, "current" claims,
+> next steps and permissions below belong to this recorded boundary. See
+> [current state](../../CURRENT_REBORN_STATE.md) for the latest physically observed result.
+
 Source authorities and commits are in [scope](00_SCOPE_AND_EVIDENCE.md). Arrows below describe existing ownership/data flow, not a proposed product.
 
 ## Boot and persistent storage

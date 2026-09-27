@@ -1,5 +1,10 @@
 # LUNA Software Modernization 01
 
+<!-- knowledge-base-scope: scoped-validation-record -->
+> **Historical record.** The dates, candidate identity, "current" claims,
+> next steps and permissions below belong to this recorded boundary. See
+> [current state](../CURRENT_REBORN_STATE.md) for the latest physically observed result.
+
 Date: 2026-09-22
 Scope: software stabilization, userspace modernization, reproducible ARMv7 candidate build
 Hardware scope: unchanged; no flash, boot-mode change, charging experiment, suspend experiment, bond change, credential change, protected-partition access, or Y2DATA replacement

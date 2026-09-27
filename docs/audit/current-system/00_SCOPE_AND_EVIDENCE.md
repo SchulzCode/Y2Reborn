@@ -1,5 +1,10 @@
 # Y2Linux + Y2Reborn: current-system audit
 
+<!-- knowledge-base-scope: historical-audit/review -->
+> **Historical record.** The dates, candidate identity, "current" claims,
+> next steps and permissions below belong to this recorded boundary. See
+> [current state](../../CURRENT_REBORN_STATE.md) for the latest physically observed result.
+
 Audit date: 2026-09-22. This is one product review, not two independent repository reviews. No production code, configuration, firmware, Git identity, milestones or hardware state was changed. No build, flash, device connection, charging experiment or production commit was performed. Recommendations are proposals, not implementation or hardware authorization.
 
 ## Exact scope

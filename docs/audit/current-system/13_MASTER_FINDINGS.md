@@ -1,5 +1,10 @@
 # Master findings table
 
+<!-- knowledge-base-scope: historical-audit/review -->
+> **Historical record.** The dates, candidate identity, "current" claims,
+> next steps and permissions below belong to this recorded boundary. See
+> [current state](../../CURRENT_REBORN_STATE.md) for the latest physically observed result.
+
 Read [scope/labels](00_SCOPE_AND_EVIDENCE.md) before interpreting a row. Classification is the decision category; Evidence state uses the requested VERIFIED/IMPLEMENTED/PARTIAL/WEAK/MISSING/UNKNOWN labels. Confidence concerns the stated finding, not unperformed hardware tests. HIGH severity does not mean a physical failure was observed. No newly demonstrated protected-partition destruction or battery incident is alleged.
 
 P0 = before more feature work; P1 = before public testing; P2 = before stable; P3 = cleanup/future. “Conditional” means blocker only if that capability is offered. GOOD rows use LOW severity because they are preservation recommendations, not defects.

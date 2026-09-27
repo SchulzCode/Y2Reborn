@@ -1,5 +1,10 @@
 # Live user volume
 
+<!-- knowledge-base-scope: source-contract -->
+> **Source-contract scope.** This page describes software ownership and
+> interface behavior. See [current state](../CURRENT_REBORN_STATE.md) for the exact latest image
+> and physical limits; implemented or enabled does not mean qualified.
+
 Volume keys and `rebornctl volume` update an atomic sink-worker target. They do
 not invalidate the playback generation, seek, rebuild the FFmpeg filter graph,
 or reopen ALSA. This addresses the owner-observed SBC pause and “starting audio”

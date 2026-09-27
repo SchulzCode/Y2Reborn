@@ -1,5 +1,10 @@
 # Reborn application audit
 
+<!-- knowledge-base-scope: historical-audit/review -->
+> **Historical record.** The dates, candidate identity, "current" claims,
+> next steps and permissions below belong to this recorded boundary. See
+> [current state](../../CURRENT_REBORN_STATE.md) for the latest physically observed result.
+
 ## Architecture judgment
 
 The existing architecture is worth retaining. Core/UI/runtime forbid unsafe Rust; native contexts are behind purpose-specific C boundaries with Rust lifetime wrappers. The database has one owner, rendering is on one thread, and audio decoding is not performed in draw functions. Typed `Action`, `Effect` and service events are more useful here than introducing a new state-management framework. **IMPLEMENTED / HIGH**, with several meaningful host tests.

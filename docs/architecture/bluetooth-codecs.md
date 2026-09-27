@@ -1,5 +1,15 @@
 # Bluetooth codecs: current capability audit and proposed Auto policy
 
+**Historical audit/design at its 2026-09-22 revisions.** Later Hardware Final
+source/ARM work compiled a private optional-encoder profile and implemented a
+gated Auto control, while normal radio launch keeps optional endpoints disabled.
+This supersedes the audit's "no source/binary integration" statement **only for
+the later candidate**. Fix01 physically demonstrates a bounded CONSYS retry,
+not peer codec audio. [Current application state](../CURRENT_REBORN_STATE.md),
+[current platform contract](../../../Y2Linux/docs/architecture/platform-bluetooth-v1.md),
+and [later codec source work](../../../Y2Linux/docs/validation/Y2-HARDWARE-FINAL-RADIO-AUDIO.md)
+separate those scopes. The recommendation below is not implementation authority.
+
 Date: 2026-09-22. Scope: Y2Linux and Y2Reborn as one product.
 
 **Status: AUDIT / DESIGN ONLY. No codec enabled, production code changed, image

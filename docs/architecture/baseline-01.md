@@ -1,5 +1,10 @@
 # Reborn Baseline 01 architecture and operator contract
 
+<!-- knowledge-base-scope: historical-design-/-runbook -->
+> **Historical record.** The dates, candidate identity, "current" claims,
+> next steps and permissions below belong to this recorded boundary. See
+> [current state](../CURRENT_REBORN_STATE.md) for the latest physically observed result.
+
 Historical Baseline 01 architecture. Later fixes and platform integration are
 recorded in [correctness closure](../validation/LUNA-CORRECTNESS-CLOSURE-01.md)
 and [Platform v1 integration](../validation/PLATFORM-V1-INTEGRATION.md); those

@@ -1,5 +1,10 @@
 # REBORN-BASELINE-01 — first implementation handoff
 
+<!-- knowledge-base-scope: scoped-validation-record -->
+> **Historical record.** The dates, candidate identity, "current" claims,
+> next steps and permissions below belong to this recorded boundary. See
+> [current state](../CURRENT_REBORN_STATE.md) for the latest physically observed result.
+
 **Ready for owner installation; physical acceptance is pending.** No Reborn code
 has been installed on the Y2 by the assistant. GPU-02 is owner-confirmed and
 read-only SSH inspection confirms the current interfaces. This is a new native

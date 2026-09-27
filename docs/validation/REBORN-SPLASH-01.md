@@ -1,5 +1,10 @@
 # REBORN-SPLASH-01
 
+<!-- knowledge-base-scope: scoped-validation-record -->
+> **Historical record.** The dates, candidate identity, "current" claims,
+> next steps and permissions below belong to this recorded boundary. See
+> [current state](../CURRENT_REBORN_STATE.md) for the latest physically observed result.
+
 The owner installed the startup update and reports that it works. SSH confirms
 the expected source, hardware renderer and explicit splash handoff. See the
 [physical inspection](2026-09-18-radio-inspection.md) for evidence and limits.

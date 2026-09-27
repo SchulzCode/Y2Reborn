@@ -1,5 +1,10 @@
 # Reborn radio inspection after owner splash installation
 
+<!-- knowledge-base-scope: scoped-validation-record -->
+> **Historical record.** The dates, candidate identity, "current" claims,
+> next steps and permissions below belong to this recorded boundary. See
+> [current state](../CURRENT_REBORN_STATE.md) for the latest physically observed result.
+
 The owner reports that the flashed splash update works. Existing pinned owner
 SSH confirms `Y2LINUX-REBORN-SPLASH-01`, Reborn source
 `6209f48402a00a077759df042916f0ae2c89783a`, and the Mali400 hardware renderer.

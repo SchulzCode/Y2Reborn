@@ -1,5 +1,10 @@
 # Audio, FFmpeg, precision and playback audit
 
+<!-- knowledge-base-scope: historical-audit/review -->
+> **Historical record.** The dates, candidate identity, "current" claims,
+> next steps and permissions below belong to this recorded boundary. See
+> [current state](../../CURRENT_REBORN_STATE.md) for the latest physically observed result.
+
 ## Bottom line
 
 The shared FFmpeg architecture is the right foundation. Current wired production output is **S16_LE, stereo, 44.1 kHz**. High-resolution source decoding exists; a genuine 24/32-bit wired output path does not. Ordinary playback controls, queue mutation, native allocation lifetime and crossfade delivery have release-relevant defects. Two-file FLAC gapless has meaningful host evidence, but sample-accurate general playback is not established.

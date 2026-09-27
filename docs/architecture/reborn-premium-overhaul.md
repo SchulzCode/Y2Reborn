@@ -1,5 +1,10 @@
 # Reborn UI reset architecture
 
+<!-- knowledge-base-scope: historical-design-/-runbook -->
+> **Historical record.** The dates, candidate identity, "current" claims,
+> next steps and permissions below belong to this recorded boundary. See
+> [current state](../CURRENT_REBORN_STATE.md) for the latest physically observed result.
+
 This document records the product and architecture target for the Reborn
 overhaul. It is grounded in the current native Rust code, the captured Y2
 input evidence, and the supplied Reborn UI Implementation Pack. It is not

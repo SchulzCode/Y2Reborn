@@ -1,5 +1,10 @@
 # Power, charging, suspend and safety audit
 
+<!-- knowledge-base-scope: historical-audit/review -->
+> **Historical record.** The dates, candidate identity, "current" claims,
+> next steps and permissions below belong to this recorded boundary. See
+> [current state](../../CURRENT_REBORN_STATE.md) for the latest physically observed result.
+
 ## Safety boundary
 
 **Unattended charging and current integrated suspend safety are UNKNOWN.** This is not a claim that the device has been proven unsafe; it is a refusal to infer electrical/cell safety from a policy simulator, a voltage reading or an older owner acceptance. Do not change charging thresholds, rail voltages or memory reservations on the basis of this audit.

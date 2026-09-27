@@ -1,5 +1,10 @@
 # Y2Linux platform, build and release audit
 
+<!-- knowledge-base-scope: historical-audit/review -->
+> **Historical record.** The dates, candidate identity, "current" claims,
+> next steps and permissions below belong to this recorded boundary. See
+> [current state](../../CURRENT_REBORN_STATE.md) for the latest physically observed result.
+
 ## Repository quality and authority
 
 **VERIFIED / HIGH:** production responsibilities are identifiable: kernel inputs/overlays, DT/config, Buildroot external packages, production initramfs, packaging, and hardware-evidence documentation. This is a better foundation than an opaque prebuilt vendor image. The patch manifest records both base and resulting hashes; the overlay mechanism can reject an unexpected source version. Keep it.

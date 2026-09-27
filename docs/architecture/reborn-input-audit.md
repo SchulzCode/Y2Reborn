@@ -1,5 +1,10 @@
 # Reborn physical input audit
 
+<!-- knowledge-base-scope: historical-design-/-runbook -->
+> **Historical record.** The dates, candidate identity, "current" claims,
+> next steps and permissions below belong to this recorded boundary. See
+> [current state](../CURRENT_REBORN_STATE.md) for the latest physically observed result.
+
 The Y2 UI consumes semantic actions only. Raw Linux input records stop at
 `reborn-platform::input::InputManager`.
 

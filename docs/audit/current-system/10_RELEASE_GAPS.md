@@ -1,5 +1,10 @@
 # Release readiness and missing functionality
 
+<!-- knowledge-base-scope: historical-audit/review -->
+> **Historical record.** The dates, candidate identity, "current" claims,
+> next steps and permissions below belong to this recorded boundary. See
+> [current state](../../CURRENT_REBORN_STATE.md) for the latest physically observed result.
+
 ## Release envelope, not a binary verdict
 
 The present image is appropriate for controlled owner/developer investigation with known recovery. It is not yet a credible public beta or stable release. A public alpha can be deliberately narrow—wired S16/44.1, supported SD formats and manual updates—provided normal controls/data safety work and excluded features are honestly described. Optional feature exclusion cannot waive charging or install safety.
