@@ -1060,7 +1060,19 @@ impl Playback {
                 let mut last_progress = Instant::now();
                 loop {
                     al.heartbeat("audio", 10);
-                    while let Ok(cmd) = sr.try_recv() {
+                    // Without a PCM sink there is no audio deadline. Wait on the
+                    // command channel so Open/Stop/Shutdown still wake immediately;
+                    // the timeout only maintains the worker heartbeat.
+                    let idle_command = if sink.is_none() {
+                        match sr.recv_timeout(Duration::from_secs(1)) {
+                            Ok(command) => Some(command),
+                            Err(RecvTimeoutError::Timeout) => None,
+                            Err(RecvTimeoutError::Disconnected) => break,
+                        }
+                    } else {
+                        None
+                    };
+                    for cmd in idle_command.into_iter().chain(sr.try_iter()) {
                         match cmd {
                             SinkCommand::Shutdown(reply) => {
                                 drop(sink.take());
