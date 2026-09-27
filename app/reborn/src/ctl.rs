@@ -33,6 +33,11 @@ fn command(a: &[String]) -> Result<Command, String> {
             let preference = match a.get(2).map(String::as_str) {
                 Some("Auto") => reborn_core::CodecPreference::Auto,
                 Some("SBC") => reborn_core::CodecPreference::Sbc,
+                Some("SBC-XQ") => reborn_core::CodecPreference::SbcXq,
+                Some("AAC") => reborn_core::CodecPreference::Aac,
+                Some("aptX") => reborn_core::CodecPreference::Aptx,
+                Some("aptX-HD") => reborn_core::CodecPreference::AptxHd,
+                Some("LDAC") => reborn_core::CodecPreference::Ldac,
                 _ => return Err("Use bluetooth codec Auto|SBC ADDRESS".into()),
             };
             return Ok(Command::BluetoothCodec {

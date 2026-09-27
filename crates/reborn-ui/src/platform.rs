@@ -437,13 +437,7 @@ pub fn rows(m: &AppModel, id: &str) -> Vec<Item> {
             let mut r = vec![
                 field("Adapter available", &bt["available"]),
                 field("Adapter powered", &bt["powered"]),
-                fact(
-                    "Preference",
-                    match m.settings.codec_preference {
-                        reborn_core::CodecPreference::Sbc => "SBC",
-                        reborn_core::CodecPreference::Auto => "Auto",
-                    },
-                ),
+                fact("Preference", m.settings.codec_preference.label()),
                 page(
                     "Codec Preference",
                     "codec",
@@ -523,13 +517,7 @@ pub fn rows(m: &AppModel, id: &str) -> Vec<Item> {
             let connected = entries(&p.bluetooth["devices"])
                 .any(|d| d["connected"] == true && d["audio"] == true);
             vec![
-                fact(
-                    "Preference",
-                    match m.settings.codec_preference {
-                        reborn_core::CodecPreference::Sbc => "SBC",
-                        reborn_core::CodecPreference::Auto => "Auto",
-                    },
-                ),
+                fact("Preference", m.settings.codec_preference.label()),
                 action(
                     "SBC",
                     "codec_sbc",

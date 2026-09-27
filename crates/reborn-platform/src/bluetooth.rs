@@ -510,12 +510,13 @@ fn codec_request(
             (stereo && rate).then(|| name.clone())
         })
         .collect();
-    let mut session = crate::codecs::Session::new(
+    let mut session = crate::codecs::Session::new_experimental(
         pcm.transport_generation,
         preference,
         &inventory,
         &runtime,
         &compatible,
+        crate::codecs::experimental_enabled(),
     );
     let sequence: u32 = proxy
         .get("org.bluealsa.PCM1", "Sequence")

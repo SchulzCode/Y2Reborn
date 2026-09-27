@@ -12,6 +12,29 @@ pub enum CodecPreference {
     #[default]
     #[serde(rename = "SBC")]
     Sbc,
+    #[serde(rename = "SBC-XQ")]
+    SbcXq,
+    #[serde(rename = "AAC")]
+    Aac,
+    #[serde(rename = "aptX")]
+    Aptx,
+    #[serde(rename = "aptX-HD")]
+    AptxHd,
+    #[serde(rename = "LDAC")]
+    Ldac,
+}
+impl CodecPreference {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Auto => "Auto",
+            Self::Sbc => "SBC",
+            Self::SbcXq => "SBC-XQ",
+            Self::Aac => "AAC",
+            Self::Aptx => "aptX",
+            Self::AptxHd => "aptX-HD",
+            Self::Ldac => "LDAC",
+        }
+    }
 }
 
 pub const VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), "-ui-v1-candidate.1");

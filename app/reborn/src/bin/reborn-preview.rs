@@ -119,7 +119,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .unwrap_or_else(|| "out/ui-v1-preview-quads".into()),
     );
     fs::create_dir_all(&output)?;
-    let power = PowerView { charging: true };
+    let power = PowerView {
+        charging: true,
+        percent: None,
+    };
     let mut cases = vec![];
     for (name, screen, filter) in [
         ("home", Screen::Home, ""),

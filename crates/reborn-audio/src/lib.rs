@@ -142,6 +142,14 @@ pub trait AudioSink {
     fn discard(&mut self) -> Result<(), String>;
     fn delay(&self) -> u64;
 }
+/// Keep the source rate family when the native sink cannot accept its rate.
+pub fn fallback_rate(rate: u32) -> u32 {
+    if rate != 0 && rate.is_multiple_of(48_000) {
+        48_000
+    } else {
+        44_100
+    }
+}
 pub fn valid_address(s: &str) -> bool {
     s.len() == 17
         && s.split(':').count() == 6
@@ -155,6 +163,13 @@ mod tests {
     fn addresses_cannot_inject_pcm_options() {
         assert!(valid_address("12:34:56:78:90:AB"));
         assert!(!valid_address("12:34:56:78:90:AB,PROFILE=hfp"));
+    }
+    #[test]
+    fn high_source_rates_convert_within_their_clock_family() {
+        assert_eq!(fallback_rate(88_200), 44_100);
+        assert_eq!(fallback_rate(96_000), 48_000);
+        assert_eq!(fallback_rate(192_000), 48_000);
+        assert_eq!(fallback_rate(0), 44_100);
     }
     #[test]
     fn missing_sink_is_error() {

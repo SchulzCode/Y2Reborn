@@ -86,7 +86,9 @@ static int profile_section_has(const char *json, const char *section,
   return found && found < end;
 }
 static int wired_profile_allows(int format, unsigned rate) {
-  FILE *file = fopen("/etc/y2linux/audio-qualified.json", "rb");
+  FILE *file = fopen("/etc/y2linux/audio-enabled.json", "rb");
+  int enabled_profile = file != NULL;
+  if (!file) file = fopen("/etc/y2linux/audio-qualified.json", "rb");
   if (!file)
     return 0;
   char json[8192];
@@ -109,8 +111,8 @@ static int wired_profile_allows(int format, unsigned rate) {
   }
   char rate_name[16];
   snprintf(rate_name, sizeof(rate_name), "%u", rate);
-  return profile_section_has(json, "\"qualified_formats\"", format_name) &&
-         profile_section_has(json, "\"qualified_rates\"", rate_name);
+  return profile_section_has(json, enabled_profile ? "\"enabled_formats\"" : "\"qualified_formats\"", format_name) &&
+         profile_section_has(json, enabled_profile ? "\"enabled_rates\"" : "\"qualified_rates\"", rate_name);
 }
 static snd_pcm_format_t pcm_format(unsigned format) {
   switch (format) {
@@ -196,7 +198,7 @@ int rb_alsa_plan(const char *name, unsigned requested_rate,
   params->fallback = selected != preferred_format;
   if (params->fallback)
     snprintf(params->fallback_reason, sizeof(params->fallback_reason),
-             wired && preferred_format == 2 ? "preferred S32_LE is not physically qualified for this rate"
+             wired && preferred_format == 2 ? "preferred S32_LE is unavailable in the enabled hardware path"
                    : "preferred sink format unavailable; selected ALSA fallback");
   return 0;
 }

@@ -504,12 +504,14 @@ impl Runtime {
                         log.emit(
                             Level::Warn,
                             "audio",
-                            "qualified_rate_fallback",
-                            "Source rate is not in the current wired qualification profile",
+                            "enabled_rate_fallback",
+                            "Native source rate unavailable; converting within its rate family",
                             Some(correlation),
-                            json!({"source_rate":requested_rate,"selected_rate":44100,"reason":error}),
+                            json!({"source_rate":requested_rate,"selected_rate":reborn_audio::fallback_rate(requested_rate),"reason":error}),
                         );
-                        plan(44_100).map(|(spec, _planned)| spec)
+                        plan(reborn_audio::fallback_rate(requested_rate))
+                            .or_else(|_| plan(44_100))
+                            .map(|(spec, _planned)| spec)
                     }
                     Err(error) => Err(error),
                 }

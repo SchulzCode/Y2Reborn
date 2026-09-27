@@ -9,6 +9,8 @@ pub struct Capability {
     pub compiled_locally: bool,
     pub distribution_approved: bool,
     pub platform_qualified: bool,
+    #[serde(default)]
+    pub owner_private_experiment: bool,
 }
 #[derive(Clone, Default, Deserialize)]
 pub struct Inventory {
@@ -25,6 +27,7 @@ pub struct Eligibility {
     pub distribution_approved: bool,
     pub platform_qualified: bool,
     pub auto_eligible: bool,
+    pub experimental_eligible: bool,
 }
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Session {
@@ -45,6 +48,16 @@ impl Session {
         runtime: &[String],
         mutual: &[String],
     ) -> Self {
+        Self::new_experimental(generation, preference, inventory, runtime, mutual, false)
+    }
+    pub fn new_experimental(
+        generation: u64,
+        preference: CodecPreference,
+        inventory: &Inventory,
+        runtime: &[String],
+        mutual: &[String],
+        experimental: bool,
+    ) -> Self {
         let eligibility = ["SBC", "AAC", "aptX", "aptX-HD", "LDAC"]
             .into_iter()
             .map(|name| {
@@ -57,6 +70,12 @@ impl Session {
                     && mutually_usable
                     && cap.distribution_approved
                     && cap.platform_qualified;
+                let experimental_eligible = experimental
+                    && inventory.schema == 1
+                    && cap.compiled_locally
+                    && runtime_enabled
+                    && mutually_usable
+                    && (cap.distribution_approved || cap.owner_private_experiment);
                 (
                     name.into(),
                     Eligibility {
@@ -67,6 +86,7 @@ impl Session {
                         distribution_approved: cap.distribution_approved,
                         platform_qualified: cap.platform_qualified,
                         auto_eligible,
+                        experimental_eligible,
                     },
                 )
             })
@@ -99,15 +119,33 @@ impl Session {
         let mut preferred: Vec<&str> = ["LDAC", "aptX-HD", "aptX", "AAC"]
             .into_iter()
             .filter(|name| {
-                self.preference == CodecPreference::Auto && self.eligibility[*name].auto_eligible
+                self.preference == CodecPreference::Auto
+                    && (self.eligibility[*name].auto_eligible
+                        || self.eligibility[*name].experimental_eligible)
             })
             .take(2)
             .collect();
+        if !matches!(
+            self.preference,
+            CodecPreference::Auto | CodecPreference::Sbc | CodecPreference::SbcXq
+        ) {
+            preferred.push(self.preference.label());
+        }
         preferred.push("SBC");
         let next = preferred.into_iter().find(|name| {
             let e = &self.eligibility[*name];
             let allowed = if self.preference == CodecPreference::Auto {
                 e.auto_eligible
+                    || e.experimental_eligible
+                    || (*name == "SBC"
+                        && e.compiled_locally
+                        && e.runtime_enabled
+                        && e.mutually_usable
+                        && e.distribution_approved)
+            } else if self.preference == CodecPreference::SbcXq {
+                e.experimental_eligible && experimental_xq_enabled()
+            } else if self.preference != CodecPreference::Sbc && *name != "SBC" {
+                e.auto_eligible || e.experimental_eligible
             } else {
                 e.compiled_locally
                     && e.runtime_enabled
@@ -133,10 +171,63 @@ impl Session {
         self.reason = Some(reason.into());
     }
 }
+pub fn experimental_enabled() -> bool {
+    std::fs::read("/data/bluetooth/codec-policy.json")
+        .ok()
+        .filter(|b| b.len() <= 4096)
+        .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok())
+        .is_some_and(|v| v["schema"] == 1 && v["experimental"] == true)
+}
+fn experimental_xq_enabled() -> bool {
+    std::fs::read("/data/bluetooth/codec-policy.json")
+        .ok()
+        .filter(|b| b.len() <= 4096)
+        .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok())
+        .is_some_and(|v| {
+            v["schema"] == 1
+                && v["experimental"] == true
+                && matches!(v["sbc_quality"].as_str(), Some("xq" | "xq+"))
+        })
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn experimental_gate_allows_private_compiled_codec_without_faking_qualification() {
+        let mut inventory = Inventory {
+            schema: 1,
+            ..Default::default()
+        };
+        for name in ["SBC", "AAC", "LDAC"] {
+            inventory.codecs.insert(
+                name.into(),
+                Capability {
+                    compiled_locally: true,
+                    distribution_approved: name == "SBC",
+                    platform_qualified: false,
+                    owner_private_experiment: name != "SBC",
+                },
+            );
+        }
+        let all = vec!["SBC".into(), "AAC".into(), "LDAC".into()];
+        let mut production = Session::new(1, CodecPreference::Auto, &inventory, &all, &all);
+        assert_eq!(production.next(1, 0).as_deref(), Some("SBC"));
+        let mut experimental =
+            Session::new_experimental(1, CodecPreference::Auto, &inventory, &all, &all, true);
+        assert_eq!(experimental.next(1, 0).as_deref(), Some("LDAC"));
+        assert!(!experimental.eligibility["LDAC"].platform_qualified);
+        assert!(!experimental.eligibility["LDAC"].distribution_approved);
+        let mut unavailable = Session::new_experimental(
+            1,
+            CodecPreference::Ldac,
+            &inventory,
+            &all,
+            &["SBC".into()],
+            true,
+        );
+        assert_eq!(unavailable.next(1, 0).as_deref(), Some("SBC"));
+    }
     #[test]
     fn auto_needs_every_gate_and_never_treats_request_as_negotiation() {
         let mut inv = Inventory {
@@ -149,11 +240,12 @@ mod tests {
                 compiled_locally: true,
                 distribution_approved: true,
                 platform_qualified: false,
+                owner_private_experiment: false,
             },
         );
         let available = vec!["SBC".into()];
         let mut auto = Session::new(9, CodecPreference::Auto, &inv, &available, &available);
-        assert!(auto.next(9, 0).is_none());
+        assert_eq!(auto.next(9, 0).as_deref(), Some("SBC"));
         let mut baseline = Session::new(9, CodecPreference::Sbc, &inv, &available, &available);
         assert_eq!(baseline.next(9, 0).as_deref(), Some("SBC"));
         baseline.accepted("SBC");
@@ -188,6 +280,7 @@ mod tests {
                     compiled_locally: true,
                     distribution_approved: true,
                     platform_qualified: true,
+                    owner_private_experiment: false,
                 },
             );
         }
