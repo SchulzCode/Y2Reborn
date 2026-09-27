@@ -1,3 +1,4 @@
+use crate::volume::VolumeRamp;
 use reborn_audio::{AlsaSink, AudioSink, SinkSpec};
 use reborn_core::{Event, PcmFormat, QueueEntryId, Track};
 use reborn_media::{
@@ -9,7 +10,7 @@ use std::{
     collections::VecDeque,
     path::PathBuf,
     sync::{
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicU64, AtomicU8, Ordering},
         mpsc::{sync_channel, Receiver, RecvTimeoutError, SyncSender, TryRecvError, TrySendError},
         Arc, Mutex,
     },
@@ -100,6 +101,7 @@ pub struct Playback {
     #[cfg(test)]
     event_sender: SyncSender<PlaybackEvent>,
     epoch: Arc<AtomicU64>,
+    volume: Arc<AtomicU8>,
     cancel: Option<Cancel>,
     pending_start: Option<PendingStart>,
     sink_released: bool,
@@ -580,6 +582,8 @@ impl Playback {
         let event_sender = et.clone();
         let epoch = Arc::new(AtomicU64::new(0));
         let buffered = Arc::new(AtomicU64::new(0));
+        let volume = Arc::new(AtomicU8::new(100));
+        let sink_volume = volume.clone();
         let state = Arc::new(Mutex::new(json!({
             "state":"stopped",
             "canonical_sample_format":"fltp",
@@ -1053,6 +1057,7 @@ impl Playback {
                 let mut correlation = 0;
                 let mut rate = 44100;
                 let mut sink_format = PcmFormat::S32LE;
+                let mut gain = VolumeRamp::new(100, rate);
                 let mut pending: Option<(Pcm, usize)> = None;
                 let mut started = false;
                 let mut eof = false;
@@ -1095,6 +1100,7 @@ impl Playback {
                                 correlation = id;
                                 rate = spec.rate;
                                 sink_format = spec.format;
+                                gain = VolumeRamp::new(sink_volume.load(Ordering::Relaxed), rate);
                                 started = false;
                                 eof = false;
                                 match factory(&spec, al.clone(), id) {
@@ -1238,10 +1244,15 @@ impl Playback {
                     }
                     if let (Some(s), Some((block, offset))) = (&mut sink, &mut pending) {
                         let frame_bytes = block.format.bytes_per_frame();
-                        let max_bytes = (MAX_SINK_WRITE_BYTES / frame_bytes) * frame_bytes;
+                        // Bound gain work and control latency even for a large
+                        // decoded crossfade. Keep original PCM for partial writes.
+                        let max_bytes = 512 * frame_bytes;
                         let end = (*offset + max_bytes).min(block.data.len());
-                        match s.write(&block.data[*offset..end]) {
+                        gain.target(sink_volume.load(Ordering::Relaxed));
+                        let scaled = gain.render(&block.data[*offset..end], block.format);
+                        match s.write(&scaled) {
                             Ok(n) => {
+                                gain.advance(n);
                                 if n > 0 {
                                     *offset += n * block.format.bytes_per_frame();
                                     last_progress = Instant::now();
@@ -1345,6 +1356,7 @@ impl Playback {
             #[cfg(test)]
             event_sender,
             epoch,
+            volume,
             cancel: None,
             pending_start: None,
             sink_released: true,
@@ -1405,7 +1417,7 @@ impl Playback {
             position,
             spec,
             generation,
-            dsp,
+            mut dsp,
             gapless_enabled,
             id,
         } = request;
@@ -1416,6 +1428,10 @@ impl Playback {
             return Err("audio sink release acknowledgement required before open".into());
         }
         let cancel = Cancel::new()?;
+        self.set_volume(dsp.volume);
+        // Decode once at neutral user gain; ReplayGain/EQ/headroom/limiting
+        // stay in FFmpeg. The live sink applies user attenuation after them.
+        dsp.volume = 100;
         let (reply, opened) = sync_channel(1);
         let deadline = Instant::now() + Duration::from_secs(2);
         let job = Box::new(Job {
@@ -1455,6 +1471,11 @@ impl Playback {
             deadline,
         });
         Ok(())
+    }
+    pub(crate) fn set_volume(&self, volume: u8) {
+        self.volume.store(volume.min(100), Ordering::Relaxed);
+        self.observer
+            .gauge("audio_user_volume", f64::from(volume.min(100)));
     }
     pub(crate) fn has_pending_start(&self) -> bool {
         self.pending_start.is_some()
@@ -1652,6 +1673,151 @@ mod tests {
             fallback_reason: String::new(),
         }
     }
+    struct VolumeTestSink {
+        captured: Arc<Mutex<Vec<i32>>>,
+        allowed: Arc<AtomicU64>,
+        frames: Arc<AtomicU64>,
+    }
+    impl AudioSink for VolumeTestSink {
+        fn parameters(&self) -> Parameters {
+            Sink {
+                frames: self.frames.clone(),
+                fail: false,
+                rate: 44_100,
+                samples: None,
+            }
+            .parameters()
+        }
+        fn write(&mut self, data: &[u8]) -> Result<usize, String> {
+            let written = self.frames.load(Ordering::Acquire);
+            let room = self.allowed.load(Ordering::Acquire).saturating_sub(written) as usize;
+            let count = (data.len() / 8).min(73).min(room);
+            if count == 0 {
+                thread::sleep(Duration::from_millis(1));
+            }
+            let mut captured = self.captured.lock().unwrap();
+            captured.extend(data.chunks_exact(8).take(count).map(|frame| {
+                let left = i32::from_le_bytes(frame[..4].try_into().unwrap());
+                let right = i32::from_le_bytes(frame[4..].try_into().unwrap());
+                assert_eq!(left, right);
+                left
+            }));
+            self.frames.fetch_add(count as u64, Ordering::Release);
+            Ok(count)
+        }
+        fn discard(&mut self) -> Result<(), String> {
+            Ok(())
+        }
+        fn delay(&self) -> u64 {
+            0
+        }
+    }
+    #[test]
+    fn live_volume_changes_queued_pcm_without_reopening_or_losing_frames() {
+        let root = std::env::temp_dir().join(format!("reborn-live-volume-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let source = root.join("constant.wav");
+        let mut wav = Vec::new();
+        wav.extend_from_slice(b"RIFF");
+        wav.extend_from_slice(&(36u32 + 4096 * 8).to_le_bytes());
+        wav.extend_from_slice(b"WAVEfmt ");
+        wav.extend_from_slice(&16u32.to_le_bytes());
+        wav.extend_from_slice(&1u16.to_le_bytes());
+        wav.extend_from_slice(&2u16.to_le_bytes());
+        wav.extend_from_slice(&44_100u32.to_le_bytes());
+        wav.extend_from_slice(&(44_100u32 * 8).to_le_bytes());
+        wav.extend_from_slice(&8u16.to_le_bytes());
+        wav.extend_from_slice(&32u16.to_le_bytes());
+        wav.extend_from_slice(b"data");
+        wav.extend_from_slice(&(4096u32 * 8).to_le_bytes());
+        wav.extend_from_slice(&(1i32 << 28).to_le_bytes().repeat(4096 * 2));
+        std::fs::write(&source, wav).unwrap();
+        let frames = Arc::new(AtomicU64::new(0));
+        let allowed = Arc::new(AtomicU64::new(512));
+        let samples = Arc::new(Mutex::new(Vec::new()));
+        let opens = Arc::new(AtomicU64::new(0));
+        let (f, a, c, o) = (
+            frames.clone(),
+            allowed.clone(),
+            samples.clone(),
+            opens.clone(),
+        );
+        let log = Observer::new(&root).unwrap();
+        let mut playback = Playback::with_sink(
+            log.clone(),
+            root.clone(),
+            Box::new(move |_, _, _| {
+                o.fetch_add(1, Ordering::Relaxed);
+                Ok(Box::new(VolumeTestSink {
+                    captured: c.clone(),
+                    allowed: a.clone(),
+                    frames: f.clone(),
+                }))
+            }),
+        )
+        .unwrap();
+        playback
+            .load(
+                Track {
+                    path: source,
+                    ..Default::default()
+                },
+                vec![],
+                0,
+                spec(AudioOutput::Bluetooth("test-peer".into()), 44_100),
+                81,
+                DspConfig::with_volume(0),
+                81,
+            )
+            .unwrap();
+        let mut started = 0;
+        for (limit, volume) in [(512, 100), (1024, 0), (1536, 25), (2048, 100)] {
+            let deadline = Instant::now() + Duration::from_secs(3);
+            while frames.load(Ordering::Acquire) < limit {
+                for event in playback.events.try_iter() {
+                    match event {
+                        PlaybackEvent::Core(Event::TrackStarted { generation: 81 }) => started += 1,
+                        PlaybackEvent::Core(Event::PlaybackError { message, .. }) => {
+                            panic!("{message}")
+                        }
+                        _ => {}
+                    }
+                }
+                assert!(Instant::now() < deadline, "PCM progress stopped");
+                thread::sleep(Duration::from_millis(1));
+            }
+            assert_eq!(playback.epoch.load(Ordering::Acquire), 81);
+            playback.set_volume(volume);
+            allowed.store(
+                if limit == 2048 { 4096 } else { limit + 512 },
+                Ordering::Release,
+            );
+        }
+        let deadline = Instant::now() + Duration::from_secs(3);
+        loop {
+            match playback.events.recv_timeout(Duration::from_millis(50)) {
+                Ok(PlaybackEvent::Core(Event::TrackStarted { generation: 81 })) => started += 1,
+                Ok(PlaybackEvent::Core(Event::TrackEnded { generation: 81 })) => break,
+                Ok(PlaybackEvent::Core(Event::PlaybackError { message, .. })) => {
+                    panic!("{message}")
+                }
+                _ => {}
+            }
+            assert!(Instant::now() < deadline, "stream did not finish");
+        }
+        assert_eq!(opens.load(Ordering::Relaxed), 1);
+        assert_eq!(started, 1);
+        assert_eq!(frames.load(Ordering::Acquire), 4096);
+        let samples = samples.lock().unwrap();
+        assert!(samples[..512].iter().all(|s| *s == 0));
+        assert!(samples[800..1024].iter().all(|s| *s == 1 << 28));
+        assert!(samples[1300..1536].iter().all(|s| *s == 0));
+        assert!(samples[1820..2048].iter().all(|s| *s == 1 << 24));
+        assert!(samples[2400..].iter().all(|s| *s == 1 << 28));
+        drop(samples);
+        playback.shutdown(82).unwrap();
+    }
+
     #[test]
     fn boundary_event_precedes_its_queue_entry_artwork() {
         let (tx, rx) = sync_channel(4);
@@ -1886,6 +2052,7 @@ mod tests {
             #[cfg(test)]
             event_sender,
             epoch: Arc::new(AtomicU64::new(0)),
+            volume: Arc::new(AtomicU8::new(100)),
             cancel: None,
             pending_start: None,
             sink_released: false,
@@ -1917,6 +2084,7 @@ mod tests {
             #[cfg(test)]
             event_sender,
             epoch: Arc::new(AtomicU64::new(0)),
+            volume: Arc::new(AtomicU8::new(100)),
             cancel: None,
             pending_start: None,
             sink_released: false,

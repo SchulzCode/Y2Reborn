@@ -1,0 +1,31 @@
+# Live user volume
+
+Volume keys and `rebornctl volume` update an atomic sink-worker target. They do
+not invalidate the playback generation, seek, rebuild the FFmpeg filter graph,
+or reopen ALSA. This addresses the owner-observed SBC pause and “starting audio”
+state on every volume adjustment.
+
+Playback decodes at neutral **user** gain while retaining FFmpeg ReplayGain,
+headroom, EQ and the clipping limiter. The sink applies the existing squared
+volume curve after those stages, so buffered and crossfaded PCM responds to a
+new volume without recovering amplitude from already-muted samples. This changes
+limiter interaction: limiting operates before user attenuation, including at low
+listening volume. The live `audio_user_volume` metric reports the user target;
+FFmpeg's gain metadata describes its own graph and excludes this final gain.
+
+Changes ramp over five milliseconds with one gain per stereo frame. A partial
+or zero-frame ALSA write advances the envelope only by accepted frames; retries
+use original PCM, avoiding repeated attenuation. Writes process at most 512
+frames per iteration. The downstream ALSA/BlueALSA/headset buffering still adds
+its normal latency, so this is not a zero-latency remote-volume claim.
+
+Unity gain passes bytes unchanged. S16, sign-extended S24 in 32-bit containers,
+and S32 are supported. Gain is rounded and bounded in the negotiated integer
+format; no additional output precision is claimed. Volume zero is exact silence.
+
+Tests exercise the real decoder with queued PCM and a partially accepting fake
+Bluetooth sink, starting muted then raising/muting/raising volume. They prove
+one sink open, one start event, unchanged generation and exact frame count.
+Separate waveform tests cover stereo ramp continuity, zero/partial acceptance,
+retargeting, signed packing, unity low-bit preservation and exact mute.
+Physical volume-key/listening confirmation remains required for a new binary.

@@ -2,6 +2,7 @@
 mod artwork;
 mod diagnostics;
 mod playback;
+mod volume;
 use reborn_control::{Command, PlaybackAction, Response};
 use reborn_core::{
     AppModel, AudioOutput, Effect, Event, PlaybackState, QueueEntryId, RepeatMode, Screen, Source,
@@ -908,12 +909,7 @@ impl Runtime {
             Effect::AdjustVolume(delta) => {
                 self.model.settings.volume =
                     (self.model.settings.volume as i16 + delta as i16).clamp(0, 100) as u8;
-                if matches!(
-                    self.model.playback,
-                    PlaybackState::Playing | PlaybackState::Buffering
-                ) {
-                    self.load()?;
-                }
+                self.playback.set_volume(self.model.settings.volume);
                 self.ui
                     .flash(format!("Volume {}", self.model.settings.volume));
                 self.checkpoint();
@@ -1235,12 +1231,7 @@ impl Runtime {
             PlaybackAction::Volume(v) => {
                 self.model.settings.volume = v.min(100);
                 self.dirty.mark_both();
-                if matches!(
-                    self.model.playback,
-                    PlaybackState::Playing | PlaybackState::Buffering
-                ) {
-                    self.load()?;
-                }
+                self.playback.set_volume(self.model.settings.volume);
                 Ok(())
             }
         }
