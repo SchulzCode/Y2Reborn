@@ -175,7 +175,7 @@ pub fn rows(m: &AppModel, id: &str) -> Vec<Item> {
                     } else {
                         "Qualification pending"
                     };
-                    r.push(fact(&capability_label(key), format!("Implemented: {}. Enabled: {}. Physically qualified: {}. Gate: {}. Reason: {}",value(&c["implemented"]),value(&c["enabled"]),value(&c["qualified"]),value(&c["gate"]),value(&c["reason"]))).with_secondary(format!("{state} · {qualification}")));
+                    r.push(fact(&capability_label(key), format!("Implemented: {}. Enabled: {}. Physically qualified: {}. Experimental: {}. Gate: {}. Reason: {}",value(&c["implemented"]),value(&c["enabled"]),value(&c["qualified"]),value(&c["experimental"]),value(&c["gate"]),value(&c["reason"]))).with_secondary(format!("{state} · {qualification}")));
                 }
             }
             for (name, key) in [
@@ -229,6 +229,18 @@ pub fn rows(m: &AppModel, id: &str) -> Vec<Item> {
                     kib(&s["memory"]["meminfo"]["MemAvailable"]),
                 ),
             ];
+            r.push(field(
+                "Timer clocksource",
+                &s["cpu"]["timer"]["clocksource"],
+            ));
+            r.push(field(
+                "High-resolution active",
+                &s["cpu"]["timer"]["highres_active"],
+            ));
+            r.push(field(
+                "Tickless idle active",
+                &s["cpu"]["timer"]["no_hz_active"],
+            ));
             for c in entries(&s["cpu"]["policies"]) {
                 let hz = c["scaling_cur_freq"]
                     .as_str()
@@ -245,6 +257,17 @@ pub fn rows(m: &AppModel, id: &str) -> Vec<Item> {
                     .unwrap_or_else(|| "Unavailable".into()),
                 ));
                 r.push(field("Governor", &c["scaling_governor"]));
+            }
+            for idle in entries(&s["cpu"]["idle"]) {
+                r.push(fact(
+                    &format!("{} {}", value(&idle["cpu"]), value(&idle["name"])),
+                    format!(
+                        "Entries {} · {} us · disabled {}",
+                        value(&idle["usage"]),
+                        value(&idle["time_us"]),
+                        value(&idle["disabled"])
+                    ),
+                ));
             }
             for process in entries(&s["memory"]["processes"]) {
                 r.push(fact("Reborn RSS", kib(&process["rss_kib"])));
@@ -390,6 +413,25 @@ pub fn rows(m: &AppModel, id: &str) -> Vec<Item> {
                 } else {
                     r.push(fact(label, "Not available"));
                 }
+            }
+            for controller in entries(&s["storage"]["controllers"]) {
+                r.push(fact(
+                    &value(&controller["name"]),
+                    format!(
+                        "Cap {} Hz · actual {} Hz",
+                        value(&controller["cap_hz"]),
+                        value(&controller["actual_hz"])
+                    ),
+                ));
+                r.push(fact(
+                    "Transport recovery",
+                    format!(
+                        "Errors {} · fallbacks {} · clock error {}",
+                        value(&controller["transport_errors"]),
+                        value(&controller["fallbacks"]),
+                        value(&controller["clock_error"])
+                    ),
+                ));
             }
             r
         }
@@ -593,6 +635,21 @@ pub fn rows(m: &AppModel, id: &str) -> Vec<Item> {
                 fact("Authentication", "Use the owner's configured SSH key"),
                 fact("Transfer activity", "Activity reporting unavailable"),
             ];
+            let dma = &s["system"]["usb"]["dma"];
+            r.push(field("Controller transfer path", &dma["transfer"]));
+            r.push(field("DMA errors", &dma["dma_errors"]));
+            r.push(field(
+                "DMA RX programmed bytes",
+                &dma["dma_rx_programmed_bytes"],
+            ));
+            r.push(field(
+                "DMA TX programmed bytes",
+                &dma["dma_tx_programmed_bytes"],
+            ));
+            r.push(fact(
+                "DMA counters",
+                "Programmed bytes; delivery requires throughput evidence",
+            ));
             for udc in entries(&s["system"]["usb"]["udcs"]) {
                 r.insert(1, field("USB cable", &udc["state"]));
             }

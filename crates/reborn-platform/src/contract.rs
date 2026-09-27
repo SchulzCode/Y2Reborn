@@ -13,6 +13,8 @@ pub struct Capability {
     pub enabled: bool,
     #[serde(default)]
     pub qualified: bool,
+    #[serde(default)]
+    pub experimental: bool,
     #[serde(flatten)]
     pub details: BTreeMap<String, Value>,
 }
@@ -72,6 +74,7 @@ mod tests {
         let caps = parse(br#"{"schema":"org.y2linux.capabilities/v1","capabilities":{"audio":{"implemented":true,"enabled":true}}}"#).unwrap();
         assert!(caps.capabilities["audio"].implemented);
         assert!(!caps.capabilities["audio"].qualified);
+        assert!(!caps.capabilities["audio"].experimental);
         assert!(!caps.capabilities.contains_key("usb_host"));
         assert!(parse(br#"{"schema":"v2","capabilities":{}}"#).is_err());
         assert!(parse(&vec![b' '; 65537]).is_err());
