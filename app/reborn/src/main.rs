@@ -1284,6 +1284,13 @@ fn kernel_events() -> Vec<String> {
     events.into()
 }
 
+/// Screen-off wakes are background cost: nothing renders, and audio, decode,
+/// control and platform workers run on their own threads. A 50-ms loop still
+/// answers a wake press promptly and removes ~45 of 66 idle wake-ups/s.
+fn main_loop_interval(screen_off: bool) -> Duration {
+    Duration::from_millis(if screen_off { 50 } else { 15 })
+}
+
 fn wifi_readiness_label(s: &wifi::Status) -> String {
     let label = match s.readiness.as_str() {
         "Online" => "Online",
@@ -2494,7 +2501,7 @@ fn run() -> Result<(), String> {
             rt.dirty.rendered();
             render_time = Instant::now();
         }
-        thread::sleep(Duration::from_millis(15));
+        thread::sleep(main_loop_interval(rt.model.screen_off));
     }
     rt.model.invalidate();
     let mut shutdown_ready = true;
@@ -3048,5 +3055,18 @@ mod ui_readiness_tests {
         assert!(wifi_readiness_label(&s).contains("Wrong password"));
         s.readiness_reason = Some("org.secret.service credential=abc".into());
         assert!(!wifi_readiness_label(&s).contains("credential"));
+    }
+}
+
+#[cfg(test)]
+mod loop_interval_tests {
+    use super::main_loop_interval;
+    use std::time::Duration;
+
+    #[test]
+    fn screen_off_wakes_less_but_stays_responsive() {
+        assert_eq!(main_loop_interval(false), Duration::from_millis(15));
+        assert_eq!(main_loop_interval(true), Duration::from_millis(50));
+        assert!(main_loop_interval(true) < Duration::from_millis(100));
     }
 }
