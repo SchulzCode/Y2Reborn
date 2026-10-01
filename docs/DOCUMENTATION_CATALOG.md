@@ -1,6 +1,6 @@
 # Y2Reborn complete document catalog
 
-Updated 2026-09-28. Every project-owned Markdown page in this repository
+Updated 2026-10-01. Every project-owned Markdown page in this repository
 is listed once; vendored upstream package documentation is excluded.
 Start with the current-state page; a historical
 report records its own build/session, not the presently installed image.
@@ -9,8 +9,8 @@ document links, rather than relocating or deleting proof. See the
 [shared knowledge rules](../../Y2Linux/docs/KNOWLEDGE_BASE.md)
 and the other repository's catalog for product-wide context.
 
-Indexed pages: **52**. Explicit historical/contract scope notices:
-**34**.
+Indexed pages: **56**. Explicit historical/contract scope notices:
+**38**.
 
 ## Entry
 
@@ -28,6 +28,7 @@ Indexed pages: **52**. Explicit historical/contract scope notices:
 | [Reborn Baseline 01 architecture and operator contract](architecture/baseline-01.md) | Historical design / runbook |
 | [Bluetooth codecs: current capability audit and proposed Auto policy](architecture/bluetooth-codecs.md) | Source contract |
 | [Live user volume](architecture/live-volume.md) | Source contract |
+| [Reborn ↔ Y2Linux platform API boundary](architecture/platform-api-boundary.md) | Source contract |
 | [Reborn FFmpeg 9 audio stack](architecture/reborn-audio-stack-ffmpeg9.md) | Source contract |
 | [Reborn physical input audit](architecture/reborn-input-audit.md) | Historical design / runbook |
 | [Reborn UI reset architecture](architecture/reborn-premium-overhaul.md) | Historical design / runbook |
@@ -74,6 +75,7 @@ Indexed pages: **52**. Explicit historical/contract scope notices:
 | Page | Scope |
 | --- | --- |
 | [Current Y2Linux + Y2Reborn project state](review/CURRENT_PROJECT_STATE.md) | Historical audit/review |
+| [Reborn Product Pass v2 — audit, decisions and ledger](review/REBORN-PRODUCT-PASS-V2.md) | Scoped validation record |
 | [Luna stabilization review — source findings](review/LUNA_STABILIZATION_REVIEW.md) | Historical audit/review |
 
 ## Ui
@@ -85,6 +87,8 @@ Indexed pages: **52**. Explicit historical/contract scope notices:
 | [Reborn UI v1 navigation and focus map](ui/REBORN-UI-V1-NAVIGATION.md) | UI design / scoped candidate |
 | [Reborn UI v1 owner qualification](ui/REBORN-UI-V1-QUALIFICATION.md) | UI design / scoped candidate |
 | [Reborn UI v1 implementation and candidate report](ui/REBORN-UI-V1-REPORT.md) | UI design / scoped candidate |
+| [Reborn Product UI v2](ui/REBORN-PRODUCT-UI-V2.md) | Source contract |
+| [Reborn Product UI v2 navigation and focus map](ui/REBORN-PRODUCT-NAVIGATION-V2.md) | Source contract |
 | [Reborn UI v1](ui/REBORN-UI-V1.md) | UI design / scoped candidate |
 
 ## Design Assets

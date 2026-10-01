@@ -1,6 +1,14 @@
 # Current Reborn state on the Y2
 
-Updated 2026-09-28 from the 2026-09-27 CPU Final Fix01 physical run. This page
+Updated 2026-10-01. **Software candidate (not flashed, not physically
+qualified):** Reborn **Product UI v2** (0.2.0) on the CPU Final Fix03
+platform. Smaller product surface, typed platform boundary, one-detent wheel,
+Reborn boot mark and dark shutdown. See [Product UI v2](ui/REBORN-PRODUCT-UI-V2.md),
+the [pass record](review/REBORN-PRODUCT-PASS-V2.md) and the
+[Y2Linux receipt](../../Y2Linux/docs/validation/Y2-REBORN-PRODUCT-UI-V2.md).
+Everything below describes the last physically observed application.
+
+Physical observation from the 2026-09-27 CPU Final Fix01 run. This page
 describes the exact already-flashed application, not a new image or software
 build. The [paired Linux state](../../Y2Linux/docs/CURRENT_PLATFORM_STATE.md)
 and [physical report](../../Y2Linux/docs/validation/Y2-CPU-FINAL-FIX01-PHYSICAL-QUALIFICATION.md)
