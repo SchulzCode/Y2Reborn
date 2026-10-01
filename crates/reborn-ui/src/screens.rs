@@ -333,6 +333,18 @@ fn list(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], has_art: bool, 
     }
 }
 
+#[cfg(test)]
+pub(crate) fn is_empty_catalog(ui: &Ui, m: &AppModel) -> bool {
+    catalog_like(m.screen) && ui.row_count(m, &m.library.tracks) == 0
+}
+
+/// Heading and explanation of an empty list, for product-surface tests.
+#[cfg(test)]
+pub(crate) fn empty_catalog_copy(m: &AppModel) -> &'static str {
+    let (title, body, _) = empty_catalog(m);
+    Box::leak(format!("{title} {body}").into_boxed_str())
+}
+
 fn empty_catalog(m: &AppModel) -> (&'static str, &'static str, Option<&'static str>) {
     if m.screen == Screen::Queue {
         return (
@@ -353,7 +365,7 @@ fn empty_catalog(m: &AppModel) -> (&'static str, &'static str, Option<&'static s
     }
     if !m.sources.iter().any(|s| s.online) {
         return (
-            "Music Storage Unavailable",
+            "Can't Read Your Music",
             "Restart the player. If an SD card was removed, reinsert it.",
             None,
         );

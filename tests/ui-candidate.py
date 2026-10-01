@@ -23,6 +23,15 @@ class Candidate(unittest.TestCase):
   self.assertGreaterEqual(len(images),60)
   for path in images:
    with Image.open(path) as image:self.assertEqual(image.size,(480,360),path.name)
+ def test_product_v2_previews_cover_the_product_at_native_resolution(self):
+  previews=root/'docs/ui/previews/v2'
+  images=[p for p in previews.glob('*.png') if p.stem!='contact-sheet']
+  self.assertGreaterEqual(len(images),60)
+  for path in images:
+   with Image.open(path) as image:self.assertEqual(image.size,(480,360),path.name)
+  names={p.stem for p in images}
+  for required in ['01-boot-splash','12-now-playing','15-quick-settings','42-diagnostics','94-shutdown-final-black']:
+   self.assertIn(required,names)
  def test_atlas_provenance_and_safe_bounds(self):
   import hashlib
   fonts=json.loads((root/'assets/fonts/provenance.json').read_text())

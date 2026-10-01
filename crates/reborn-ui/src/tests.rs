@@ -269,8 +269,15 @@ fn normal_screens_never_show_engineering_terms_or_generic_unavailable() {
     let mut quick = app(Screen::Home);
     quick.navigation.modal = Some(Modal::QuickSettings);
     cases.push((Screen::Home, radios(), quick));
+    let mut missing_song = app(Screen::TrackInfo);
+    missing_song.navigation.filter = "999".into();
+    missing_song.queue.clear();
+    cases.push((Screen::TrackInfo, radios(), missing_song));
     for (screen, ui, m) in cases {
-        let text = visible_text(&ui, &m);
+        let mut text = visible_text(&ui, &m);
+        if super::screens::is_empty_catalog(&ui, &m) {
+            text += super::screens::empty_catalog_copy(&m);
+        }
         for term in ENGINEERING {
             assert!(!text.contains(term), "{screen:?} shows {term:?}: {text}");
         }
@@ -283,6 +290,24 @@ impl Ui {
             wifi: self.wifi.clone(),
             bluetooth: self.bluetooth.clone(),
             ..Default::default()
+        }
+    }
+}
+
+#[test]
+fn empty_library_states_name_the_problem_without_generic_unavailable() {
+    for setup in [
+        |m: &mut AppModel| m.sources.clear(),
+        |m: &mut AppModel| m.library.scanning = true,
+        |m: &mut AppModel| m.library.error = Some("x".into()),
+        |_: &mut AppModel| {},
+    ] {
+        let mut m = app(Screen::Albums);
+        m.library.tracks.clear();
+        setup(&mut m);
+        let copy = super::screens::empty_catalog_copy(&m);
+        for term in ENGINEERING {
+            assert!(!copy.contains(term), "{copy}");
         }
     }
 }

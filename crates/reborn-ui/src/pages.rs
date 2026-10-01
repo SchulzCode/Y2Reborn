@@ -706,7 +706,10 @@ fn track_info(m: &AppModel, tracks: &[Track]) -> Page {
         .and_then(|i| tracks.get(i))
         .or_else(|| m.current());
     let Some(t) = track else {
-        return Page::hero("Song Not Available", "It may be on a removed SD card.");
+        return Page::hero(
+            "Song Not Found",
+            "It may be on an SD card that was removed.",
+        );
     };
     let format = match (t.codec.is_empty(), t.sample_rate) {
         (true, _) => String::new(),
