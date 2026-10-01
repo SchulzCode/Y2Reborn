@@ -14,6 +14,76 @@ pub const LONG_PRESS: Duration = Duration::from_millis(650);
 pub const REPEAT_START: Duration = Duration::from_millis(400);
 pub const REPEAT_RATE: Duration = Duration::from_millis(90);
 
+/// Same-direction wheel records closer than this are one physical detent seen
+/// twice (a bounced data-ready edge re-reading the latched APT32F frame). A
+/// person spinning hard produces detents tens of milliseconds apart.
+pub const WHEEL_DUPLICATE_US: u64 = 8_000;
+/// A pause this long ends a rotation: the next detent is isolated again.
+pub const WHEEL_RESET_US: u64 = 220_000;
+/// Detents of one sustained rotation before any acceleration is considered.
+pub const WHEEL_ACCELERATION_AFTER: u32 = 4;
+
+/// Deliberate, cadence-based wheel acceleration over kernel event timestamps.
+///
+/// One isolated detent is always one step. Acceleration needs a sustained,
+/// same-direction rotation and is forgotten after a pause or reversal. The UI
+/// decides per context whether the suggested step count is used at all.
+#[derive(Clone, Debug, Default)]
+pub struct WheelCadence {
+    last: Option<(bool, u64)>,
+    streak: u32,
+    /// Smoothed detent interval of the current rotation, microseconds.
+    interval_us: u64,
+}
+impl WheelCadence {
+    /// Returns `None` for a duplicate record, otherwise the step suggestion.
+    pub fn detent(&mut self, clockwise: bool, at_us: u64) -> Option<u8> {
+        let previous = self.last;
+        self.last = Some((clockwise, at_us));
+        let Some((direction, then)) = previous else {
+            return Some(self.restart());
+        };
+        // A clock that ran backwards cannot prove cadence.
+        let Some(gap) = at_us.checked_sub(then) else {
+            return Some(self.restart());
+        };
+        if direction != clockwise || gap > WHEEL_RESET_US {
+            return Some(self.restart());
+        }
+        if gap < WHEEL_DUPLICATE_US {
+            // Keep the original detent time so a bounce train cannot extend it.
+            self.last = Some((clockwise, then));
+            return None;
+        }
+        self.streak = self.streak.saturating_add(1);
+        self.interval_us = if self.streak == 2 {
+            gap
+        } else {
+            (self.interval_us * 3 + gap) / 4
+        };
+        Some(self.steps())
+    }
+    fn restart(&mut self) -> u8 {
+        self.streak = 1;
+        self.interval_us = 0;
+        1
+    }
+    fn steps(&self) -> u8 {
+        if self.streak < WHEEL_ACCELERATION_AFTER {
+            return 1;
+        }
+        match self.interval_us {
+            0..=45_000 if self.streak >= 10 => 4,
+            0..=70_000 if self.streak >= 6 => 3,
+            0..=110_000 => 2,
+            _ => 1,
+        }
+    }
+    pub fn reset(&mut self) {
+        *self = Self::default();
+    }
+}
+
 const NAVIGATION_BUTTONS: &str = "Y2 navigation buttons";
 const PMIC_KEYS: &str = "mtk-pmic-keys";
 const CLICK_WHEEL: &str = "APT32F click-wheel";
@@ -71,6 +141,16 @@ fn rediscover_device(device: &Device, candidates: &[Device]) -> Option<Device> {
         .cloned()
 }
 
+/// One decoded evdev record.
+#[derive(Clone, Copy, Debug)]
+struct Record {
+    kind: u16,
+    code: u16,
+    value: i32,
+    /// Kernel timestamp in microseconds, when the record carried one.
+    stamp_us: Option<u64>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct InputEvent {
     pub device: String,
@@ -90,8 +170,9 @@ pub struct InputManager {
     files: Vec<(Device, File, Vec<u8>)>,
     missing: Vec<Device>,
     pressed: HashMap<(String, PhysicalControl), Pressed>,
-    wheel: Option<(String, bool, Instant, u8)>,
+    wheel: HashMap<String, WheelCadence>,
     dropping: HashSet<String>,
+    epoch: Instant,
 }
 
 impl InputManager {
@@ -100,18 +181,15 @@ impl InputManager {
             files: devices()
                 .into_iter()
                 .filter_map(|d| {
-                    let f = OpenOptions::new()
-                        .read(true)
-                        .custom_flags(libc::O_NONBLOCK | libc::O_CLOEXEC)
-                        .open(&d.path)
-                        .ok()?;
+                    let f = open_device(&d.path)?;
                     Some((d, f, vec![]))
                 })
                 .collect(),
             missing: Vec::new(),
             pressed: HashMap::new(),
-            wheel: None,
+            wheel: HashMap::new(),
             dropping: HashSet::new(),
+            epoch: Instant::now(),
         }
     }
 
@@ -121,8 +199,9 @@ impl InputManager {
             files: vec![],
             missing: Vec::new(),
             pressed: HashMap::new(),
-            wheel: None,
+            wheel: HashMap::new(),
             dropping: HashSet::new(),
+            epoch: Instant::now(),
         }
     }
 
@@ -143,7 +222,32 @@ impl InputManager {
         value: i32,
         now: Instant,
     ) -> Vec<InputEvent> {
-        self.ingest(device, device, kind, code, value, now)
+        let record = Record {
+            kind,
+            code,
+            value,
+            stamp_us: None,
+        };
+        self.ingest(device, device, record, now)
+    }
+
+    /// Feed a record carrying its own kernel timestamp (microseconds).
+    #[cfg(test)]
+    pub fn feed_at(
+        &mut self,
+        device: &str,
+        kind: u16,
+        code: u16,
+        value: i32,
+        stamp_us: u64,
+    ) -> Vec<InputEvent> {
+        let record = Record {
+            kind,
+            code,
+            value,
+            stamp_us: Some(stamp_us),
+        };
+        self.ingest(device, device, record, Instant::now())
     }
 
     #[cfg(test)]
@@ -176,18 +280,22 @@ impl InputManager {
                 let kind = u16::from_ne_bytes(pending[offset..offset + 2].try_into().unwrap());
                 let code = u16::from_ne_bytes(pending[offset + 2..offset + 4].try_into().unwrap());
                 let value = i32::from_ne_bytes(pending[offset + 4..offset + 8].try_into().unwrap());
+                let stamp = record_timestamp_us(&pending[..offset]);
                 pending.drain(..size);
                 raw.push((
                     device.name.clone(),
                     device.identity.to_string_lossy().into_owned(),
-                    kind,
-                    code,
-                    value,
+                    Record {
+                        kind,
+                        code,
+                        value,
+                        stamp_us: stamp,
+                    },
                 ));
             }
         }
-        for (device, identity, kind, code, value) in raw {
-            events.extend(self.ingest(&device, &identity, kind, code, value, now));
+        for (device, identity, record) in raw {
+            events.extend(self.ingest(&device, &identity, record, now));
         }
         if !reopen.is_empty() {
             let candidates = devices();
@@ -201,11 +309,7 @@ impl InputManager {
                 let identity = device.identity.to_string_lossy().into_owned();
                 events.extend(self.cancel_stale_device(&identity));
                 if let Some(replacement) = rediscover_device(&device, &candidates) {
-                    if let Ok(file) = OpenOptions::new()
-                        .read(true)
-                        .custom_flags(libc::O_NONBLOCK | libc::O_CLOEXEC)
-                        .open(&replacement.path)
-                    {
+                    if let Some(file) = open_device(&replacement.path) {
                         self.files[index] = (replacement, file, Vec::new());
                         continue;
                     }
@@ -229,13 +333,9 @@ impl InputManager {
                 still_missing.push(device);
                 continue;
             };
-            match OpenOptions::new()
-                .read(true)
-                .custom_flags(libc::O_NONBLOCK | libc::O_CLOEXEC)
-                .open(&replacement.path)
-            {
-                Ok(file) => self.files.push((replacement, file, Vec::new())),
-                Err(_) => still_missing.push(device),
+            match open_device(&replacement.path) {
+                Some(file) => self.files.push((replacement, file, Vec::new())),
+                None => still_missing.push(device),
             }
         }
         self.missing = still_missing;
@@ -251,13 +351,7 @@ impl InputManager {
         for key in &controls {
             self.pressed.remove(key);
         }
-        if self
-            .wheel
-            .as_ref()
-            .is_some_and(|(device, _, _, _)| device == identity)
-        {
-            self.wheel = None;
-        }
+        self.wheel.remove(identity);
         controls
             .into_iter()
             .map(|(_, control)| InputEvent {
@@ -271,11 +365,15 @@ impl InputManager {
         &mut self,
         device: &str,
         identity: &str,
-        kind: u16,
-        code: u16,
-        value: i32,
+        record: Record,
         now: Instant,
     ) -> Vec<InputEvent> {
+        let Record {
+            kind,
+            code,
+            value,
+            stamp_us,
+        } = record;
         if kind == EV_SYN {
             if code == SYN_DROPPED {
                 self.dropping.insert(identity.to_owned());
@@ -300,23 +398,25 @@ impl InputManager {
             NormalizedInput::WheelClockwise(_) | NormalizedInput::WheelCounterClockwise(_)
         ) {
             let clockwise = matches!(input, NormalizedInput::WheelClockwise(_));
-            let raw_steps = match input {
+            let raw_detents = match input {
                 NormalizedInput::WheelClockwise(steps)
-                | NormalizedInput::WheelCounterClockwise(steps) => steps,
+                | NormalizedInput::WheelCounterClockwise(steps) => steps.max(1),
                 _ => 1,
             };
-            let steps = match self.wheel.as_ref() {
-                Some((last_device, last_direction, previous, previous_steps))
-                    if last_device == identity
-                        && *last_direction == clockwise
-                        && now.saturating_duration_since(*previous)
-                            <= Duration::from_millis(180) =>
-                {
-                    raw_steps.max(previous_steps.saturating_add(1)).min(6)
+            let at_us = stamp_us
+                .unwrap_or_else(|| now.saturating_duration_since(self.epoch).as_micros() as u64);
+            let cadence = self.wheel.entry(identity.to_owned()).or_default();
+            let steps = if raw_detents > 1 {
+                // A relative wheel reporting several detents in one record is
+                // explicit fast movement, never a duplicate.
+                cadence.detent(clockwise, at_us);
+                raw_detents.min(4)
+            } else {
+                match cadence.detent(clockwise, at_us) {
+                    Some(steps) => steps,
+                    None => return vec![],
                 }
-                _ => raw_steps.clamp(1, 2),
             };
-            self.wheel = Some((identity.to_owned(), clockwise, now, steps));
             return vec![InputEvent {
                 device: device.to_owned(),
                 input: if clockwise {
@@ -401,6 +501,32 @@ impl InputManager {
         }
         events
     }
+}
+
+fn open_device(path: &std::path::Path) -> Option<File> {
+    let file = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NONBLOCK | libc::O_CLOEXEC)
+        .open(path)
+        .ok()?;
+    crate::evdev_monotonic_clock(&file);
+    Some(file)
+}
+
+/// Decode the `struct input_event` time prefix. Its two fields share one
+/// width (32-bit `__sec/__usec` on ARMv7, 64-bit on the host).
+fn record_timestamp_us(prefix: &[u8]) -> Option<u64> {
+    let half = prefix.len() / 2;
+    let field = |bytes: &[u8]| -> Option<u64> {
+        match bytes.len() {
+            4 => Some(u32::from_ne_bytes(bytes.try_into().ok()?) as u64),
+            8 => Some(u64::from_ne_bytes(bytes.try_into().ok()?)),
+            _ => None,
+        }
+    };
+    let seconds = field(&prefix[..half])?;
+    let micros = field(&prefix[half..half * 2])?;
+    (micros < 1_000_000).then(|| seconds.saturating_mul(1_000_000).saturating_add(micros))
 }
 
 fn is_long_press_control(control: PhysicalControl) -> bool {
@@ -530,9 +656,10 @@ pub fn map(device: &str, kind: u16, code: u16, value: i32) -> Option<NormalizedI
             _ => None,
         };
         if let Some(clockwise) = direction {
+            // Only the press of the driver's press/release pair is a detent.
+            // Release and (never-enabled) autorepeat records are not rotation.
             return match value {
-                0 => None,
-                1 | 2 => Some(if clockwise {
+                1 => Some(if clockwise {
                     NormalizedInput::WheelClockwise(1)
                 } else {
                     NormalizedInput::WheelCounterClockwise(1)
@@ -660,28 +787,147 @@ mod tests {
         assert_eq!(router.route(&power[0], false), vec![Action::ScreenWake]);
     }
 
+    fn detent(input: &mut InputManager, code: u16, at_ms: u64) -> Option<NormalizedInput> {
+        let out = input.feed_at(CLICK_WHEEL, EV_KEY, code, 1, at_ms * 1000);
+        let _release = input.feed_at(CLICK_WHEEL, EV_KEY, code, 0, at_ms * 1000 + 1);
+        assert!(_release.is_empty(), "release is never a detent");
+        out.first().map(|e| e.input)
+    }
+
     #[test]
-    fn sustained_wheel_rotation_accelerates_without_becoming_select() {
+    fn one_isolated_detent_is_one_step_in_both_directions() {
         let mut input = InputManager::empty();
-        let start = Instant::now();
-        let first = input.feed(CLICK_WHEEL, EV_KEY, KEY_DOWN, 1, start);
-        let second = input.feed(
-            CLICK_WHEEL,
-            EV_KEY,
-            KEY_DOWN,
-            1,
-            start + Duration::from_millis(90),
+        assert_eq!(
+            detent(&mut input, KEY_DOWN, 1_000),
+            Some(NormalizedInput::WheelClockwise(1))
         );
-        let reset = input.feed(
-            CLICK_WHEEL,
-            EV_KEY,
-            KEY_DOWN,
-            1,
-            start + Duration::from_millis(500),
+        assert_eq!(
+            detent(&mut input, KEY_UP, 3_000),
+            Some(NormalizedInput::WheelCounterClockwise(1))
         );
-        assert_eq!(first[0].input, NormalizedInput::WheelClockwise(1));
-        assert!(matches!(second[0].input, NormalizedInput::WheelClockwise(steps) if steps >= 2));
-        assert_eq!(reset[0].input, NormalizedInput::WheelClockwise(1));
+        assert_eq!(
+            detent(&mut input, KEY_PAGEDOWN, 5_000),
+            Some(NormalizedInput::WheelClockwise(1))
+        );
+    }
+
+    #[test]
+    fn duplicate_and_bounced_records_are_one_detent() {
+        let mut input = InputManager::empty();
+        assert_eq!(
+            detent(&mut input, KEY_DOWN, 100),
+            Some(NormalizedInput::WheelClockwise(1))
+        );
+        // Same frame re-read 2 ms later, and a bounce train within the window.
+        assert_eq!(detent(&mut input, KEY_DOWN, 102), None);
+        assert_eq!(detent(&mut input, KEY_PAGEDOWN, 105), None);
+        assert_eq!(detent(&mut input, KEY_DOWN, 107), None);
+        // Autorepeat is not rotation.
+        assert!(input
+            .feed_at(CLICK_WHEEL, EV_KEY, KEY_DOWN, 2, 400_000)
+            .is_empty());
+    }
+
+    #[test]
+    fn two_legitimate_rapid_detents_are_two_single_steps() {
+        let mut input = InputManager::empty();
+        assert_eq!(
+            detent(&mut input, KEY_DOWN, 1_000),
+            Some(NormalizedInput::WheelClockwise(1))
+        );
+        // 40 ms apart: a real fast flick, delivered in one poll batch.
+        assert_eq!(
+            detent(&mut input, KEY_DOWN, 1_040),
+            Some(NormalizedInput::WheelClockwise(1))
+        );
+    }
+
+    #[test]
+    fn only_sustained_rotation_accelerates_and_pause_or_reversal_resets() {
+        let mut input = InputManager::empty();
+        let mut steps = vec![];
+        for i in 0..14 {
+            if let Some(NormalizedInput::WheelClockwise(n)) =
+                detent(&mut input, KEY_DOWN, 10_000 + i * 40)
+            {
+                steps.push(n);
+            }
+        }
+        assert_eq!(&steps[..3], &[1, 1, 1], "no early acceleration");
+        assert!(steps.iter().any(|n| *n >= 2));
+        assert!(steps.iter().all(|n| *n <= 4));
+        assert_eq!(*steps.last().unwrap(), 4);
+        // Reversal: immediately one step.
+        assert_eq!(
+            detent(&mut input, KEY_UP, 10_600),
+            Some(NormalizedInput::WheelCounterClockwise(1))
+        );
+        // Build momentum again, pause, then one isolated detent.
+        for i in 0..8 {
+            detent(&mut input, KEY_UP, 11_000 + i * 40);
+        }
+        assert_eq!(
+            detent(&mut input, KEY_UP, 11_600),
+            Some(NormalizedInput::WheelCounterClockwise(1))
+        );
+    }
+
+    #[test]
+    fn slow_continuous_rotation_never_accelerates() {
+        let mut input = InputManager::empty();
+        for i in 0..20 {
+            assert_eq!(
+                detent(&mut input, KEY_DOWN, 50_000 + i * 150),
+                Some(NormalizedInput::WheelClockwise(1)),
+                "detent {i}"
+            );
+        }
+    }
+
+    #[test]
+    fn backwards_timestamps_and_device_loss_forget_cadence() {
+        let mut input = InputManager::empty();
+        for i in 0..8 {
+            detent(&mut input, KEY_DOWN, 90_000 + i * 40);
+        }
+        assert_eq!(
+            detent(&mut input, KEY_DOWN, 80_000),
+            Some(NormalizedInput::WheelClockwise(1))
+        );
+        for i in 0..8 {
+            detent(&mut input, KEY_DOWN, 95_000 + i * 40);
+        }
+        input.cancel_stale_device(CLICK_WHEEL);
+        assert_eq!(
+            detent(&mut input, KEY_DOWN, 95_340),
+            Some(NormalizedInput::WheelClockwise(1))
+        );
+    }
+
+    #[test]
+    fn kernel_timestamp_prefix_decodes_both_layouts() {
+        let mut arm = vec![];
+        arm.extend_from_slice(&7u32.to_ne_bytes());
+        arm.extend_from_slice(&250_000u32.to_ne_bytes());
+        assert_eq!(record_timestamp_us(&arm), Some(7_250_000));
+        let mut host = vec![];
+        host.extend_from_slice(&7u64.to_ne_bytes());
+        host.extend_from_slice(&250_000u64.to_ne_bytes());
+        assert_eq!(record_timestamp_us(&host), Some(7_250_000));
+        let mut bad = vec![];
+        bad.extend_from_slice(&7u32.to_ne_bytes());
+        bad.extend_from_slice(&2_000_000u32.to_ne_bytes());
+        assert_eq!(record_timestamp_us(&bad), None);
+    }
+
+    #[test]
+    fn screen_off_drops_wheel_actions() {
+        let mut router = ActionRouter::default();
+        let event = InputEvent {
+            device: CLICK_WHEEL.into(),
+            input: NormalizedInput::WheelClockwise(1),
+        };
+        assert!(router.route(&event, false).is_empty());
     }
 
     #[test]
