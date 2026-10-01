@@ -509,16 +509,74 @@ fn diagnostics(s: &Value, caps: &Value) -> Vec<DiagnosticSection> {
         }
     }
     for c in entries(&s["storage"]["controllers"]) {
-        storage.push(Fact::new(
-            shown(&c["name"]),
-            format!(
-                "cap {} Hz · actual {} Hz · errors {} · fallbacks {}",
-                shown(&c["cap_hz"]),
-                shown(&c["actual_hz"]),
-                shown(&c["transport_errors"]),
-                shown(&c["fallbacks"])
-            ),
-        ));
+        let name = match c["name"].as_str() {
+            Some("11230000.mmc") => "eMMC".to_owned(),
+            Some("11240000.mmc") => "SD".to_owned(),
+            _ => shown(&c["name"]),
+        };
+        let m = &c["mode"];
+        if m.is_object() {
+            let mhz = |v: &Value| {
+                v.as_u64()
+                    .map(|hz| format!("{} MHz", hz / 1_000_000))
+                    .unwrap_or_else(|| "?".into())
+            };
+            storage.push(Fact::new(
+                format!("{name} mode"),
+                format!(
+                    "{} · {}-bit · {} · {} mV · ceiling {}",
+                    shown(&m["level"]),
+                    shown(&m["width"]),
+                    mhz(&m["actual_hz"]),
+                    shown(&m["signal_mv"]),
+                    shown(&m["ceiling"])
+                ),
+            ));
+            storage.push(Fact::new(
+                format!("{name} card"),
+                format!(
+                    "supports {} · caps {}",
+                    shown(&m["card_level"]),
+                    m["card_caps"]
+                        .as_u64()
+                        .map(|v| format!("{v:#x}"))
+                        .unwrap_or_else(|| "?".into())
+                ),
+            ));
+            storage.push(Fact::new(
+                format!("{name} tuning"),
+                format!(
+                    "{} · runs {} · readback {}",
+                    shown(&m["tuning"]),
+                    shown(&m["tuning_runs"]),
+                    shown(&m["verify"])
+                ),
+            ));
+            storage.push(Fact::new(
+                format!("{name} faults"),
+                format!(
+                    "CRC {} · timeout {} · controller {} · tuning {} · voltage {} · readback {} · fallbacks {}",
+                    shown(&m["crc_events"]),
+                    shown(&m["timeout_events"]),
+                    shown(&m["controller_events"]),
+                    shown(&m["tuning_events"]),
+                    shown(&m["voltage_events"]),
+                    shown(&m["verify_events"]),
+                    shown(&m["fallbacks"])
+                ),
+            ));
+        } else {
+            storage.push(Fact::new(
+                name,
+                format!(
+                    "cap {} Hz · actual {} Hz · errors {} · fallbacks {}",
+                    shown(&c["cap_hz"]),
+                    shown(&c["actual_hz"]),
+                    shown(&c["transport_errors"]),
+                    shown(&c["fallbacks"])
+                ),
+            ));
+        }
     }
     out.push(DiagnosticSection {
         id: "storage",
@@ -918,5 +976,37 @@ mod tests {
         assert!(friendly_error("dns_unavailable").contains("name lookup"));
         let raw = friendly_error("org.bluez.Error.Failed private details");
         assert!(!raw.contains("org.bluez") && !raw.contains("private"));
+    }
+
+    #[test]
+    fn diagnostics_name_the_negotiated_storage_mode() {
+        let v = json!({"storage":{"controllers":[
+            {"name":"11230000.mmc","cap_hz":200000000,"actual_hz":200000000,
+             "transport_errors":0,"fallbacks":0,
+             "mode":{"level":"HS200","ceiling":"HS200","width":8,"actual_hz":200000000,
+                     "signal_mv":1800,"card_level":"HS200","card_caps":87,"tuning":"pass",
+                     "tuning_runs":1,"verify":"pass","crc_events":0,"timeout_events":2,
+                     "controller_events":0,"tuning_events":0,"voltage_events":0,
+                     "verify_events":0,"fallbacks":0}},
+            {"name":"11240000.mmc","cap_hz":50000000,"actual_hz":50000000,
+             "transport_errors":0,"fallbacks":0,"mode":null}]}});
+        let sections = diagnostics(&v, &json!({}));
+        let facts = &sections.iter().find(|s| s.id == "storage").unwrap().facts;
+        let get = |label: &str| {
+            facts
+                .iter()
+                .find(|f| f.label == label)
+                .map(|f| f.value.clone())
+                .unwrap()
+        };
+        assert_eq!(
+            get("eMMC mode"),
+            "HS200 · 8-bit · 200 MHz · 1800 mV · ceiling HS200"
+        );
+        assert_eq!(get("eMMC card"), "supports HS200 · caps 0x57");
+        assert_eq!(get("eMMC tuning"), "pass · runs 1 · readback pass");
+        assert!(get("eMMC faults").contains("timeout 2"));
+        // An older kernel without the mode record keeps the clock summary.
+        assert!(get("SD").starts_with("cap 50000000 Hz"));
     }
 }
