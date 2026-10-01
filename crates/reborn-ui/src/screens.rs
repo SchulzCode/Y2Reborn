@@ -1,105 +1,144 @@
-//! Native 480×360 screen composition. All screen actions follow one wheel path.
+//! Native 480×360 composition. One status bar, one title line, one content
+//! area and one footer strip; every interactive screen shows one focus.
 use crate::{
     components::{self, progress, time, Canvas},
-    platform,
+    diagnostics,
+    pages::{self, Page},
     theme::{color, type_scale},
-    Item, PowerView, Ui,
+    Item, Ui,
 };
-use reborn_core::{AppModel, PlaybackState, Screen, Track};
+use reborn_core::{AppModel, PlaybackState, RepeatMode, Screen, Track};
 use reborn_graphics::Quad;
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum PreviewScreen {
-    NowPlaying,
-    Library,
-    Artist,
-    Queue,
-    Settings,
-    QuickSettings,
-    Lock,
-    Boot,
+
+const CONTENT_TOP: f32 = 76.;
+const ROW_PITCH: f32 = 48.;
+const FOOTER_TOP: f32 = 324.;
+
+/// Rows visible in one window for a screen's list area.
+pub fn visible_rows_for(screen: Screen) -> usize {
+    if matches!(screen, Screen::Album | Screen::Artist) {
+        3
+    } else {
+        5
+    }
 }
-pub fn preview(
-    ui: &Ui,
-    mut m: AppModel,
-    tracks: &[Track],
-    power: PowerView,
-    screen: PreviewScreen,
-) -> Vec<Quad> {
-    m.screen = match screen {
-        PreviewScreen::NowPlaying | PreviewScreen::Lock => Screen::NowPlaying,
-        PreviewScreen::Library => Screen::Albums,
-        PreviewScreen::Artist => Screen::Artist,
-        PreviewScreen::Queue => Screen::Queue,
-        PreviewScreen::Settings => Screen::SettingsAudio,
-        PreviewScreen::QuickSettings => Screen::QuickSettings,
-        PreviewScreen::Boot => return boot("Starting music services"),
-    };
-    draw(ui, &m, tracks, "ok", true, power)
-}
-pub fn boot(message: &str) -> Vec<Quad> {
+
+/// The Reborn mark on the product background. The early splash in Y2Linux is
+/// generated from exactly these quads, so the hand-off frame is identical.
+pub fn boot_frame() -> Vec<Quad> {
     let mut c = Canvas::new();
     c.rect(0., 0., 480., 360., color::BG);
-    c.centered(240., 143., "Reborn", 4.25, color::TEXT_PRIMARY);
-    c.centered(
-        240.,
-        193.,
-        "MUSIC LIVES ON",
-        type_scale::SECONDARY,
-        color::TEXT_SECONDARY,
-    );
-    c.rect(218., 230., 44., 2., color::ACCENT_GOLD);
-    c.centered(240., 263., message, type_scale::BODY, color::TEXT_SECONDARY);
+    mark(&mut c, 1.);
     c.finish()
 }
-pub fn draw(
-    ui: &Ui,
-    m: &AppModel,
-    tracks: &[Track],
-    health: &str,
-    has_art: bool,
-    power: PowerView,
-) -> Vec<Quad> {
-    if health == "starting" {
-        return boot("Starting music services");
+
+fn mark(c: &mut Canvas, opacity: f32) {
+    let alpha = (opacity.clamp(0., 1.) * 255.).round() as u32;
+    let tint = |color: u32| (color & 0xFFFF_FF00) | alpha;
+    c.centered(240., 148., "Reborn", MARK_SCALE, tint(color::TEXT_PRIMARY));
+    c.rect(220., 198., 40., 2., tint(color::ACCENT_GOLD));
+}
+
+/// Dissolve from the boot mark into the first UI frame. `remaining` runs
+/// from 1 (all mark) to 0 (all UI); no frame is ever blank.
+pub fn boot_transition(ui: Vec<Quad>, remaining: f32) -> Vec<Quad> {
+    let mut quads = with_overlay(ui, remaining);
+    let mut c = Canvas::new();
+    mark(&mut c, remaining);
+    quads.extend(c.finish());
+    quads
+}
+pub const MARK_SCALE: f32 = 4.25;
+
+/// Frames of the shutdown transition at the UI's ~34 ms cadence (≈0.9 s).
+pub const SHUTDOWN_FRAMES: usize = 26;
+
+/// One shutdown frame: the current UI fades out (frames 0–6), the mark holds,
+/// then everything fades to the background. `ui` is the last UI frame.
+pub fn shutdown_frame(ui: &[Quad], frame: usize, caption: Option<&str>) -> Vec<Quad> {
+    let frame = frame.min(SHUTDOWN_FRAMES - 1);
+    if frame < 7 {
+        return with_overlay(ui.to_vec(), (frame + 1) as f32 / 7.);
     }
+    let mut c = Canvas::new();
+    c.rect(0., 0., 480., 360., color::BG);
+    mark(&mut c, 1.);
+    if let Some(caption) = caption {
+        c.centered(240., 236., caption, type_scale::BODY, color::TEXT_SECONDARY);
+    }
+    let fade = frame.saturating_sub(16) as f32 / (SHUTDOWN_FRAMES - 17) as f32;
+    let mut quads = c.finish();
+    if fade > 0. {
+        quads = with_overlay(quads, fade);
+    }
+    quads
+}
+
+/// The final frame before the backlight turns off.
+pub fn black_frame() -> Vec<Quad> {
+    vec![Quad::rect(0., 0., 480., 360., color::BLACK)]
+}
+
+/// Cover `quads` with the background at `alpha` (0 transparent, 1 opaque).
+pub fn with_overlay(mut quads: Vec<Quad>, alpha: f32) -> Vec<Quad> {
+    let a = (alpha.clamp(0., 1.) * 255.).round() as u32;
+    quads.push(Quad::rect(
+        0.,
+        0.,
+        480.,
+        360.,
+        (color::BG & 0xFFFF_FF00) | a,
+    ));
+    for q in &mut quads {
+        if alpha >= 1. {
+            q.focus_target = false;
+        }
+    }
+    quads
+}
+
+pub fn draw(ui: &Ui, m: &AppModel, tracks: &[Track], has_art: bool) -> Vec<Quad> {
     let mut c = Canvas::new();
     c.rect(0., 0., 480., 360., color::BG);
     if matches!(
         m.platform.busy,
         Some(reborn_core::PlatformTask::UpdateApply | reborn_core::PlatformTask::UpdateRollback)
     ) {
-        components::title(&mut c, "Preparing System Restart", "");
-        wrap(&mut c, 24., 105., 432., "The platform updater is preparing the verified root operation. Keep external power connected.", 18., 5);
-        c.text(
-            24.,
-            277.,
-            "Navigation resumes if the operation fails.",
+        mark(&mut c, 1.);
+        c.centered(
+            240.,
+            236.,
+            "Preparing to install…",
             type_scale::BODY,
             color::TEXT_SECONDARY,
+        );
+        c.centered(
+            240.,
+            262.,
+            "Keep the player charging",
+            type_scale::SECONDARY,
+            color::TEXT_MUTED,
         );
         return c.finish();
     }
     if m.screen_off {
         return c.finish();
     }
-    components::status_bar(&mut c, m, power, &ui.wifi, &ui.bluetooth);
+    components::status_bar(&mut c, ui, m);
     let interactive = m.navigation.modal.is_none() && ui.pairing.is_none() && !ui.text_entry;
-    if m.screen == Screen::NowPlaying {
-        now_playing(&mut c, m, has_art, interactive);
-    } else if m.screen == Screen::Platform && m.navigation.filter.starts_with("value:") {
-        value_detail(&mut c, m, interactive);
-    } else {
-        list(&mut c, ui, m, tracks, has_art, interactive);
+    match m.screen {
+        Screen::NowPlaying if m.current().is_some() => {
+            now_playing(&mut c, ui, m, has_art, interactive)
+        }
+        Screen::ValueDetail => value_detail(&mut c, m, interactive),
+        _ => list(&mut c, ui, m, tracks, has_art, interactive),
     }
     if let Some(pair) = &ui.pairing {
         components::dialog(
             &mut c,
-            "Pair Bluetooth Device",
+            "Pair with this device?",
             pair,
-            &[
-                Item::new("Confirm Pairing", "yes"),
-                Item::new("Cancel — press Back", "no"),
-            ],
+            &[Item::new("Pair", "yes"), Item::new("Cancel", "no")],
             ui.pairing_focus,
         );
     } else if ui.text_entry {
@@ -109,14 +148,13 @@ pub fn draw(
         let rows = ui.modal_rows_public(m, tracks);
         components::dialog(
             &mut c,
-            title,
-            body,
+            &title,
+            &body,
             &rows,
             m.navigation.modal_focus.min(rows.len().saturating_sub(1)),
         );
     }
-    if interactive
-        && !ui.notice.is_empty()
+    if !ui.notice.is_empty()
         && ui
             .notice_until
             .is_some_and(|t| t > std::time::Instant::now())
@@ -125,9 +163,10 @@ pub fn draw(
     }
     c.finish()
 }
+
 fn screen_title(m: &AppModel) -> String {
     match m.screen {
-        Screen::Home => "Your music".into(),
+        Screen::Home => "Reborn".into(),
         Screen::Music => "Music".into(),
         Screen::Albums => "Albums".into(),
         Screen::Artists => "Artists".into(),
@@ -142,131 +181,104 @@ fn screen_title(m: &AppModel) -> String {
                     .unwrap_or_else(|| "Folders".into())
             }
         }
-        Screen::Queue => "Queue".into(),
-        Screen::TrackInfo => "Track Information".into(),
+        Screen::Album => "Album".into(),
+        Screen::Artist => "Artist".into(),
         Screen::LibraryIndex => "Jump to Letter".into(),
-        Screen::Connectivity => "Connectivity".into(),
-        Screen::QuickSettings => "Quick Settings".into(),
-        Screen::Wifi | Screen::SettingsWifi => "Wi-Fi".into(),
-        Screen::Bluetooth | Screen::SettingsBluetooth => "Bluetooth".into(),
+        Screen::NowPlaying => "Now Playing".into(),
+        Screen::Queue => "Queue".into(),
+        Screen::TrackInfo => "Song Info".into(),
         Screen::Settings => "Settings".into(),
+        Screen::Wifi => "Wi-Fi".into(),
+        Screen::Bluetooth => "Bluetooth".into(),
+        Screen::PcTransfer => "PC Transfer".into(),
         Screen::SettingsAudio => "Audio".into(),
         Screen::SettingsPlayback => "Playback".into(),
         Screen::SettingsLibrary => "Library".into(),
         Screen::SettingsDisplay => "Display".into(),
-        Screen::SettingsPower => "Power".into(),
         Screen::SettingsSystem => "System".into(),
-        Screen::Platform | Screen::Diagnostics => platform::title(&m.navigation.filter).into(),
-        Screen::Album => "Album".into(),
-        Screen::Artist => "Artist".into(),
-        _ => "Reborn".into(),
+        Screen::Battery => "Battery".into(),
+        Screen::Storage => "Storage".into(),
+        Screen::Update => "Software Update".into(),
+        Screen::About => "About".into(),
+        Screen::Maintenance => "Reset & Maintenance".into(),
+        Screen::Diagnostics => "Diagnostics".into(),
+        Screen::DiagnosticSection => diagnostics::title(&m.navigation.filter).into(),
+        Screen::ValueDetail | Screen::TextEntry | Screen::Pairing => "Reborn".into(),
     }
 }
+
+/// Long lists show their position; short menus do not.
+fn shows_counter(screen: Screen) -> bool {
+    matches!(
+        screen,
+        Screen::Albums
+            | Screen::Artists
+            | Screen::Tracks
+            | Screen::Folders
+            | Screen::Album
+            | Screen::Artist
+            | Screen::Queue
+            | Screen::DiagnosticSection
+    )
+}
+
+fn catalog_like(screen: Screen) -> bool {
+    matches!(
+        screen,
+        Screen::Albums
+            | Screen::Artists
+            | Screen::Tracks
+            | Screen::Folders
+            | Screen::Album
+            | Screen::Artist
+            | Screen::Queue
+            | Screen::LibraryIndex
+            | Screen::Diagnostics
+            | Screen::DiagnosticSection
+    )
+}
+
 fn list(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], has_art: bool, interactive: bool) {
+    let page = if catalog_like(m.screen) {
+        Page::default()
+    } else {
+        pages::page(ui, m, tracks)
+    };
     let count = ui.row_count(m, tracks);
     let focus = m.navigation.focus.min(count.saturating_sub(1));
-    let collection = matches!(m.screen, Screen::Album | Screen::Artist);
-    let mut top = 76.;
-    let mut visible = 5;
-    let detail = if count > 0 {
+    let detail = if count > 0 && shows_counter(m.screen) {
         format!("{} / {}", focus + 1, count)
     } else {
         String::new()
     };
     components::title(c, &screen_title(m), &detail);
-    if collection && count > 0 {
-        visible = 3;
+    let mut top = CONTENT_TOP;
+    let mut visible = visible_rows_for(m.screen);
+    if matches!(m.screen, Screen::Album | Screen::Artist) && count > 0 {
+        collection_header(c, ui, m, tracks, has_art, count);
         top = 170.;
-        let t = ui.collection_track(m, tracks);
-        let art_matches = t.zip(m.current()).is_some_and(|(t, current)| {
-            t.album == current.album && t.album_artist == current.album_artist
-        });
-        let collection_art = t.is_some_and(|t| {
-            ui.collection_art
-                .as_ref()
-                .is_some_and(|(source, id)| source == &t.source_id && *id == t.id)
-        });
-        c.artwork(16., 77., 78., collection_art || (has_art && art_matches));
-        if collection_art {
-            if let Some(quad) = c.draw.last_mut() {
-                quad.collection_artwork = true;
-            }
-        }
-        let (name, sub) = if let Some(t) = t {
-            if m.screen == Screen::Artist {
-                (t.artist.as_str(), "All songs and albums".into())
-            } else {
-                (
-                    t.album.as_str(),
-                    format!(
-                        "{} · {} tracks",
-                        crate::display_or_unknown(if t.album_artist.is_empty() {
-                            &t.artist
-                        } else {
-                            &t.album_artist
-                        }),
-                        count.saturating_sub(1)
-                    ),
-                )
-            }
-        } else {
-            ("Unavailable", "This collection is offline".into())
-        };
-        c.text_box(
-            110.,
-            83.,
-            354.,
-            crate::display_or_unknown(name),
-            type_scale::SECTION,
-            color::TEXT_PRIMARY,
-        );
-        c.text_box(
-            110.,
-            111.,
-            354.,
-            &sub,
-            type_scale::BODY,
-            color::TEXT_SECONDARY,
-        );
-        c.text(
-            110.,
-            139.,
-            "Hold Select  Collection / track actions",
-            type_scale::SECONDARY,
-            color::TEXT_SECONDARY,
-        );
     }
-    if count == 0 {
-        let (title, body) = if m.screen == Screen::Queue {
-            ("Queue is empty", "Choose a song or album from Music.")
-        } else if m.library.scanning {
-            (
-                "Finding your music",
-                "Your library will appear when scanning finishes.",
-            )
-        } else if m.library.error.is_some() {
-            (
-                "Library scan interrupted",
-                "Existing entries are kept. Check storage and rescan.",
-            )
-        } else {
-            (
-                "No music here",
-                "Check your music source, then scan the library.",
-            )
-        };
-        c.text(28., 121., title, type_scale::SECTION, color::TEXT_PRIMARY);
-        wrap(c, 28., 156., 424., body, 14., 3);
-        let item = Item::new(
-            if m.screen == Screen::Queue {
-                "Open Music"
-            } else {
-                "Scan Library"
-            },
-            "empty",
-        );
-        components::row(c, &item, 235., interactive, "", false);
+    if count == 0 && catalog_like(m.screen) {
+        let (title, body, action) = empty_catalog(m);
+        hero(c, title, body, 112.);
+        if let Some(action) = action {
+            components::row(c, &Item::new(action, "empty"), 232., interactive, "", false);
+        }
     } else {
+        if let Some(h) = &page.hero {
+            let y = if page.rows.is_empty() && page.facts.is_empty() {
+                128.
+            } else {
+                96.
+            };
+            top = hero(c, &h.title, &h.body, y) + 14.;
+        }
+        if !page.facts.is_empty() {
+            top = facts(c, &page.facts, top + 4.) + 10.;
+        }
+        if page.hero.is_some() || !page.facts.is_empty() {
+            visible = (((FOOTER_TOP - top) / ROW_PITCH).floor() as usize).max(1);
+        }
         let scroll = m
             .navigation
             .scroll
@@ -298,181 +310,262 @@ fn list(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], has_art: bool, 
             components::row(
                 c,
                 row,
-                top + i as f32 * 48.,
+                top + i as f32 * ROW_PITCH,
                 interactive && absolute == focus,
                 &tail,
                 playing,
             );
         }
+        if count > visible {
+            components::scroll_indicator(
+                c,
+                top,
+                visible as f32 * ROW_PITCH,
+                scroll,
+                visible,
+                count,
+            );
+        }
     }
-    let hint = if m.screen == Screen::Home {
-        "Wheel  Browse   •   Select  Open"
-    } else {
-        "Back  Parent   •   Hold Back  Home"
-    };
-    components::footer(c, m, has_art, hint);
-    if m.screen == Screen::Queue {
-        c.rect(0., 324., 480., 36., color::BG_RAISED);
-        c.text(
-            16.,
-            336.,
-            &format!(
-                "Shuffle {}   •   Repeat {}   •   Hold Select: actions",
-                if m.settings.shuffle { "On" } else { "Off" },
-                crate::repeat_label(m.settings.repeat)
-            ),
-            type_scale::SECONDARY,
-            color::TEXT_SECONDARY,
-        );
-    }
-    if matches!(
-        m.screen,
-        Screen::Wifi | Screen::SettingsWifi | Screen::Bluetooth | Screen::SettingsBluetooth
-    ) {
-        let radio = if matches!(m.screen, Screen::Wifi | Screen::SettingsWifi) {
-            &ui.wifi
-        } else {
-            &ui.bluetooth
-        };
-        c.rect(0., 324., 480., 36., color::BG_RAISED);
-        c.text_box(
-            16.,
-            336.,
-            448.,
-            &radio.message(matches!(
-                m.screen,
-                Screen::Bluetooth | Screen::SettingsBluetooth
-            )),
-            type_scale::SECONDARY,
-            color::TEXT_SECONDARY,
-        );
-    }
-    if matches!(m.screen, Screen::Platform | Screen::Diagnostics) {
-        c.rect(0., 324., 480., 36., color::BG_RAISED);
-        let message = if m.platform.busy.is_some() {
-            "Working…  Please wait"
-        } else if m.platform.failure.is_some() {
-            "Operation unavailable — open Result for details"
-        } else {
-            "Select  Full value   •   Back  Parent"
-        };
-        c.text(
-            16.,
-            336.,
-            message,
-            type_scale::SECONDARY,
-            color::TEXT_SECONDARY,
-        );
+    match &page.status {
+        Some(status) => components::status_strip(c, status),
+        None => components::footer(c, m, has_art),
     }
 }
-fn now_playing(c: &mut Canvas, m: &AppModel, has_art: bool, interactive: bool) {
-    let Some(t) = m.current() else {
-        components::title(c, "Now Playing", "");
-        c.artwork(34., 99., 112., false);
-        c.text(
-            170.,
-            119.,
-            "Nothing playing",
-            type_scale::SECTION,
+
+fn empty_catalog(m: &AppModel) -> (&'static str, &'static str, Option<&'static str>) {
+    if m.screen == Screen::Queue {
+        return (
+            "Queue Is Empty",
+            "Choose an album, artist or song from Music.",
+            Some("Open Music"),
+        );
+    }
+    if m.screen == Screen::Diagnostics || m.screen == Screen::DiagnosticSection {
+        return ("Nothing Reported", "", None);
+    }
+    if m.library.scanning {
+        return (
+            "Finding Your Music…",
+            "Your library appears here as music is found.",
+            None,
+        );
+    }
+    if !m.sources.iter().any(|s| s.online) {
+        return (
+            "Music Storage Unavailable",
+            "Restart the player. If an SD card was removed, reinsert it.",
+            None,
+        );
+    }
+    if m.library.error.is_some() {
+        return (
+            "Library Scan Didn't Finish",
+            "Your existing music was kept. Scan again to finish.",
+            Some("Scan for Music"),
+        );
+    }
+    (
+        "No Music Yet",
+        "Copy music to the player with a computer, then scan for music.",
+        Some("Scan for Music"),
+    )
+}
+
+/// Draw a hero message; returns the y just below it.
+fn hero(c: &mut Canvas, title: &str, body: &str, y: f32) -> f32 {
+    let lines = wrap_lines(title, 432., 20., 2);
+    let mut cursor = y;
+    for line in &lines {
+        c.text_box(
+            24.,
+            cursor,
+            432.,
+            line,
+            type_scale::SCREEN_TITLE,
             color::TEXT_PRIMARY,
         );
-        c.text(
-            170.,
+        cursor += 28.;
+    }
+    if !body.is_empty() {
+        cursor += 6.;
+        for line in wrap_lines(body, 432., 14., 3) {
+            c.text_box(
+                24.,
+                cursor,
+                432.,
+                &line,
+                type_scale::BODY,
+                color::TEXT_SECONDARY,
+            );
+            cursor += 21.;
+        }
+    }
+    cursor
+}
+
+/// Two-column label/value facts; returns the y just below them.
+fn facts(c: &mut Canvas, facts: &[(String, String)], top: f32) -> f32 {
+    let mut y = top;
+    for (label, value) in facts {
+        c.text_box(
+            28.,
+            y + 7.,
             150.,
-            "Choose music to begin",
+            label,
             type_scale::BODY,
             color::TEXT_SECONDARY,
         );
-        components::row(
-            c,
-            &Item::new("Open Music", "music"),
-            257.,
-            interactive,
-            "",
-            false,
+        let value = components::fit_pixels(value, 270., 14.);
+        let width = components::text_width(&value, 14.);
+        c.text(
+            452. - width,
+            y + 7.,
+            &value,
+            type_scale::BODY,
+            color::TEXT_PRIMARY,
         );
-        components::footer(c, m, false, "Play / Pause works on every screen");
+        y += 34.;
+        if y > FOOTER_TOP - 34. {
+            break;
+        }
+    }
+    y
+}
+
+fn collection_header(
+    c: &mut Canvas,
+    ui: &Ui,
+    m: &AppModel,
+    tracks: &[Track],
+    has_art: bool,
+    count: usize,
+) {
+    let t = ui.collection_track(m, tracks);
+    let art_matches = t.zip(m.current()).is_some_and(|(t, current)| {
+        t.album == current.album && t.album_artist == current.album_artist
+    });
+    let collection_art = t.is_some_and(|t| {
+        ui.collection_art
+            .as_ref()
+            .is_some_and(|(source, id)| source == &t.source_id && *id == t.id)
+    });
+    c.artwork(16., 77., 82., collection_art || (has_art && art_matches));
+    if collection_art {
+        if let Some(quad) = c.draw.last_mut() {
+            quad.collection_artwork = true;
+        }
+    }
+    let Some(t) = t else {
         return;
     };
-    c.artwork(16., 62., 164., has_art);
-    c.text(
-        196.,
-        47.,
-        "NOW PLAYING",
-        type_scale::SECONDARY,
+    let songs = count.saturating_sub(if m.screen == Screen::Artist { 2 } else { 1 });
+    let (name, sub) = if m.screen == Screen::Artist {
+        (
+            crate::display_or_unknown(&t.artist).to_owned(),
+            format!("{songs} songs"),
+        )
+    } else {
+        (
+            crate::display_or_unknown(&t.album).to_owned(),
+            crate::display_or_unknown(if t.album_artist.is_empty() {
+                &t.artist
+            } else {
+                &t.album_artist
+            })
+            .to_owned(),
+        )
+    };
+    let lines = wrap_lines(&name, 350., 18., 2);
+    let mut y = 84.;
+    for line in &lines {
+        c.text_box(
+            114.,
+            y,
+            350.,
+            line,
+            type_scale::SECTION,
+            color::TEXT_PRIMARY,
+        );
+        y += 25.;
+    }
+    c.text_box(
+        114.,
+        y + 4.,
+        350.,
+        &sub,
+        type_scale::BODY,
         color::TEXT_SECONDARY,
     );
-    wrap(
-        c,
-        196.,
-        78.,
-        268.,
-        if t.title.is_empty() {
-            &t.filename
-        } else {
-            &t.title
-        },
-        26.,
-        2,
-    );
+}
+
+fn now_playing(c: &mut Canvas, ui: &Ui, m: &AppModel, has_art: bool, interactive: bool) {
+    let Some(t) = m.current() else {
+        return;
+    };
+    c.artwork(16., 46., 176., has_art);
+    let title_lines = wrap_lines(crate::track_title(t), 260., 22., 3);
+    let mut y = 50.;
+    for line in &title_lines {
+        c.text_box(
+            206.,
+            y,
+            260.,
+            line,
+            type_scale::HERO - 0.5,
+            color::TEXT_PRIMARY,
+        );
+        y += 29.;
+    }
+    y += 6.;
     c.text_box(
-        196.,
-        149.,
-        268.,
+        206.,
+        y,
+        260.,
         crate::display_or_unknown(&t.artist),
         type_scale::SECTION,
         color::TEXT_PRIMARY,
     );
     c.text_box(
-        196.,
-        178.,
-        268.,
+        206.,
+        y + 26.,
+        260.,
         crate::display_or_unknown(&t.album),
         type_scale::BODY,
         color::TEXT_SECONDARY,
     );
     let source_offline =
         !m.sources.is_empty() && !m.sources.iter().any(|s| s.id == t.source_id && s.online);
-    let state = if source_offline {
-        "Music source offline"
+    let (icon, state) = if source_offline {
+        ("pause", "SD card removed")
     } else {
         match m.playback {
-            PlaybackState::Playing => "Playing",
-            PlaybackState::Paused => "Paused",
-            PlaybackState::Buffering => "Starting audio…",
-            PlaybackState::Error => "Output unavailable",
-            PlaybackState::Stopped => "Stopped",
+            PlaybackState::Playing => ("play", "Playing"),
+            PlaybackState::Paused => ("pause", "Paused"),
+            PlaybackState::Buffering => ("play", "Starting…"),
+            PlaybackState::Error => ("pause", "No audio output"),
+            PlaybackState::Stopped => ("pause", "Stopped"),
         }
     };
-    c.icon(
-        if m.playback == PlaybackState::Playing {
-            "play"
-        } else {
-            "pause"
-        },
-        196.,
-        207.,
-        18.,
-        color::TEXT_PRIMARY,
-    );
-    c.text(222., 209., state, type_scale::BODY, color::TEXT_SECONDARY);
+    c.icon(icon, 206., 200., 16., color::TEXT_SECONDARY);
+    c.text(228., 201., state, type_scale::BODY, color::TEXT_SECONDARY);
     if source_offline || m.playback == PlaybackState::Error {
         c.text(
-            196.,
-            230.,
+            206.,
+            222.,
             if source_offline {
-                "Check storage or reinsert the SD card"
+                "Reinsert the card to keep listening"
             } else {
-                "Check the output, then press Play"
+                "Check headphones, then press Play"
             },
             type_scale::SECONDARY,
-            color::TEXT_SECONDARY,
+            color::TEXT_MUTED,
         );
     }
-    c.progress(16., 251., 448., progress(m.position_ms, t.duration_ms));
+    c.progress(16., 244., 448., progress(m.position_ms, t.duration_ms));
     c.text(
         16.,
-        266.,
+        258.,
         &time(m.position_ms),
         type_scale::SECONDARY,
         color::TEXT_SECONDARY,
@@ -481,62 +574,89 @@ fn now_playing(c: &mut Canvas, m: &AppModel, has_art: bool, interactive: bool) {
     let width = components::text_width(&remaining, 12.);
     c.text(
         464. - width,
-        266.,
+        258.,
         &remaining,
         type_scale::SECONDARY,
         color::TEXT_SECONDARY,
     );
-    for (i, label) in ["Options", "Queue", "Audio Info"].iter().enumerate() {
-        let x = 16. + i as f32 * 152.;
-        c.focus_panel(
-            x,
-            291.,
-            144.,
-            29.,
-            interactive && m.navigation.focus.min(2) == i,
-        );
-        c.text_box(
-            x + 12.,
-            299.,
-            120.,
-            label,
-            type_scale::BODY,
-            color::TEXT_PRIMARY,
-        );
+    // The wheel adjusts volume here; the volume bar is the wheel's target.
+    c.icon("volume", 16., 289., 18., color::TEXT_SECONDARY);
+    c.rect(44., 297., 372., 3., color::TRACK);
+    let i = c.draw.len();
+    c.rect(
+        44.,
+        297.,
+        372. * f32::from(m.settings.volume.min(100)) / 100.,
+        3.,
+        color::ACCENT_GOLD,
+    );
+    if interactive {
+        if let Some(q) = c.draw.get_mut(i) {
+            q.focus_target = true;
+        }
     }
-    c.rect(0., 324., 480., 36., color::BG_RAISED);
-    c.icon("volume", 16., 332., 18., color::TEXT_SECONDARY);
+    let volume = m.settings.volume.to_string();
     c.text(
-        42.,
-        335.,
-        &m.settings.volume.to_string(),
+        464. - components::text_width(&volume, 14.),
+        290.,
+        &volume,
         type_scale::BODY,
         color::TEXT_PRIMARY,
     );
-    c.centered(
-        240.,
-        337.,
-        "Play / Pause  ·  Previous / Next",
+    c.rect(0., FOOTER_TOP, 480., 36., color::BG_RAISED);
+    c.icon(
+        if m.output == reborn_core::AudioOutput::Wired {
+            "headphones"
+        } else {
+            "bluetooth"
+        },
+        16.,
+        333.,
+        18.,
+        color::TEXT_SECONDARY,
+    );
+    c.text_box(
+        42.,
+        335.,
+        250.,
+        &pages::output_name(ui, m),
         type_scale::SECONDARY,
         color::TEXT_SECONDARY,
     );
+    c.icon(
+        "shuffle",
+        410.,
+        333.,
+        18.,
+        if m.settings.shuffle {
+            color::ACCENT_GOLD
+        } else {
+            color::TEXT_MUTED
+        },
+    );
+    c.icon(
+        "repeat",
+        440.,
+        333.,
+        18.,
+        if m.settings.repeat == RepeatMode::Off {
+            color::TEXT_MUTED
+        } else {
+            color::ACCENT_GOLD
+        },
+    );
+    if m.settings.repeat == RepeatMode::Track {
+        c.text(456., 344., "1", type_scale::SECONDARY, color::ACCENT_GOLD);
+    }
 }
-pub(crate) fn wrap(
-    c: &mut Canvas,
-    x: f32,
-    mut y: f32,
-    width: f32,
-    text: &str,
-    size: f32,
-    lines: usize,
-) {
+
+/// Split `text` into at most `lines` lines that fit `width` at `size` px.
+pub(crate) fn wrap_lines(text: &str, width: f32, size: f32, lines: usize) -> Vec<String> {
+    let mut out = vec![];
     let mut remaining = text.trim();
-    for line in 0..lines {
-        if remaining.is_empty() {
-            break;
-        }
-        if line == lines - 1 {
-            c.text_box(x, y, width, remaining, size / 8., color::TEXT_PRIMARY);
+    while !remaining.is_empty() && out.len() < lines {
+        if out.len() == lines - 1 || components::text_width(remaining, size) <= width {
+            out.push(components::fit_pixels(remaining, width, size));
             break;
         }
         let mut split = remaining.len();
@@ -555,44 +675,56 @@ pub(crate) fn wrap(
         if split == 0 {
             break;
         }
-        c.text_box(
-            x,
-            y,
-            width,
-            &remaining[..split],
-            size / 8.,
-            color::TEXT_PRIMARY,
-        );
+        out.push(remaining[..split].trim_end().to_owned());
         remaining = remaining[split..].trim_start();
-        y += size + 6.;
     }
+    out
 }
+
 fn value_detail(c: &mut Canvas, m: &AppModel, interactive: bool) {
-    let v = m.navigation.filter.strip_prefix("value:").unwrap_or("");
-    let (title, value) = v.split_once('\u{1f}').unwrap_or(("Detail", v));
+    let (title, value) = m
+        .navigation
+        .filter
+        .split_once('\u{1f}')
+        .unwrap_or(("Detail", &m.navigation.filter));
     components::title(c, title, "");
-    wrap(c, 24., 90., 432., value, 16., 8);
+    let mut y = 88.;
+    for line in wrap_lines(value, 432., 15., 8) {
+        c.text_box(24., y, 432., &line, type_scale::ROW, color::TEXT_PRIMARY);
+        y += 22.;
+    }
     components::row(c, &Item::new("Back", "back"), 270., interactive, "", false);
+    components::footer(c, m, false);
 }
+
 fn entry(c: &mut Canvas, ui: &Ui) {
     c.rect(0., 28., 480., 332., color::BG);
     components::title(c, "Wi-Fi Password", "");
     c.text_box(
         16.,
-        79.,
+        80.,
         448.,
         &ui.ssid,
         type_scale::BODY,
         color::TEXT_SECONDARY,
     );
-    c.text(
+    let dots = "•".repeat(ui.password.len().min(32));
+    c.text_box(
         16.,
-        112.,
-        &format!("{} characters entered", ui.password.len()),
+        110.,
+        448.,
+        if dots.is_empty() {
+            "No characters yet"
+        } else {
+            &dots
+        },
         type_scale::BODY,
-        color::TEXT_PRIMARY,
+        if dots.is_empty() {
+            color::TEXT_MUTED
+        } else {
+            color::TEXT_PRIMARY
+        },
     );
-    let count = crate::LETTERS.len() + 3;
     let focus = ui.letter;
     let label = if focus < crate::LETTERS.len() {
         if crate::LETTERS[focus] == b' ' {
@@ -603,7 +735,7 @@ fn entry(c: &mut Canvas, ui: &Ui) {
     } else {
         ["Delete", "Connect", "Cancel"][focus - crate::LETTERS.len()].into()
     };
-    c.focus_panel(120., 157., 240., 65., true);
+    c.focus_panel(150., 154., 180., 70., true);
     c.centered(
         240.,
         177.,
@@ -611,25 +743,19 @@ fn entry(c: &mut Canvas, ui: &Ui) {
         type_scale::SCREEN_TITLE,
         color::TEXT_PRIMARY,
     );
-    c.centered(
-        240.,
-        242.,
-        &format!("{} / {count}", focus + 1),
+    c.text(
+        16.,
+        262.,
+        "Turn to choose · Select adds · Hold Select connects",
         type_scale::SECONDARY,
         color::TEXT_SECONDARY,
     );
+    c.rect(0., FOOTER_TOP, 480., 36., color::BG_RAISED);
     c.text(
         16.,
-        285.,
-        "Wheel  Choose   •   Select  Add / action",
-        type_scale::BODY,
-        color::TEXT_SECONDARY,
-    );
-    c.text(
-        16.,
-        329.,
-        "Hold Select  Connect   •   Back  Cancel",
+        336.,
+        "Back cancels",
         type_scale::SECONDARY,
-        color::TEXT_SECONDARY,
+        color::TEXT_MUTED,
     );
 }

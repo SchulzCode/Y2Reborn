@@ -1,14 +1,23 @@
 #![forbid(unsafe_code)]
 //! Isolated host fixture renderer. This binary and its demonstration state are
-//! never installed by the production package. Uses the actual production UI.
+//! never installed by the production package. It uses the production UI and
+//! the production platform projection; only the input records are fixtures.
 use reborn_core::{
-    AppModel, ConfirmAction, MediaSource, Modal, PlatformTask, PlaybackState, Screen, Source, Track,
+    platform::{BatteryState, ChargingState, LowBattery},
+    Action, AppModel, AudioOutput, MediaSource, PlaybackState, Screen, Source, Track,
 };
-use reborn_ui::{Item, PowerView, PreviewScreen, RadioView, Ui};
-use serde_json::json;
+use reborn_platform::client;
+use reborn_ui::{BluetoothDeviceView, BluetoothView, NetworkView, Ui, WifiStatus, WifiView};
+use serde_json::{json, Value};
 use std::{fs, path::PathBuf};
+
 fn tracks() -> Vec<Track> {
-    [
+    let albums = [
+        ("Northark", "Echoes of a Higher Place"),
+        ("Émilie & the Northern Lights", "A Landscape in Sound"),
+        ("Quiet Harbour", "Low Tide"),
+    ];
+    let titles = [
         "A Brighter Silence",
         "Fields of Tomorrow",
         "The Weighing Sky",
@@ -18,369 +27,443 @@ fn tracks() -> Vec<Track> {
         "Северный свет",
         "夜の静けさ",
         "A very long title that extends well beyond the edge of a small physical music player",
-    ]
-    .iter()
-    .enumerate()
-    .map(|(i, title)| Track {
-        id: i as i64 + 1,
-        source_id: "internal".into(),
-        path: format!("/data/music/Northark/Echoes/{i:02}.flac").into(),
-        filename: format!("{i:02}.flac"),
-        title: (*title).into(),
-        artist: if i < 5 {
-            "Northark"
-        } else {
-            "Émilie & the Northern Lights"
-        }
-        .into(),
-        album: if i < 5 {
-            "Echoes of a Higher Place"
-        } else {
-            "A Landscape in Sound"
-        }
-        .into(),
-        album_artist: if i < 5 {
-            "Northark"
-        } else {
-            "Émilie & the Northern Lights"
-        }
-        .into(),
-        track: i as u32 + 1,
-        duration_ms: 318_000 + i as u64 * 12_000,
-        codec: "FLAC".into(),
-        sample_rate: 96_000,
-        channels: 2,
-        artwork: true,
-        online: true,
-        ..Default::default()
-    })
-    .collect()
+        "Morning Ferry",
+        "Salt and Cedar",
+        "Harbour Lights",
+    ];
+    titles
+        .iter()
+        .enumerate()
+        .map(|(i, title)| {
+            let (artist, album) = albums[(i / 5).min(2)];
+            Track {
+                id: i as i64 + 1,
+                source_id: if i < 10 { "internal" } else { "uuid:CARD" }.into(),
+                path: format!("/data/music/{artist}/{album}/{i:02}.flac").into(),
+                filename: format!("{i:02} {title}.flac"),
+                title: (*title).into(),
+                artist: artist.into(),
+                album: album.into(),
+                album_artist: artist.into(),
+                track: (i % 5) as u32 + 1,
+                duration_ms: 198_000 + i as u64 * 17_000,
+                codec: "flac".into(),
+                sample_rate: if i % 2 == 0 { 96_000 } else { 44_100 },
+                channels: 2,
+                artwork: true,
+                online: true,
+                ..Default::default()
+            }
+        })
+        .collect()
 }
+
+fn status() -> Value {
+    json!({"schema":"org.y2linux.status/v1",
+        "record":{"kernel":"6.18.0-y2linux-preview","boot_id":"preview-boot"},
+        "cpu":{"online":"0-3","load_average":"0.24 0.18 0.12","policies":[{"scaling_cur_freq":"598000","affected_cpus":"0 1 2 3","scaling_governor":"schedutil"}],"timer":{"clocksource":"arch_sys_counter","highres_active":true,"no_hz_active":true}},
+        "memory":{"meminfo":{"MemTotal":954376,"MemAvailable":742112},"processes":[{"pss_kib":22400}]},
+        "thermal":{"zones":[{"type":"cpu","temperature_millicelsius":46800}]},
+        "power":{"soc_percent":72,"soc_source":"voltage_estimate","soc_confidence":"provisional","low_battery":{"state":"Normal","voltage_uv":3912000},"supplies":[{"name":"BAT0","type":"Battery","status":"Discharging"}]},
+        "storage":{"volumes":[
+            {"path":"/data","state":"Ready","space_state":"Normal","filesystem":"ext4","total_bytes":6_442_450_944_u64,"available_bytes":3_221_225_472_u64,"uuid":"preview"},
+            {"path":"/media/sd","state":"Ready","space_state":"Normal","filesystem":"exfat","total_bytes":64_000_000_000_u64,"available_bytes":48_000_000_000_u64},
+            {"path":"/","state":"Ready","space_state":"Normal","filesystem":"ext4","total_bytes":536_870_912,"available_bytes":400_000_000}]},
+        "wifi":{"state":"Online","ip_addresses":["192.0.2.42"],"default_route":[{"gateway":"192.0.2.1","dev":"wlan0"}],"dns_ready":true,"rssi_dbm":-51},
+        "bluetooth":{"selected_peer":{"trusted":true},"reconnect":{"state":"Connected"}},
+        "system":{"versions":{"release_version":"1.0.0-reborn-product-ui-v2-candidate.1","rootfs_version":"2025.02.18-platform-v1.10","build_id":"Y2LINUX-REBORN-PRODUCT-UI-V2","reborn_source_commit":"preview","build_git_commit":"preview"},
+            "time":{"tls_ready":true,"source":"ntp"},"ssh":{"state":"Ready","bind":"10.42.0.1:22","sftp":true},
+            "usb":{"udcs":[{"state":"configured"}],"dma":{"transfer":"dma","dma_errors":0}},
+            "update":{"state":"Idle","download":{"state":"Checked","release_version":"1.0.0-reborn-product-ui-v2-candidate.1"}},
+            "boot_history":{"previous_boot_id":"previous","last_stage":"application_ready"},
+            "previous_boot_evidence":{"previous_orderly_shutdown":true},"kernel_taint":0},
+        "readiness":{"storage":{"state":"Ready"},"audio":{"state":"Ready"}}})
+}
+fn caps() -> Value {
+    json!({"schema":"org.y2linux.capabilities/v1","capabilities":{
+        "ota":{"implemented":true,"enabled":true},"storage":{"implemented":true,"enabled":true},
+        "audio":{"implemented":true,"enabled":true,"enabled_formats":["S16_LE"],"enabled_rates_hz":[44100,48000]},
+        "bluetooth":{"implemented":true,"enabled":true,"optional_codecs":["AAC"],"codec_auto":{"eligible_codecs":[]}},
+        "usb_host":{"implemented":true,"enabled":false,"experimental":true}}})
+}
+
 fn model() -> AppModel {
     let mut m = AppModel {
         playback: PlaybackState::Playing,
-        position_ms: 137_000,
         ..Default::default()
     };
-    m.replace_queue(tracks(), 0).unwrap();
+    m.replace_queue(tracks()[..6].to_vec(), 0).unwrap();
     m.position_ms = 137_000;
     m.library.tracks = tracks();
     m.settings.volume = 56;
-    m.sources = vec![Source {
-        id: "internal".into(),
-        kind: MediaSource::Internal,
-        root: "/data/music".into(),
-        online: true,
-        mount: "internal".into(),
-        mount_id: Some(41),
-    }];
-    m.platform.status = json!({"schema":"org.y2linux.status/v1","record":{"wall_timestamp":"2026-09-24T15:42:00+00:00","kernel":"6.18.0-y2linux-platform-v1-candidate-01","boot_id":"preview-boot"},"cpu":{"online":"0-3","load_average":"0.24 0.18 0.12","policies":[{"scaling_cur_freq":"598000","affected_cpus":"0 1 2 3","scaling_governor":"schedutil"}]},"memory":{"meminfo":{"MemTotal":954376,"MemAvailable":742112,"Cached":82412,"Slab":32900},"processes":[{"rss_kib":28500,"pss_kib":22400}]},"thermal":{"zones":[{"type":"CPU","temperature_millicelsius":46800},{"type":"PMIC","temperature_millicelsius":48200}],"cooling":[{"type":"cpufreq","state":0,"max_state":2}]},"power":{"supplies":[{"name":"Battery","type":"Battery","status":"Charging","voltage_now":"4050000"},{"name":"USB","type":"USB","status":null,"online":"1","usb_type":"SDP"}],"low_battery":{"state":"Disabled"}},"storage":{"volumes":[{"path":"/data","state":"Ready","space_state":"Normal","filesystem":"ext4","total_bytes":6442450944_u64,"available_bytes":3221225472_u64},{"path":"/media/sd","state":"Unavailable","space_state":"Unavailable","reason":"not_uniquely_mounted"},{"path":"/","state":"Ready","space_state":"Normal","filesystem":"ext4","total_bytes":536870912,"available_bytes":400000000}]},"wifi":{"state":"Online","reason":null,"ip_addresses":["192.0.2.42"],"default_route":[{"gateway":"192.0.2.1","dev":"wlan0"}],"dns_ready":true,"rssi_dbm":-51,"traffic_counters":{"rx_bytes":1120402,"tx_bytes":58424}},"bluetooth":{"selected_peer":{"trusted":true},"reconnect":{"state":"Connected"}},"system":{"versions":{"release_version":"1.0.0-candidate.1","rootfs_version":"2025.02.18-platform-v1.1","build_id":"Y2LINUX-PLATFORM-V1-CANDIDATE-01","reborn_source_commit":"preview-only","build_git_commit":"preview-only"},"time":{"tls_ready":true,"source":"ntp"},"ssh":{"state":"Ready","bind":"10.42.0.1:22","sftp":true},"usb":{"udcs":[{"state":"configured"}]},"update":{"state":"Queued","sequence":2,"download":{"state":"Verified"},"failure":null},"boot_history":{"previous_boot_id":"previous-preview-boot","last_stage":"application_ready"},"previous_boot_evidence":{"previous_orderly_shutdown":true},"kernel_taint":0,"reset_cause":null},"readiness":{"storage":{"state":"Ready"},"audio":{"state":"Ready"},"wifi":{"state":"Ready"},"bluetooth":{"state":"Ready"},"update":{"state":"Starting"}}});
-    m.platform.capabilities = json!({"schema":"org.y2linux.capabilities/v1","capabilities":{"storage":{"implemented":true,"enabled":true,"qualified":false},"wifi":{"implemented":true,"enabled":true,"qualified":false},"bluetooth":{"implemented":true,"enabled":true,"qualified":false,"optional_codecs":[],"codec_auto":{"eligible_codecs":[]}},"audio":{"implemented":true,"enabled":true,"qualified":false,"enabled_rates_hz":[44100],"s32":false,"preserved_24bit":false},"ota":{"implemented":true,"enabled":true,"qualified":false},"deep_suspend":{"implemented":true,"enabled":false,"qualified":false},"usb_host":{"implemented":false,"enabled":false,"qualified":false},"automatic_bootimg_update":{"implemented":false,"enabled":false,"qualified":false}}});
-    m.platform.health = json!({"state":"DEGRADED","checks":[{"name":"Storage","state":"OK","reason":"Normal"},{"name":"Audio","state":"OK","reason":"Observed"},{"name":"Wi-Fi","state":"OK","reason":"Online"},{"name":"Bluetooth","state":"OK","reason":"SBC transport"},{"name":"SD Card","state":"UNAVAILABLE","reason":"No card mounted"},{"name":"USB","state":"OK","reason":"Ready"}]});
-    m.platform.audio = json!({"source":{"codec":"FLAC","sample_rate":96000,"source_bits":24},"decoder_format":"s32","internal_processing_format":"fltp","replay_gain":{"applied_gain_db":0},"eq":{"active":false},"alsa":{"rate":44100,"format":"S16_LE","channels":2}});
-    m.platform.bluetooth = json!({"available":true,"powered":true,"devices":[{"name":"Studio Headphones","path":"/org/bluez/hci0/dev_PREVIEW","connected":true,"paired":true,"audio":true}],"pcms":[{"codec":"SBC","format":33296,"rate":44100,"channels":2,"running":true}]});
+    m.sources = vec![
+        Source {
+            id: "internal".into(),
+            kind: MediaSource::Internal,
+            root: "/data/music".into(),
+            online: true,
+            mount: "internal".into(),
+            mount_id: Some(41),
+        },
+        Source {
+            id: "uuid:CARD".into(),
+            kind: MediaSource::SdCard("CARD".into()),
+            root: "/media/sd".into(),
+            online: true,
+            mount: "sd".into(),
+            mount_id: Some(52),
+        },
+    ];
+    m.platform.snapshot = client::snapshot(&status(), &caps());
+    m.platform.battery = BatteryState {
+        percent: Some(72),
+        charging: ChargingState::OnBattery,
+        level: LowBattery::Normal,
+    };
+    m.platform.brightness_available = true;
+    m.platform.audio_facts = vec![reborn_core::platform::Fact::new("PCM format", "S16_LE")];
     m
 }
+
 fn ui() -> Ui {
     let mut ui = Ui::default();
-    ui.wifi = RadioView {
+    ui.wifi = WifiView {
         available: true,
         powered: true,
-        connection: "Online · Studio".into(),
+        status: WifiStatus::Connected("Home Wi-Fi".into()),
+        networks: vec![
+            NetworkView {
+                ssid: "Home Wi-Fi".into(),
+                bars: 3,
+                secured: Some(true),
+                saved_id: Some(7),
+                visible: true,
+            },
+            NetworkView {
+                ssid: "Studio".into(),
+                bars: 2,
+                secured: Some(true),
+                saved_id: Some(3),
+                visible: true,
+            },
+            NetworkView {
+                ssid: "A very long network name with spaces and more".into(),
+                bars: 1,
+                secured: Some(true),
+                saved_id: None,
+                visible: true,
+            },
+            NetworkView {
+                ssid: "Café Gäste".into(),
+                bars: 2,
+                secured: Some(false),
+                saved_id: None,
+                visible: true,
+            },
+        ],
         ..Default::default()
     };
-    ui.bluetooth = RadioView {
+    ui.bluetooth = BluetoothView {
         available: true,
         powered: true,
-        connection: "Connected · Studio Headphones".into(),
+        devices: vec![
+            BluetoothDeviceView {
+                name: "AirPods Pro".into(),
+                path: "/bt/a".into(),
+                address: "AA".into(),
+                paired: true,
+                bonded: true,
+                connected: true,
+                audio_ready: true,
+                codec: Some("AAC".into()),
+            },
+            BluetoothDeviceView {
+                name: "Living Room Speaker with an Unusually Long Name".into(),
+                path: "/bt/b".into(),
+                address: "BB".into(),
+                paired: true,
+                bonded: true,
+                ..Default::default()
+            },
+            BluetoothDeviceView {
+                name: "Kopfhörer Ü2".into(),
+                path: "/bt/c".into(),
+                address: "CC".into(),
+                ..Default::default()
+            },
+        ],
+        codec_choices: vec![],
         ..Default::default()
     };
-    ui.networks = vec![
-        Item::new("A very long network name with spaces", "long-network")
-            .with_secondary("-68 dBm · Secured"),
-    ];
-    ui.saved_networks = vec![Item::new("Studio", "saved:7").with_secondary("Saved")];
-    ui.bluetooth_devices = vec![
-        reborn_ui::BluetoothDeviceView {
-            name: "Studio Headphones".into(),
-            path: "/org/bluez/hci0/dev_PREVIEW".into(),
-            paired: true,
-            bonded: true,
-            connected: true,
-            audio_ready: true,
-        },
-        reborn_ui::BluetoothDeviceView {
-            name: "Portable Speaker".into(),
-            path: "/org/bluez/hci0/dev_OTHER".into(),
-            ..Default::default()
-        },
-    ];
     ui
 }
+
+/// Adjusts one preview state before it is drawn.
+type Setup = Box<dyn Fn(&mut Ui, &mut AppModel)>;
+
+fn at(screen: Screen, filter: &str) -> AppModel {
+    let mut m = model();
+    m.screen = screen;
+    m.navigation.filter = filter.into();
+    m
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let output = PathBuf::from(
         std::env::args()
             .nth(1)
-            .unwrap_or_else(|| "out/ui-v1-preview-quads".into()),
+            .unwrap_or_else(|| "out/product-ui-v2-preview-quads".into()),
     );
     fs::create_dir_all(&output)?;
-    let power = PowerView {
-        charging: true,
-        percent: None,
-    };
-    let mut cases = vec![];
-    for (name, screen, filter) in [
-        ("home", Screen::Home, ""),
-        ("music", Screen::Music, ""),
-        ("now-playing", Screen::NowPlaying, ""),
-        ("albums", Screen::Albums, ""),
-        (
-            "album-detail",
-            Screen::Album,
-            "album:Northark\u{1f}Echoes of a Higher Place",
-        ),
-        ("artists", Screen::Artists, ""),
-        ("artist", Screen::Artist, "artist:Northark"),
-        ("songs", Screen::Tracks, ""),
-        ("folders", Screen::Folders, "folder:/data/music"),
-        ("queue", Screen::Queue, ""),
-        ("quick-settings", Screen::QuickSettings, ""),
-        ("connectivity", Screen::Connectivity, ""),
-        ("wifi", Screen::Wifi, ""),
-        ("bluetooth", Screen::Bluetooth, ""),
-        ("settings", Screen::Settings, ""),
-        ("audio-settings", Screen::SettingsAudio, ""),
-        ("playback-settings", Screen::SettingsPlayback, ""),
-        ("library-settings", Screen::SettingsLibrary, ""),
-        ("display-settings", Screen::SettingsDisplay, ""),
-        ("system", Screen::SettingsSystem, ""),
-        ("diagnostics", Screen::Diagnostics, ""),
-    ] {
-        let mut m = model();
-        m.screen = screen;
-        m.navigation.filter = filter.into();
-        cases.push((name.to_owned(), m));
+    let album = "album:Northark\u{1f}Echoes of a Higher Place";
+    let mut cases: Vec<(&str, AppModel, Setup)> = vec![];
+    let none = || -> Setup { Box::new(|_, _| {}) };
+    macro_rules! case {
+        ($name:expr, $m:expr) => {
+            cases.push(($name, $m, none()))
+        };
+        ($name:expr, $m:expr, $f:expr) => {
+            cases.push(($name, $m, Box::new($f)))
+        };
     }
-    for id in [
-        "storage",
-        "power",
-        "clock",
-        "about",
-        "usb",
-        "update",
-        "update_diag",
-        "versions",
-        "health",
-        "capabilities",
-        "cpu",
-        "thermal",
-        "network",
-        "bluetooth",
-        "codec",
-        "audio",
-        "boot",
-        "backup",
-        "maintenance",
-        "benchmarks",
-    ] {
-        let mut m = model();
-        m.screen = Screen::Platform;
-        m.navigation.filter = id.into();
-        cases.push((format!("platform-{id}"), m));
-    }
-    let mut m = model();
-    m.screen = Screen::NowPlaying;
-    m.navigation.modal = Some(Modal::PowerMenu);
-    m.navigation.modal_focus = 2;
-    cases.push(("power-menu".into(), m));
-    let mut m = model();
-    m.screen = Screen::Platform;
-    m.navigation.filter = "update".into();
-    m.navigation.modal = Some(Modal::Confirm(ConfirmAction::Platform(
-        PlatformTask::UpdateApply,
-    )));
-    cases.push(("update-confirm".into(), m));
-    let mut m = model();
-    m.screen = Screen::Queue;
-    m.navigation.modal = Some(Modal::ContextMenu);
-    m.navigation.context_target = Some(1);
-    m.navigation.context_key = Some(format!("queue:{}", m.queue_entry_ids[1].0));
-    cases.push(("queue-context".into(), m));
-    let mut m = model();
-    m.screen = Screen::NowPlaying;
-    m.queue_position = 8;
-    cases.push(("long-metadata".into(), m));
-    let mut m = model();
-    m.screen = Screen::Tracks;
-    m.navigation.focus = 6;
-    m.navigation.scroll = 4;
-    cases.push(("unicode-metadata".into(), m));
-    let m = AppModel {
-        screen: Screen::Tracks,
-        ..Default::default()
-    };
-    cases.push(("empty-library".into(), m));
-    let mut m = model();
-    m.screen = Screen::Platform;
-    m.navigation.filter = "storage".into();
-    m.platform.status["storage"]["volumes"][0]["space_state"] = json!("CriticalSpace");
-    m.platform.status["storage"]["volumes"][0]["available_bytes"] = json!(10485760);
-    cases.push(("low-storage".into(), m));
-    let mut m = model();
-    m.screen = Screen::Platform;
-    m.navigation.filter = "update".into();
-    m.platform.status["system"]["update"]["state"] = json!("Failed");
-    m.platform.status["system"]["update"]["failure"] =
-        json!("Signature verification failed; installed root preserved");
-    cases.push(("update-failed".into(), m));
-    for (name, screen) in [
-        ("pairing", Screen::Bluetooth),
-        ("wifi-password", Screen::Wifi),
-        ("letter-index", Screen::Tracks),
-        ("track-info", Screen::TrackInfo),
-        ("wifi-failed", Screen::Wifi),
-        ("bluetooth-unavailable", Screen::Bluetooth),
-        ("sd-removed", Screen::NowPlaying),
-        ("audio-error", Screen::NowPlaying),
-    ] {
-        let mut m = model();
-        m.screen = screen;
-        if name == "sd-removed" {
-            m.sources[0].online = false;
+    case!("04-home", at(Screen::Home, ""));
+    case!("05-music", at(Screen::Music, ""));
+    case!("06-albums", at(Screen::Albums, ""));
+    case!("07-album", at(Screen::Album, album), |_, m| m
+        .navigation
+        .focus = 1);
+    case!("08-artists", at(Screen::Artists, ""));
+    case!("09-artist", at(Screen::Artist, "artist:Northark"));
+    case!("10-songs", at(Screen::Tracks, ""), |_, m| m
+        .navigation
+        .focus = 2);
+    case!("11-folders", at(Screen::Folders, ""));
+    case!("12-now-playing", at(Screen::NowPlaying, ""));
+    case!(
+        "13-now-playing-options",
+        at(Screen::NowPlaying, ""),
+        |ui, m| {
+            ui.model_action(m, Action::Select);
+        }
+    );
+    case!("14-queue", at(Screen::Queue, ""), |_, m| m
+        .navigation
+        .focus = 2);
+    case!("15-quick-settings", at(Screen::Home, ""), |ui, m| {
+        ui.model_action(m, Action::PowerMenu);
+    });
+    case!("16-settings", at(Screen::Settings, ""));
+    case!("17-wifi", at(Screen::Wifi, ""), |_, m| m.navigation.focus =
+        1);
+    case!("18-wifi-off", at(Screen::Wifi, ""), |ui, _| {
+        ui.wifi.powered = false;
+        ui.wifi.status = WifiStatus::Disconnected;
+    });
+    case!("19-wifi-error", at(Screen::Wifi, ""), |ui, m| {
+        ui.wifi.status = WifiStatus::Connecting("Studio".into());
+        ui.wifi.problem = Some(reborn_core::platform::WifiProblem::WrongPassword);
+        m.navigation.focus = 2;
+    });
+    case!("20-wifi-password", at(Screen::Wifi, ""), |ui, m| {
+        m.navigation.focus = 3;
+        ui.model_action(m, Action::Select);
+        for _ in 0..3 {
+            ui.model_action(m, Action::Select);
+        }
+    });
+    case!("21-bluetooth", at(Screen::Bluetooth, ""), |_, m| {
+        m.output = AudioOutput::Bluetooth("AA".into());
+        m.navigation.focus = 1;
+    });
+    case!("22-bluetooth-off", at(Screen::Bluetooth, ""), |ui, _| {
+        ui.bluetooth.powered = false;
+    });
+    case!("23-bluetooth-device", at(Screen::Bluetooth, ""), |ui, m| {
+        m.navigation.focus = 1;
+        ui.model_action(m, Action::Select);
+    });
+    case!("24-pc-transfer", at(Screen::PcTransfer, ""));
+    case!(
+        "25-pc-transfer-disconnected",
+        at(Screen::PcTransfer, ""),
+        |_, m| {
+            m.platform.snapshot.usb = reborn_core::platform::UsbTransfer::Disconnected;
+        }
+    );
+    case!("26-audio", at(Screen::SettingsAudio, ""));
+    case!("27-output", at(Screen::SettingsAudio, ""), |ui, m| {
+        ui.model_action(m, Action::Select);
+    });
+    case!("28-playback", at(Screen::SettingsPlayback, ""));
+    case!("29-library", at(Screen::SettingsLibrary, ""), |_, m| {
+        m.library.last_scan = Some(reborn_core::ScanSummary {
+            discovered: 1284,
+            reused: 1280,
+            elapsed_ms: 900,
+        });
+    });
+    case!("30-display", at(Screen::SettingsDisplay, ""));
+    case!("31-system", at(Screen::SettingsSystem, ""));
+    case!("32-battery", at(Screen::Battery, ""), |_, m| {
+        m.platform.battery.charging = ChargingState::Charging;
+    });
+    case!("33-battery-low", at(Screen::Battery, ""), |_, m| {
+        m.platform.battery = BatteryState {
+            percent: Some(8),
+            charging: ChargingState::OnBattery,
+            level: LowBattery::Low,
+        };
+    });
+    case!("34-storage", at(Screen::Storage, ""));
+    case!("35-storage-no-sd", at(Screen::Storage, ""), |_, m| {
+        m.platform.snapshot.storage.sd = reborn_core::platform::SdCard::Absent;
+    });
+    case!("36-update", at(Screen::Update, ""));
+    case!("37-update-available", at(Screen::Update, ""), |_, m| {
+        m.platform.snapshot.update.phase = reborn_core::platform::UpdatePhase::Available {
+            version: "1.1.0".into(),
+        };
+        m.platform.snapshot.update.can_download = true;
+    });
+    case!("38-update-needs-wifi", at(Screen::Update, ""), |_, m| {
+        m.platform.snapshot.update.phase = reborn_core::platform::UpdatePhase::Failed(
+            reborn_core::platform::UpdateProblem::NeedsNetwork,
+        );
+    });
+    case!("39-about", at(Screen::About, ""));
+    case!("40-maintenance", at(Screen::Maintenance, ""), |_, m| {
+        m.navigation.focus = 3
+    });
+    case!(
+        "41-confirm-rebuild",
+        at(Screen::Maintenance, ""),
+        |ui, m| {
+            m.navigation.focus = 3;
+            ui.model_action(m, Action::Select);
+        }
+    );
+    case!("42-diagnostics", at(Screen::Diagnostics, ""));
+    case!(
+        "43-diagnostics-battery",
+        at(Screen::DiagnosticSection, "battery")
+    );
+    case!("44-empty-library", at(Screen::Albums, ""), |_, m| {
+        m.library.tracks.clear();
+        m.queue.clear();
+        m.queue_entry_ids.clear();
+    });
+    case!("45-no-sd", at(Screen::SettingsLibrary, ""), |_, m| {
+        m.sources.truncate(1);
+        m.platform.snapshot.storage.sd = reborn_core::platform::SdCard::Absent;
+    });
+    case!(
+        "46-sd-removed-now-playing",
+        at(Screen::NowPlaying, ""),
+        |_, m| {
+            m.replace_queue(tracks()[10..].to_vec(), 0).unwrap();
+            m.sources.truncate(1);
             m.playback = PlaybackState::Paused;
         }
-        if name == "audio-error" {
-            m.playback = PlaybackState::Error;
+    );
+    case!("47-long-names", at(Screen::NowPlaying, ""), |_, m| {
+        m.replace_queue(tracks()[8..9].to_vec(), 0).unwrap();
+        m.position_ms = 20_000;
+    });
+    case!("48-unicode-songs", at(Screen::Tracks, ""), |_, m| m
+        .navigation
+        .focus =
+        9);
+    case!("49-song-info", at(Screen::TrackInfo, "0"));
+    case!("50-pairing", at(Screen::Bluetooth, ""), |ui, _| {
+        ui.pairing = Some("Kopfhörer Ü2 shows code 482 913. Pair only if the code matches.".into());
+        ui.pairing_focus = 0;
+    });
+    case!(
+        "51-power-off-confirm",
+        at(Screen::SettingsSystem, ""),
+        |ui, m| {
+            m.navigation.focus = 7;
+            ui.model_action(m, Action::Select);
         }
-        cases.push((name.into(), m));
-    }
-    for (name, page) in [
-        ("clock-untrusted", "clock"),
-        ("usb-disconnected", "usb"),
-        ("update-unavailable", "update"),
-        ("sd-mounted", "storage"),
-    ] {
-        let mut m = model();
-        m.screen = Screen::Platform;
-        m.navigation.filter = page.into();
-        match name {
-            "clock-untrusted" => m.platform.status["system"]["time"]["tls_ready"] = json!(false),
-            "usb-disconnected" => {
-                m.platform.status["system"]["ssh"]["state"] = json!("Unavailable");
-                m.platform.status["system"]["usb"]["udcs"][0]["state"] = json!("not attached");
-            }
-            "update-unavailable" => {
-                m.platform.capabilities = json!(null);
-                m.platform.status["system"]["update"] = json!(null);
-            }
-            "sd-mounted" => {
-                m.platform.status["storage"]["volumes"][1] = json!({"path":"/media/sd","state":"Ready","space_state":"Normal","filesystem":"exfat","total_bytes":64000000000_u64,"available_bytes":48000000000_u64});
-                m.navigation.focus = 3;
-                m.navigation.scroll = 3;
-            }
-            _ => {}
-        }
-        cases.push((name.into(), m));
-    }
-    for name in [
-        "library-scan-interrupted",
-        "update-working",
-        "update-installing",
-        "operation-error",
-        "missing-metadata",
-        "wifi-acquiring-ip",
-        "wifi-off",
-    ] {
-        let mut m = model();
-        match name {
-            "library-scan-interrupted" => {
-                m.screen = Screen::SettingsLibrary;
-                m.navigation.focus = 4;
-                m.library.error = Some("scan incomplete".into());
-            }
-            "update-working" => {
-                m.screen = Screen::Platform;
-                m.navigation.filter = "update".into();
-                m.platform.busy = Some(PlatformTask::UpdateStage);
-                m.platform.status["system"]["update"]["download"]["state"] = json!("Staging");
-            }
-            "update-installing" => {
-                m.screen = Screen::Platform;
-                m.navigation.filter = "update".into();
-                m.platform.busy = Some(PlatformTask::UpdateApply);
-            }
-            "operation-error" => {
-                m.screen = Screen::Platform;
-                m.navigation.filter = "result".into();
-                m.platform.failure =
-                    Some("Operation timed out. Refresh its state before trying again.".into());
-            }
-            "missing-metadata" => {
-                m.screen = Screen::NowPlaying;
-                m.queue[0].title.clear();
-                m.queue[0].artist.clear();
-                m.queue[0].album.clear();
-            }
-            "wifi-acquiring-ip" | "wifi-off" => m.screen = Screen::Wifi,
-            _ => {}
-        }
-        cases.push((name.into(), m));
-    }
+    );
+    case!("52-empty-queue", at(Screen::Queue, ""), |_, m| {
+        m.queue.clear();
+        m.queue_entry_ids.clear();
+        m.playback = PlaybackState::Stopped;
+    });
+    case!("53-nothing-playing", at(Screen::NowPlaying, ""), |_, m| {
+        m.queue.clear();
+        m.queue_entry_ids.clear();
+        m.playback = PlaybackState::Stopped;
+    });
+
     let mut manifest = vec![];
-    for (name, mut m) in cases {
-        let mut ui = ui();
-        match name.as_str() {
-            "pairing" => {
-                ui.pairing=Some("Studio Headphones · Compare this code: 123456. Confirm only if the device shows the same code.".into());
-                ui.pairing_focus = 1;
-            }
-            "wifi-password" => {
-                m.navigation.focus = 3;
-                ui.model_action(&mut m, reborn_core::Action::Select);
-            }
-            "letter-index" => {
-                ui.model_action(&mut m, reborn_core::Action::ContextMenu);
-                m.navigation.modal_focus = 6;
-                ui.model_action(&mut m, reborn_core::Action::Select);
-            }
-            "wifi-acquiring-ip" => ui.wifi.connection = "Acquiring IP address · Studio".into(),
-            "wifi-off" => {
-                ui.wifi.powered = false;
-                ui.wifi.connection.clear();
-                ui.networks.clear();
-                ui.saved_networks.clear();
-            }
-            "wifi-failed" => ui
-                .wifi
-                .failed("Wrong password. Forget the network, then reconnect.".into()),
-            "bluetooth-unavailable" => {
-                ui.bluetooth = RadioView::default();
-                ui.bluetooth_devices.clear();
-            }
-            _ => {}
-        }
-        let tracks = std::mem::take(&mut m.library.tracks);
-        ui.normalize(&mut m, &tracks);
-        m.library.tracks = tracks;
-        let draw = ui.draw(&m, &m.library.tracks, "ok", !m.queue.is_empty(), power);
-        let count = reborn_ui::focus_target_count(&draw);
-        assert_eq!(count, usize::from(name != "update-installing"), "{name}");
+    let write = |name: &str, quads: &[reborn_graphics::Quad], focus: usize| {
         fs::write(
             output.join(format!("{name}.json")),
             serde_json::to_vec(
-                &json!({"width":480,"height":360,"screen":name,"fixture":true,"focus_targets":count,"quads":draw}),
-            )?,
-        )?;
-        manifest.push(name);
+                &json!({"width":480,"height":360,"screen":name,"fixture":true,
+                "focus_targets":focus,"quads":quads}),
+            )
+            .unwrap(),
+        )
+    };
+    let mut home = vec![];
+    for (name, mut m, setup) in cases {
+        let mut ui = ui();
+        setup(&mut ui, &mut m);
+        let tracks = std::mem::take(&mut m.library.tracks);
+        ui.normalize(&mut m, &tracks);
+        m.library.tracks = tracks;
+        let draw = ui.draw(&m, &m.library.tracks, !m.queue.is_empty());
+        let focus = reborn_ui::focus_target_count(&draw);
+        let static_page = matches!(
+            name,
+            "32-battery" | "33-battery-low" | "34-storage" | "35-storage-no-sd" | "49-song-info"
+        );
+        assert!(focus <= 1, "{name}: {focus} focus targets");
+        assert!(static_page || focus == 1, "{name}: no focus target");
+        write(name, &draw, focus)?;
+        if name == "04-home" {
+            home = draw;
+        }
+        manifest.push(name.to_owned());
     }
-    let draw = ui().draw_preview(model(), &tracks(), power, PreviewScreen::Boot);
-    fs::write(
-        output.join("boot.json"),
-        serde_json::to_vec(
-            &json!({"width":480,"height":360,"screen":"boot","fixture":true,"quads":draw}),
-        )?,
+    // Boot: the splash mark, the identical Reborn hand-off frame, a fade step.
+    write("01-boot-splash", &reborn_ui::boot_frame(), 0)?;
+    write("02-boot-handoff", &reborn_ui::boot_frame(), 0)?;
+    write(
+        "03-boot-fade",
+        &reborn_ui::boot_transition(home.clone(), 0.5),
+        0,
     )?;
-    manifest.push("boot".into());
+    // Shutdown: UI fade, mark hold, fade out, final dark frame.
+    for (label, frame) in [("a-fade", 3), ("b-mark", 10), ("c-fadeout", 22)] {
+        write(
+            &format!("90-shutdown-{label}"),
+            &reborn_ui::shutdown_frame(&home, frame, None),
+            0,
+        )?;
+    }
+    write(
+        "93-shutdown-low-battery",
+        &reborn_ui::shutdown_frame(&home, 12, Some("Battery empty")),
+        0,
+    )?;
+    write("94-shutdown-final-black", &reborn_ui::black_frame(), 0)?;
+    for name in [
+        "01-boot-splash",
+        "02-boot-handoff",
+        "03-boot-fade",
+        "90-shutdown-a-fade",
+        "90-shutdown-b-mark",
+        "90-shutdown-c-fadeout",
+        "93-shutdown-low-battery",
+        "94-shutdown-final-black",
+    ] {
+        manifest.push(name.into());
+    }
+    manifest.sort();
     fs::write(
         output.join("manifest.json"),
         serde_json::to_vec_pretty(&manifest)?,

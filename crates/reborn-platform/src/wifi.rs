@@ -201,6 +201,47 @@ fn quote(s: &str) -> Result<String, String> {
 pub fn enabled() -> bool {
     Paths::default().power().unwrap_or(false)
 }
+
+/// Whether the supplicant control interface exists (diagnostic probe).
+pub fn service_available() -> bool {
+    Paths::default().controls.join("global").exists()
+}
+
+/// The user-facing problem, if the current Wi-Fi observation has one.
+/// Supplicant and readiness vocabulary never leaves this crate.
+pub fn problem(s: &Status) -> Option<reborn_core::platform::WifiProblem> {
+    use reborn_core::platform::WifiProblem;
+    let reason = s
+        .readiness_reason
+        .as_deref()
+        .or(s.error.as_deref())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let dns = reason.contains("dns");
+    if s.readiness == "Authenticated" && dns {
+        return Some(WifiProblem::NoInternetNames);
+    }
+    if s.readiness != "Failed" && s.error.is_none() {
+        return None;
+    }
+    Some(
+        if reason.contains("wrong_key")
+            || reason.contains("password")
+            || reason.contains("credential")
+            || reason.contains("auth")
+        {
+            WifiProblem::WrongPassword
+        } else if reason.contains("dhcp") || reason.contains("address") {
+            WifiProblem::NoAddress
+        } else if dns {
+            WifiProblem::NoInternetNames
+        } else if reason.contains("not_found") || reason.contains("no_network") {
+            WifiProblem::NetworkNotFound
+        } else {
+            WifiProblem::Other
+        },
+    )
+}
 pub fn radio(on: bool, persist: bool) -> Result<(), String> {
     Paths::default().radio(on, persist)
 }
@@ -719,6 +760,25 @@ pub fn saved_test(id: u32) -> Result<serde_json::Value, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn readiness_failures_become_user_problems() {
+        use reborn_core::platform::WifiProblem;
+        let mut s = Status {
+            readiness: "Failed".into(),
+            readiness_reason: Some("wrong_key".into()),
+            ..Default::default()
+        };
+        assert_eq!(problem(&s), Some(WifiProblem::WrongPassword));
+        s.readiness_reason = Some("dhcp_timeout".into());
+        assert_eq!(problem(&s), Some(WifiProblem::NoAddress));
+        s.readiness = "Authenticated".into();
+        s.readiness_reason = Some("dns_unavailable".into());
+        assert_eq!(problem(&s), Some(WifiProblem::NoInternetNames));
+        s.readiness = "Online".into();
+        s.readiness_reason = None;
+        assert_eq!(problem(&s), None);
+    }
     #[test]
     fn missing_control_samples_and_scans_do_not_invent_link_cycles() {
         let mut previous = None;

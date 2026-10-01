@@ -66,6 +66,19 @@ pub fn application_ready() -> Result<(), String> {
     .map_err(|e| e.to_string())
 }
 
+/// The platform left an owner maintenance operation unfinished; Reborn must
+/// not touch user data until it completes.
+pub fn maintenance_pending() -> bool {
+    Path::new("/data/system/platform/maintenance-pending").exists()
+}
+
+/// Bounded early-splash evidence from this boot, if the splash recorded any.
+pub fn splash_evidence() -> Option<Vec<u8>> {
+    fs::read("/run/reborn-splash/events.jsonl")
+        .ok()
+        .filter(|b| b.len() <= 8192)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

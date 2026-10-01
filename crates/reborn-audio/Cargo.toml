@@ -10,6 +10,7 @@ serde.workspace = true
 serde_json.workspace = true
 reborn-core = { path = "../reborn-core" }
 reborn-observability = { path = "../reborn-observability" }
+reborn-platform = { path = "../reborn-platform" }
 
 [build-dependencies]
 cc.workspace = true

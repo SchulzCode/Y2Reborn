@@ -1,8 +1,11 @@
 //! Reborn primitives. Bounds are expressed in pixels, with one proportional
 //! licensed sans atlas and one immutable icon atlas shared by native and preview.
 use crate::theme::{color, radius, type_scale};
-use crate::{glyphs, Item, PowerView, RadioView};
-use reborn_core::{AppModel, AudioOutput};
+use crate::{glyphs, Item, Ui};
+use reborn_core::{
+    platform::{ChargingState, LowBattery},
+    AppModel, AudioOutput,
+};
 use reborn_graphics::Quad;
 
 pub struct Canvas {
@@ -172,92 +175,103 @@ pub fn progress(position: u64, duration: u64) -> f32 {
     }
 }
 pub fn output_label(output: &AudioOutput) -> String {
-    output_short(output).into()
-}
-pub fn output_short(output: &AudioOutput) -> &'static str {
     match output {
-        AudioOutput::Wired => "Wired",
-        AudioOutput::Bluetooth(_) => "Bluetooth",
+        AudioOutput::Wired => "Headphone jack".into(),
+        AudioOutput::Bluetooth(_) => "Bluetooth".into(),
     }
 }
-pub fn status_bar(
-    c: &mut Canvas,
-    m: &AppModel,
-    power: PowerView,
-    wifi: &RadioView,
-    bt: &RadioView,
-) {
+pub fn status_bar(c: &mut Canvas, ui: &Ui, m: &AppModel) {
     c.rect(0., 0., 480., 28., color::BG_RAISED);
-    c.text(
-        16.,
-        8.,
-        "Reborn",
-        type_scale::SECONDARY,
-        color::TEXT_SECONDARY,
-    );
-    c.text_box(
-        240.,
-        8.,
-        105.,
-        output_short(&m.output),
-        type_scale::SECONDARY,
-        color::TEXT_SECONDARY,
-    );
-    if wifi.powered {
-        c.icon("wifi", 350., 5., 18., color::TEXT_SECONDARY);
+    if m.playback == reborn_core::PlaybackState::Playing {
+        c.icon("play", 16., 7., 14., color::ACCENT_GOLD);
     }
-    if bt.powered {
-        c.icon("bluetooth", 378., 5., 18., color::TEXT_SECONDARY);
+    let b = m.platform.battery;
+    let low = matches!(
+        b.level,
+        LowBattery::Low | LowBattery::Critical | LowBattery::ShuttingDown
+    );
+    let tint = if low {
+        color::DANGER
+    } else {
+        color::TEXT_SECONDARY
+    };
+    let mut x = 438.;
+    c.icon("battery", x, 4., 22., tint);
+    if matches!(b.charging, ChargingState::Charging | ChargingState::Full) {
+        c.text(466., 7., "+", type_scale::BODY, color::ACCENT_GOLD);
     }
-    c.icon("battery", 438., 4., 22., color::TEXT_SECONDARY);
-    if let Some(percent) = power.percent.filter(|p| *p <= 100) {
-        c.text_box(
-            400.,
-            8.,
-            36.,
-            &format!("{percent}%"),
-            type_scale::SECONDARY,
-            color::TEXT_SECONDARY,
+    if let Some(percent) = b.percent.filter(|p| *p <= 100) {
+        let text = format!("{percent}%");
+        let w = text_width(&text, 12.);
+        x -= w + 6.;
+        c.text(x, 8., &text, type_scale::SECONDARY, tint);
+    }
+    if ui.bluetooth.powered {
+        x -= 26.;
+        let connected = ui.bluetooth.devices.iter().any(|d| d.connected);
+        c.icon(
+            "bluetooth",
+            x,
+            5.,
+            18.,
+            if connected {
+                color::TEXT_PRIMARY
+            } else {
+                color::TEXT_MUTED
+            },
         );
     }
-    if power.charging {
-        c.text(466., 7., "+", type_scale::BODY, color::ACCENT_GOLD);
+    if ui.wifi.powered {
+        x -= 26.;
+        let connected = matches!(ui.wifi.status, crate::WifiStatus::Connected(_));
+        c.icon(
+            "wifi",
+            x,
+            5.,
+            18.,
+            if connected {
+                color::TEXT_PRIMARY
+            } else {
+                color::TEXT_MUTED
+            },
+        );
     }
 }
 pub fn title(c: &mut Canvas, name: &str, detail: &str) {
+    let value = fit_pixels(detail, 130., 12.);
+    let width = text_width(&value, 12.);
     c.text_box(
         16.,
-        42.,
-        345.,
+        40.,
+        440. - width,
         name,
         type_scale::SCREEN_TITLE,
         color::TEXT_PRIMARY,
     );
-    let value = fit_pixels(detail, 90., 12.);
-    let width = text_width(&value, 12.);
     c.text(
         464. - width,
-        49.,
+        47.,
         &value,
         type_scale::SECONDARY,
-        color::TEXT_SECONDARY,
+        color::TEXT_MUTED,
     );
 }
 pub fn row(c: &mut Canvas, item: &Item, y: f32, focused: bool, trailing: &str, playing: bool) {
     c.focus_panel(16., y, 448., 46., focused && item.enabled);
-    let x = if playing { 42. } else { 28. };
+    let x = if playing { 44. } else { 28. };
     if playing {
-        c.icon("play", 25., y + 15., 14., color::TEXT_PRIMARY);
+        c.icon("play", 26., y + 16., 13., color::ACCENT_GOLD);
     }
     let tail_width = if trailing.is_empty() {
         0.
     } else {
         text_width(trailing, 12.) + 20.
     };
+    let has_secondary = !item.secondary.is_empty();
     c.text_box(
         x,
-        y + if item.secondary.is_empty() { 15. } else { 7. },
-        424. - x - tail_width,
+        y + if has_secondary { 6. } else { 14. },
+        428. - x - tail_width,
         &item.label,
         type_scale::ROW,
         if item.enabled {
@@ -266,11 +280,11 @@ pub fn row(c: &mut Canvas, item: &Item, y: f32, focused: bool, trailing: &str, p
             color::TEXT_MUTED
         },
     );
-    if !item.secondary.is_empty() {
+    if has_secondary {
         c.text_box(
             x,
             y + 27.,
-            416. - x,
+            428. - x - tail_width,
             &item.secondary,
             type_scale::SECONDARY,
             color::TEXT_SECONDARY,
@@ -278,81 +292,111 @@ pub fn row(c: &mut Canvas, item: &Item, y: f32, focused: bool, trailing: &str, p
     }
     if !trailing.is_empty() {
         c.text(
-            446. - text_width(trailing, 12.),
-            y + 10.,
+            450. - text_width(trailing, 12.),
+            y + 16.,
             trailing,
             type_scale::SECONDARY,
             color::TEXT_SECONDARY,
         );
     }
 }
-pub fn footer(c: &mut Canvas, m: &AppModel, has_art: bool, hint: &str) {
+/// A thin position rail beside long lists.
+pub fn scroll_indicator(
+    c: &mut Canvas,
+    top: f32,
+    height: f32,
+    scroll: usize,
+    visible: usize,
+    count: usize,
+) {
+    if count == 0 {
+        return;
+    }
+    let thumb = (height * visible as f32 / count as f32).max(16.);
+    let y = top + (height - thumb) * scroll as f32 / (count - visible).max(1) as f32;
+    c.rect(470., top, 2., height, color::SURFACE);
+    c.rect(470., y, 2., thumb, color::TEXT_MUTED);
+}
+pub fn footer(c: &mut Canvas, m: &AppModel, has_art: bool) {
     c.rect(0., 324., 480., 36., color::BG_RAISED);
     if let Some(track) = m.current() {
         c.artwork(16., 329., 26., has_art);
         c.text_box(
             52.,
             329.,
-            246.,
-            if track.title.is_empty() {
-                &track.filename
-            } else {
-                &track.title
-            },
+            320.,
+            crate::track_title(track),
             type_scale::SECONDARY,
             color::TEXT_PRIMARY,
         );
         c.text_box(
             52.,
             345.,
-            246.,
-            &track.artist,
+            320.,
+            crate::display_or_unknown(&track.artist),
             type_scale::SECONDARY,
             color::TEXT_SECONDARY,
         );
-    } else {
-        c.text_box(
-            16.,
-            337.,
-            290.,
-            hint,
-            type_scale::SECONDARY,
+        c.icon(
+            if m.playback == reborn_core::PlaybackState::Playing {
+                "play"
+            } else {
+                "pause"
+            },
+            444.,
+            333.,
+            18.,
             color::TEXT_SECONDARY,
         );
     }
-    c.icon("volume", 380., 332., 18., color::TEXT_SECONDARY);
-    c.text(
-        406.,
-        335.,
-        &m.settings.volume.to_string(),
-        type_scale::BODY,
-        color::TEXT_PRIMARY,
+}
+/// One calm line of radio progress or a problem in the footer strip.
+pub fn status_strip(c: &mut Canvas, message: &str) {
+    c.rect(0., 324., 480., 36., color::BG_RAISED);
+    c.text_box(
+        16.,
+        336.,
+        448.,
+        message,
+        type_scale::SECONDARY,
+        color::TEXT_SECONDARY,
     );
 }
+/// A modal sheet sized to its content and centred vertically. Up to six
+/// rows are visible; longer sheets scroll with the focus.
 pub fn dialog(c: &mut Canvas, title: &str, body: &str, rows: &[Item], focus: usize) {
+    const PITCH: f32 = 40.;
+    let lines = crate::screens::wrap_lines(body, 376., 14., 3);
+    let header = 54. + lines.len() as f32 * 20. + if lines.is_empty() { 0. } else { 10. };
+    let visible = rows.len().clamp(1, 6);
+    let height = (header + visible as f32 * PITCH + 14.).min(328.);
+    let top_edge = ((360. - height) / 2.).max(16.);
     c.rect(0., 0., 480., 360., color::SCRIM_STRONG);
-    c.rounded(36., 32., 408., 296., 10., color::SURFACE);
+    c.rounded(32., top_edge, 416., height, 10., color::SURFACE);
     c.text_box(
-        56.,
-        51.,
-        368.,
+        52.,
+        top_edge + 18.,
+        376.,
         title,
         type_scale::SCREEN_TITLE,
         color::TEXT_PRIMARY,
     );
-    // Consequences and pairing codes must remain fully readable, not an
-    // ellipsized one-line subtitle. Compact action sheets retain four rows.
-    let detailed = rows.len() <= 3;
-    crate::screens::wrap(c, 56., 83., 368., body, 12., if detailed { 4 } else { 1 });
-    let visible = if detailed { 3 } else { 4 };
+    let mut y = top_edge + 52.;
+    for line in &lines {
+        c.text_box(52., y, 376., line, type_scale::BODY, color::TEXT_SECONDARY);
+        y += 20.;
+    }
+    let top = top_edge + header;
     let start = focus.saturating_sub(visible - 1);
     for (index, item) in rows.iter().enumerate().skip(start).take(visible) {
-        let y = if detailed { 154. } else { 110. } + (index - start) as f32 * 48.;
-        c.focus_panel(52., y, 376., 44., index == focus && item.enabled);
+        let y = top + (index - start) as f32 * PITCH;
+        c.focus_panel(48., y, 384., 38., index == focus && item.enabled);
+        let tail = fit_pixels(&item.secondary, 150., 12.);
+        let tail_w = text_width(&tail, 12.);
         c.text_box(
-            66.,
-            y + 14.,
-            346.,
+            62.,
+            y + 11.,
+            350. - tail_w,
             &item.label,
             type_scale::ROW,
             if item.enabled {
@@ -361,27 +405,22 @@ pub fn dialog(c: &mut Canvas, title: &str, body: &str, rows: &[Item], focus: usi
                 color::TEXT_MUTED
             },
         );
+        if !tail.is_empty() {
+            c.text(
+                418. - tail_w,
+                y + 13.,
+                &tail,
+                type_scale::SECONDARY,
+                color::TEXT_SECONDARY,
+            );
+        }
     }
-    c.text(
-        56.,
-        309.,
-        "Back  Close",
-        type_scale::SECONDARY,
-        color::TEXT_SECONDARY,
-    );
-    c.text(
-        346.,
-        309.,
-        &format!("{}/{}", focus + 1, rows.len()),
-        type_scale::SECONDARY,
-        color::TEXT_SECONDARY,
-    );
 }
 pub fn toast(c: &mut Canvas, message: &str) {
-    c.rounded(16., 30., 448., 38., 6., color::SURFACE_HOVER);
+    c.rounded(16., 284., 448., 34., 6., color::SURFACE_HOVER);
     c.text_box(
         28.,
-        42.,
+        294.,
         424.,
         message,
         type_scale::BODY,

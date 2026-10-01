@@ -4,13 +4,26 @@ use reborn_core::{AppModel, Screen, Track};
 use std::collections::{BTreeMap, BTreeSet};
 pub enum Row {
     Track(usize),
+    /// A track on its album's own page; the artist line is redundant there.
+    AlbumTrack(usize),
     Item(Item),
 }
 impl Row {
     pub fn item(&self, tracks: &[Track]) -> Item {
         match self {
             Self::Track(i) => track_item(*i, &tracks[*i]),
+            Self::AlbumTrack(i) => {
+                let mut item = track_item(*i, &tracks[*i]);
+                item.secondary.clear();
+                item
+            }
             Self::Item(i) => i.clone(),
+        }
+    }
+    pub fn track(&self) -> Option<usize> {
+        match self {
+            Self::Track(i) | Self::AlbumTrack(i) => Some(*i),
+            Self::Item(_) => None,
         }
     }
 }
@@ -98,16 +111,21 @@ impl Catalog {
                         }
                     }
                 }
+                let root = parent.as_os_str().is_empty();
                 for child in children {
+                    // Storage roots are named for what they are, not their path.
+                    let source = m.sources.iter().find(|s| root && s.root == child);
+                    let label = match source.map(|s| &s.kind) {
+                        Some(reborn_core::MediaSource::Internal) => "Internal Storage".into(),
+                        Some(reborn_core::MediaSource::SdCard(_)) => "SD Card".into(),
+                        None => child
+                            .file_name()
+                            .map(|x| x.to_string_lossy().into_owned())
+                            .unwrap_or_else(|| child.display().to_string()),
+                    };
                     self.push(
-                        Item::new(
-                            child
-                                .file_name()
-                                .map(|x| x.to_string_lossy().into_owned())
-                                .unwrap_or_else(|| child.display().to_string()),
-                            format!("folder:{}", child.display()),
-                        )
-                        .with_secondary("Folder"),
+                        Item::new(label, format!("folder:{}", child.display()))
+                            .with_secondary(if source.is_some() { "" } else { "Folder" }),
                     );
                 }
                 if !parent.as_os_str().is_empty() {
@@ -160,8 +178,15 @@ impl Catalog {
                         );
                     }
                 }
-                for (i, _) in ids {
-                    self.rows.push(Row::Track(i));
+                for (i, t) in ids {
+                    // Album rows only name an artist when it differs.
+                    if m.screen == Screen::Album
+                        && (t.artist == t.album_artist || t.album_artist.is_empty())
+                    {
+                        self.rows.push(Row::AlbumTrack(i));
+                    } else {
+                        self.rows.push(Row::Track(i));
+                    }
                 }
             }
             _ => {}

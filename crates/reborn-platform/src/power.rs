@@ -1,4 +1,5 @@
 #![forbid(unsafe_code)]
+use reborn_core::platform::{BatteryState, ChargingState, LowBattery, ShutdownIntent};
 use serde_json::{json, Value};
 use std::{
     fs,
@@ -50,6 +51,33 @@ fn fresh_record(value: &Value, boot: &str, now: f64) -> bool {
             (0.0..5.0).contains(&age)
         })
 }
+/// The normal-user battery state: valid SOC, charging and low-battery level.
+pub fn battery(status: &Value) -> BatteryState {
+    let supply = status["supplies"].as_array().and_then(|supplies| {
+        supplies
+            .iter()
+            .find(|s| s["type"].as_str() == Some("Battery"))
+            .or_else(|| supplies.iter().find(|s| s["name"].as_str() == Some("BAT0")))
+    });
+    let charging = match supply.and_then(|s| s["status"].as_str()) {
+        Some("Charging") => ChargingState::Charging,
+        Some("Full") => ChargingState::Full,
+        Some("Discharging" | "Not charging") => ChargingState::OnBattery,
+        _ => ChargingState::Unknown,
+    };
+    let level = match status["platform"]["state"].as_str() {
+        Some("Low") => LowBattery::Low,
+        Some("Critical") => LowBattery::Critical,
+        Some("ShutdownPending") => LowBattery::ShuttingDown,
+        _ => LowBattery::Normal,
+    };
+    BatteryState {
+        percent: battery_percent(status),
+        charging,
+        level,
+    }
+}
+
 pub fn battery_percent(status: &Value) -> Option<u8> {
     let battery = &status["platform"]["battery"];
     let source = battery["source"].as_str()?;
@@ -69,6 +97,36 @@ fn backlight() -> Option<PathBuf> {
 pub fn blank(off: bool) -> Result<(), String> {
     let path = backlight().ok_or("backlight unavailable")?;
     fs::write(path.join("bl_power"), if off { "4\n" } else { "0\n" }).map_err(|e| e.to_string())
+}
+
+/// Whether the panel backlight accepts brightness levels.
+pub fn brightness_available() -> bool {
+    backlight().is_some_and(|p| {
+        fs::read_to_string(p.join("max_brightness"))
+            .ok()
+            .and_then(|v| v.trim().parse::<u32>().ok())
+            .is_some_and(|max| max >= 4)
+    })
+}
+
+/// Set the backlight to `percent` of its maximum (bounded to 10–100 %).
+pub fn set_brightness(percent: u8) -> Result<(), String> {
+    let path = backlight().ok_or("backlight unavailable")?;
+    let max = fs::read_to_string(path.join("max_brightness"))
+        .map_err(|e| e.to_string())?
+        .trim()
+        .parse::<u32>()
+        .map_err(|_| "invalid backlight range")?;
+    fs::write(
+        path.join("brightness"),
+        format!("{}\n", brightness_value(max, percent)),
+    )
+    .map_err(|e| e.to_string())
+}
+
+fn brightness_value(max: u32, percent: u8) -> u32 {
+    let percent = u32::from(percent.clamp(10, 100));
+    (max * percent).div_ceil(100).clamp(1, max.max(1))
 }
 
 /// Request a platform power transition through the initramfs-provided command.
@@ -120,22 +178,28 @@ fn platform_request(request: Value) -> Result<Value, String> {
     Ok(response["result"].clone())
 }
 
-pub fn shutdown_intent() -> Option<String> {
+pub fn shutdown_intent() -> Option<ShutdownIntent> {
     let data = fs::read("/run/y2/shutdown.json").ok()?;
     if data.len() > 8192 {
         return None;
     }
     let value: Value = serde_json::from_slice(&data).ok()?;
     let boot = fs::read_to_string("/proc/sys/kernel/random/boot_id").ok()?;
-    intent_id(&value, boot.trim())
+    intent(&value, boot.trim())
 }
 
-fn intent_id(value: &Value, boot: &str) -> Option<String> {
+fn intent(value: &Value, boot: &str) -> Option<ShutdownIntent> {
     if value["schema"] != 1 || value["state"] != "ShutdownPending" || value["boot_id"] != boot {
         return None;
     }
     let id = value["id"].as_str()?;
-    (id.len() == 36 && id.chars().all(|c| c.is_ascii_hexdigit() || c == '-')).then(|| id.to_owned())
+    (id.len() == 36 && id.chars().all(|c| c.is_ascii_hexdigit() || c == '-')).then(|| {
+        ShutdownIntent {
+            id: id.to_owned(),
+            restart: value["action"] == "reboot",
+            low_battery: value["reason"] == "low_battery",
+        }
+    })
 }
 
 pub fn acknowledge_shutdown(id: &str, ready: bool) -> Result<(), String> {
@@ -152,9 +216,34 @@ mod tests {
     fn shutdown_intent_requires_current_boot_and_pending_state() {
         let mut value = json!({"schema":1,"state":"ShutdownPending","boot_id":"one",
                               "id":"12345678-1234-1234-1234-123456789abc"});
-        assert!(intent_id(&value, "one").is_some());
-        assert!(intent_id(&value, "two").is_none());
+        assert!(intent(&value, "one").is_some_and(|i| !i.restart && !i.low_battery));
+        assert!(intent(&value, "two").is_none());
+        value["action"] = json!("reboot");
+        assert!(intent(&value, "one").is_some_and(|i| i.restart));
+        value["reason"] = json!("low_battery");
+        assert!(intent(&value, "one").is_some_and(|i| i.low_battery));
         value["state"] = json!("Failed");
-        assert!(intent_id(&value, "one").is_none());
+        assert!(intent(&value, "one").is_none());
+    }
+
+    #[test]
+    fn battery_presents_valid_soc_charging_and_low_level_only() {
+        let status = json!({"supplies":[{"name":"BAT0","type":"Battery","status":"Charging"}],
+            "platform":{"state":"Low","battery":{"source":"voltage_estimate","percent":72}}});
+        let b = battery(&status);
+        assert_eq!(b.percent, Some(72));
+        assert_eq!(b.charging, ChargingState::Charging);
+        assert_eq!(b.level, LowBattery::Low);
+        let unknown = battery(&json!({"platform":{"battery":{"source":"guess","percent":72}}}));
+        assert_eq!(unknown.percent, None);
+        assert_eq!(unknown.charging, ChargingState::Unknown);
+    }
+
+    #[test]
+    fn brightness_is_bounded_and_never_zero() {
+        assert_eq!(brightness_value(255, 100), 255);
+        assert_eq!(brightness_value(255, 0), 26);
+        assert_eq!(brightness_value(4, 20), 1);
+        assert_eq!(brightness_value(1023, 60), 614);
     }
 }

@@ -10,6 +10,7 @@ use dbus::{
     Message, Path as DbusPath,
 };
 use reborn_core::{atomic_write, BluetoothPcm, RadioScan};
+use reborn_core::{platform::Fact, CodecPreference};
 use reborn_observability::{HealthState, Level, Observer};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -71,6 +72,109 @@ impl Status {
             .find(|pcm| pcm.is_a2dp_playback_for(&device.path))
             .cloned()
             .ok_or("BlueALSA playback PCM not ready; retry after connection completes".into())
+    }
+
+    /// The codec actually negotiated for `path`'s playback transport.
+    pub fn active_codec(&self, path: &str) -> Option<String> {
+        self.pcms
+            .iter()
+            .find(|pcm| pcm.is_a2dp_playback_for(path))
+            .and_then(|pcm| pcm.codec.clone())
+            .filter(|c| !c.is_empty())
+    }
+
+    /// Codec preferences worth offering for the connected peer: only codecs
+    /// the current policy enables *and* the peer can use. A single usable
+    /// codec means there is nothing to choose and the row is hidden.
+    pub fn codec_choices(&self) -> Vec<CodecPreference> {
+        let Some(policy) = &self.codec_policy else {
+            return vec![];
+        };
+        let usable = |name: &str| {
+            policy.eligibility.get(name).is_some_and(|e| {
+                e.runtime_enabled
+                    && e.mutually_usable
+                    && (e.auto_eligible || e.experimental_eligible || name == "SBC")
+            })
+        };
+        let mut choices: Vec<_> = [
+            ("SBC", CodecPreference::Sbc),
+            ("AAC", CodecPreference::Aac),
+            ("aptX", CodecPreference::Aptx),
+            ("aptX-HD", CodecPreference::AptxHd),
+            ("LDAC", CodecPreference::Ldac),
+        ]
+        .into_iter()
+        .filter(|(name, _)| usable(name))
+        .map(|(_, preference)| preference)
+        .collect();
+        if choices.len() < 2 {
+            return vec![];
+        }
+        if policy.eligibility.values().any(|e| e.auto_eligible) {
+            choices.insert(0, CodecPreference::Auto);
+        }
+        choices
+    }
+
+    /// Transport observations for Diagnostics → Bluetooth.
+    pub fn diagnostic_facts(&self) -> Vec<Fact> {
+        let yes = |b: bool| if b { "Yes" } else { "No" };
+        let mut facts = vec![
+            Fact::new("Adapter", yes(self.available)),
+            Fact::new("Powered", yes(self.powered)),
+            Fact::new("Audio service", yes(self.bluealsa)),
+        ];
+        for d in self.devices.iter().filter(|d| d.paired || d.connected) {
+            facts.push(Fact::new(
+                d.name.clone(),
+                format!(
+                    "paired {} · bonded {} · trusted {} · connected {}",
+                    yes(d.paired),
+                    yes(d.bonded),
+                    yes(d.trusted),
+                    yes(d.connected)
+                ),
+            ));
+        }
+        for pcm in &self.pcms {
+            facts.push(Fact::new(
+                "Active codec",
+                pcm.codec.clone().unwrap_or_else(|| "Not reported".into()),
+            ));
+            facts.push(Fact::new(
+                "PCM",
+                format!(
+                    "{} · {} Hz · {} ch · {}",
+                    pcm.negotiated_format()
+                        .map(|f| f.as_str().to_owned())
+                        .unwrap_or_else(|e| e),
+                    pcm.rate
+                        .map(|r| r.to_string())
+                        .unwrap_or_else(|| "?".into()),
+                    pcm.channels
+                        .map(|c| c.to_string())
+                        .unwrap_or_else(|| "?".into()),
+                    if pcm.running == Some(true) {
+                        "running"
+                    } else {
+                        "idle"
+                    }
+                ),
+            ));
+            facts.push(Fact::new(
+                "Transport generation",
+                pcm.transport_generation.to_string(),
+            ));
+        }
+        if let Some(policy) = &self.codec_policy {
+            facts.push(Fact::new("Codec preference", policy.preference.label()));
+            facts.push(Fact::new("Codec negotiation", policy.state.clone()));
+            if let Some(reason) = &policy.reason {
+                facts.push(Fact::new("Codec reason", reason.clone()));
+            }
+        }
+        facts
     }
 
     pub fn playback_rate(&self, address: &str) -> Result<u32, String> {
@@ -460,6 +564,33 @@ fn status(c: &Connection) -> Result<(String, Status), String> {
     state.devices.truncate(128);
     Ok((adapter, state))
 }
+/// Hold a shared lease on the Bluetooth PCM for the life of an open sink.
+/// The platform's codec switcher takes the lease exclusively, so playback and
+/// codec renegotiation never overlap; an unknown codec outcome blocks reopen.
+pub fn playback_pcm_lease() -> Result<Option<std::fs::File>, String> {
+    if !Path::new("/etc/y2linux/platform-contract").exists() {
+        return Ok(None);
+    }
+    pcm_lease_at(Path::new("/run/y2"))
+}
+fn pcm_lease_at(directory: &std::path::Path) -> Result<Option<std::fs::File>, String> {
+    use std::os::unix::fs::OpenOptionsExt;
+    let lock = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(directory.join("bt-pcm.lock"))
+        .map_err(|e| e.to_string())?;
+    lock.try_lock_shared()
+        .map_err(|_| "Bluetooth codec selection in progress; retry playback")?;
+    if directory.join("bt-codec-uncertain.json").exists() {
+        return Err("Bluetooth codec outcome unknown; restart BlueALSA before playback".into());
+    }
+    Ok(Some(lock))
+}
+
 fn dbus_error(e: dbus::Error) -> String {
     format!("D-Bus org.bluez: {}", e.name().unwrap_or("unknown"))
 }
@@ -1273,6 +1404,65 @@ pub fn scan_test(seconds: u64) -> Result<serde_json::Value, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn codec_rows_only_offer_policy_enabled_codecs_the_peer_supports() {
+        use crate::codecs::{Capability, Inventory, Session};
+        let mut inventory = Inventory {
+            schema: 1,
+            ..Default::default()
+        };
+        for (name, approved) in [("SBC", true), ("AAC", false), ("LDAC", false)] {
+            inventory.codecs.insert(
+                name.into(),
+                Capability {
+                    compiled_locally: true,
+                    distribution_approved: approved,
+                    platform_qualified: approved,
+                    owner_private_experiment: !approved,
+                },
+            );
+        }
+        let sbc = vec!["SBC".to_string()];
+        let all = vec!["SBC".into(), "AAC".into(), "LDAC".into()];
+        let mut status = Status {
+            codec_policy: Some(Session::new(
+                1,
+                CodecPreference::Sbc,
+                &inventory,
+                &sbc,
+                &sbc,
+            )),
+            ..Default::default()
+        };
+        assert!(status.codec_choices().is_empty(), "SBC only: no dead row");
+        // Optional codecs built but runtime-disabled stay hidden.
+        status.codec_policy = Some(Session::new(
+            1,
+            CodecPreference::Sbc,
+            &inventory,
+            &sbc,
+            &all,
+        ));
+        assert!(status.codec_choices().is_empty());
+        // Explicit experiment enabled at runtime and supported by the peer.
+        status.codec_policy = Some(Session::new_experimental(
+            1,
+            CodecPreference::Sbc,
+            &inventory,
+            &all,
+            &["SBC".into(), "AAC".into()],
+            true,
+        ));
+        assert_eq!(
+            status.codec_choices(),
+            vec![
+                CodecPreference::Auto,
+                CodecPreference::Sbc,
+                CodecPreference::Aac
+            ]
+        );
+    }
     #[test]
     fn worker_discovery_publishes_devices_stops_and_retains_failure() {
         use dbus::{arg::Variant, channel::Channel};
@@ -1847,5 +2037,36 @@ mod tests {
             after_worker_restart.pcms[0].transport_generation, initial,
             "worker restart must not reuse a process-local stale sink epoch"
         );
+    }
+}
+
+#[cfg(test)]
+mod pcm_lease_tests {
+    #[test]
+    fn open_pcm_excludes_codec_change_and_unknown_outcome_blocks_reopen() {
+        let dir = std::env::temp_dir().join(format!("reborn-pcm-lease-{}", std::process::id()));
+        std::fs::create_dir(&dir).unwrap();
+        let opened = super::pcm_lease_at(&dir).unwrap();
+        let exclusive = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(dir.join("bt-pcm.lock"))
+            .unwrap();
+        assert!(exclusive.try_lock().is_err());
+        drop(opened);
+        // Concurrent tests in this binary fork subprocesses; a child holds a
+        // duplicate descriptor only until its exec closes it (O_CLOEXEC).
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while exclusive.try_lock().is_err() {
+            assert!(std::time::Instant::now() < deadline, "lease not released");
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert!(super::pcm_lease_at(&dir).is_err());
+        std::fs::write(dir.join("bt-codec-uncertain.json"), b"{}").unwrap();
+        drop(exclusive);
+        assert!(super::pcm_lease_at(&dir).is_err());
+        std::fs::remove_file(dir.join("bt-codec-uncertain.json")).unwrap();
+        assert!(super::pcm_lease_at(&dir).is_ok());
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }

@@ -201,7 +201,7 @@ dependencies = [
 
 [[package]]
 name = "reborn"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "reborn-audio",
  "reborn-control",
@@ -218,20 +218,21 @@ dependencies = [
 
 [[package]]
 name = "reborn-audio"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "cc",
  "libc",
  "pkg-config",
  "reborn-core",
  "reborn-observability",
+ "reborn-platform",
  "serde",
  "serde_json",
 ]
 
 [[package]]
 name = "reborn-control"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "reborn-core",
  "reborn-observability",
@@ -241,7 +242,7 @@ dependencies = [
 
 [[package]]
 name = "reborn-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -249,7 +250,7 @@ dependencies = [
 
 [[package]]
 name = "reborn-graphics"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "cc",
  "pkg-config",
@@ -260,7 +261,7 @@ dependencies = [
 
 [[package]]
 name = "reborn-library"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "reborn-core",
  "reborn-media",
@@ -273,7 +274,7 @@ dependencies = [
 
 [[package]]
 name = "reborn-media"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "cc",
  "libc",
@@ -286,7 +287,7 @@ dependencies = [
 
 [[package]]
 name = "reborn-observability"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "flate2",
  "serde",
@@ -296,7 +297,7 @@ dependencies = [
 
 [[package]]
 name = "reborn-platform"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "dbus",
  "libc",
@@ -308,7 +309,7 @@ dependencies = [
 
 [[package]]
 name = "reborn-ui"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "reborn-core",
  "reborn-graphics",

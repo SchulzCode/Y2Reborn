@@ -319,7 +319,7 @@ fn run(
             );
             let bt = bluetooth::service_test();
             tests.push(json!({"name":"bluetooth-service","optional":true,"available":bt.is_ok(),"result":bt.ok()}));
-            tests.push(json!({"name":"wifi-service","optional":true,"available":Path::new("/run/wpa_supplicant/global").exists()}));
+            tests.push(json!({"name":"wifi-service","optional":true,"available":reborn_platform::wifi::service_available()}));
             tests.push(json!({"name":"input","passed":!input::devices().is_empty()}));
             let passed = tests
                 .iter()

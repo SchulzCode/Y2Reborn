@@ -1,4 +1,5 @@
 #![forbid(unsafe_code)]
+pub mod platform;
 use serde::{Deserialize, Serialize};
 use std::{
     fs,
@@ -37,7 +38,16 @@ impl CodecPreference {
     }
 }
 
-pub const VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), "-ui-v1-candidate.1");
+/// The product version shown to people.
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+/// The build identity used by logs, the control socket and Diagnostics.
+pub const BUILD_LABEL: &str = concat!(env!("CARGO_PKG_VERSION"), "-product-ui-v2");
+
+/// A platform release string reduced to its version number, e.g.
+/// `1.0.0-cpu-final-fix03-candidate.1` → `1.0.0`.
+pub fn display_release(release: &str) -> &str {
+    release.split('-').next().unwrap_or(release)
+}
 pub const MAX_QUEUE: usize = 20_000;
 pub const SESSION_SCHEMA_VERSION: u32 = 2;
 pub const SESSION_MAX_BYTES: usize = 8 * 1024 * 1024;
@@ -288,6 +298,9 @@ pub enum NormalizedInput {
     WheelClockwise(u8),
     WheelCounterClockwise(u8),
 }
+/// Every user-facing route. The tree is documented in
+/// `docs/ui/REBORN-PRODUCT-NAVIGATION-V2.md`; Diagnostics is the only
+/// technical subtree and is reached through Settings → System.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum Screen {
@@ -299,29 +312,33 @@ pub enum Screen {
     Albums,
     Tracks,
     Folders,
+    Album,
+    Artist,
+    LibraryIndex,
     NowPlaying,
     Queue,
-    Connectivity,
-    Bluetooth,
-    Wifi,
+    TrackInfo,
     Settings,
+    Wifi,
+    Bluetooth,
+    PcTransfer,
     SettingsAudio,
     SettingsPlayback,
     SettingsLibrary,
-    SettingsBluetooth,
-    SettingsWifi,
     SettingsDisplay,
-    SettingsPower,
     SettingsSystem,
+    Battery,
+    Storage,
+    Update,
+    About,
+    Maintenance,
     Diagnostics,
-    Album,
-    Artist,
+    /// One Diagnostics section; the navigation filter holds its id.
+    DiagnosticSection,
+    /// A full-length value; the navigation filter holds label and text.
+    ValueDetail,
     TextEntry,
     Pairing,
-    QuickSettings,
-    Platform,
-    TrackInfo,
-    LibraryIndex,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -349,7 +366,10 @@ pub struct NavigationFrame {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Modal {
     ContextMenu,
-    PowerMenu,
+    /// Long Power: radios, output, brightness, restart and power off.
+    QuickSettings,
+    OutputPicker,
+    CodecPicker,
     Confirm(ConfirmAction),
 }
 
@@ -361,6 +381,10 @@ pub enum ConfirmAction {
     ForgetWifi,
     PowerOff,
     Reboot,
+    ResetSettings,
+    ForgetAllWifi,
+    ForgetAllBluetooth,
+    ClearCache,
     Platform(PlatformTask),
 }
 
@@ -379,16 +403,24 @@ pub enum PlatformTask {
     NetworkCheck,
 }
 
+/// Presented platform state. Owned and filled by the application from the
+/// typed platform client; the UI never parses platform records itself.
 #[derive(Debug, Clone, Default)]
 pub struct PlatformState {
-    pub status: serde_json::Value,
-    pub capabilities: serde_json::Value,
-    pub health: serde_json::Value,
-    pub audio: serde_json::Value,
-    pub bluetooth: serde_json::Value,
+    pub snapshot: platform::PlatformSnapshot,
+    pub battery: platform::BatteryState,
     pub busy: Option<PlatformTask>,
-    pub result: Option<serde_json::Value>,
+    pub result: Option<platform::OperationResult>,
+    /// Friendly text of the last failed explicit operation.
     pub failure: Option<String>,
+    /// Application-owned audio pipeline observations (Diagnostics only).
+    pub audio_facts: Vec<platform::Fact>,
+    /// Bluetooth transport observations (Diagnostics only).
+    pub bluetooth_facts: Vec<platform::Fact>,
+    /// Whether the panel exposes an adjustable backlight.
+    pub brightness_available: bool,
+    /// Set while the shutdown/restart transition is being presented.
+    pub shutting_down: Option<platform::ShutdownIntent>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -429,10 +461,17 @@ pub struct Settings {
     pub shuffle: bool,
     #[serde(default)]
     pub repeat: RepeatMode,
+    /// Backlight level in percent of the panel maximum.
+    #[serde(default = "default_brightness")]
+    pub brightness: u8,
 }
 fn default_true() -> bool {
     true
 }
+fn default_brightness() -> u8 {
+    80
+}
+pub const BRIGHTNESS_LEVELS: [u8; 5] = [20, 40, 60, 80, 100];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
@@ -456,6 +495,7 @@ impl Default for Settings {
             gapless_enabled: true,
             shuffle: false,
             repeat: RepeatMode::Off,
+            brightness: default_brightness(),
         }
     }
 }
@@ -533,7 +573,7 @@ pub enum Effect {
     ScreenSleep,
     ScreenWake,
     SetReplayGain(ReplayGainMode),
-    ToggleEq,
+    SetBrightness(u8),
     SetCrossfade(u32),
     SetGapless(bool),
     SetShuffle(bool),
@@ -546,6 +586,10 @@ pub enum Effect {
     },
     ClearQueue,
     RebuildLibrary,
+    ResetSettings,
+    ForgetAllWifi,
+    ForgetAllBluetooth,
+    ClearCache,
     PowerOff,
     Reboot,
     Checkpoint,
@@ -823,6 +867,7 @@ impl AppModel {
         m.settings.volume = m.settings.volume.min(100);
         m.settings.crossfade_ms = m.settings.crossfade_ms.min(30_000);
         m.settings.eq_bands.truncate(8);
+        m.settings.brightness = m.settings.brightness.clamp(BRIGHTNESS_LEVELS[0], 100);
         Ok(m)
     }
     pub fn checkpoint(&self, path: &Path) -> io::Result<()> {
