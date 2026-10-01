@@ -616,13 +616,13 @@ fn source_identity_is_current(source: &Source) -> bool {
         .is_ok_and(|mountinfo| source_identity_matches_at(source, &mountinfo))
 }
 pub struct Scanner {
-    tx: SyncSender<Vec<Source>>,
+    tx: SyncSender<(Vec<Source>, bool)>,
     pub results: Receiver<Result<ScanMetrics, String>>,
     cancel: Arc<AtomicBool>,
 }
 impl Scanner {
     pub fn spawn(db: Database, log: Observer) -> Result<Self, String> {
-        let (tx, rx) = sync_channel::<Vec<Source>>(1);
+        let (tx, rx) = sync_channel::<(Vec<Source>, bool)>(1);
         let (rt, rr) = sync_channel(2);
         let cancel = Arc::new(AtomicBool::new(false));
         let stop = cancel.clone();
@@ -631,12 +631,19 @@ impl Scanner {
             .spawn(move || {
                 while !stop.load(Ordering::Relaxed) {
                     log.heartbeat("scanner", 30);
-                    let sources = match rx.recv_timeout(Duration::from_secs(1)) {
-                        Ok(s) => s,
+                    let (sources, reuse) = match rx.recv_timeout(Duration::from_secs(1)) {
+                        Ok(request) => request,
                         Err(RecvTimeoutError::Timeout) => continue,
                         Err(_) => break,
                     };
-                    let result = scan_sources(&db, &sources, &log, &stop);
+                    let result = scan_sources_with_identity_and_reuse(
+                        &db,
+                        &sources,
+                        &log,
+                        &stop,
+                        source_identity_is_current,
+                        reuse,
+                    );
                     let _ = rt.try_send(result);
                 }
             })
@@ -647,27 +654,40 @@ impl Scanner {
             cancel,
         })
     }
+    /// Incremental scan: unchanged files keep their indexed metadata.
     pub fn scan(&self, s: Vec<Source>) -> Result<(), String> {
-        self.tx.try_send(s).map_err(|_| "scanner busy".into())
+        self.tx
+            .try_send((s, true))
+            .map_err(|_| "scanner busy".into())
+    }
+    /// Rebuild: every supported file is read again; no indexed row is reused.
+    /// Existing rows stay browsable until their replacement is published.
+    pub fn rebuild(&self, s: Vec<Source>) -> Result<(), String> {
+        self.tx
+            .try_send((s, false))
+            .map_err(|_| "scanner busy".into())
     }
     pub fn stop(&self) {
         self.cancel.store(true, Ordering::Relaxed)
     }
 }
-fn scan_sources(
-    db: &Database,
-    sources: &[Source],
-    log: &Observer,
-    stop: &AtomicBool,
-) -> Result<ScanMetrics, String> {
-    scan_sources_with_identity(db, sources, log, stop, source_identity_is_current)
-}
+#[cfg(test)]
 fn scan_sources_with_identity(
     db: &Database,
     sources: &[Source],
     log: &Observer,
     stop: &AtomicBool,
     identity_is_current: impl Fn(&Source) -> bool,
+) -> Result<ScanMetrics, String> {
+    scan_sources_with_identity_and_reuse(db, sources, log, stop, identity_is_current, true)
+}
+fn scan_sources_with_identity_and_reuse(
+    db: &Database,
+    sources: &[Source],
+    log: &Observer,
+    stop: &AtomicBool,
+    identity_is_current: impl Fn(&Source) -> bool,
+    reuse: bool,
 ) -> Result<ScanMetrics, String> {
     let mut workload = reborn_platform::workload::CpuWorkloadLease::acquire_workload_hint(
         reborn_platform::workload::Class::LibraryScan,
@@ -683,9 +703,13 @@ fn scan_sources_with_identity(
         Level::Info,
         "scanner",
         "scan_started",
-        "Incremental library scan",
+        if reuse {
+            "Incremental library scan"
+        } else {
+            "Full library rebuild"
+        },
         Some(id),
-        json!({"sources":sources.len()}),
+        json!({"sources":sources.len(),"reuse":reuse}),
     );
     for source in sources.iter().filter(|s| s.online) {
         if !identity_is_current(source) {
@@ -793,7 +817,7 @@ fn scan_sources_with_identity(
                 };
                 let track = if let Some(t) = existing
                     .get(&logical_path)
-                    .filter(|t| unchanged(t, meta.len(), mtime))
+                    .filter(|t| reuse && unchanged(t, meta.len(), mtime))
                 {
                     stats.reused += 1;
                     t.clone()
@@ -1603,6 +1627,61 @@ mod scan_safety_tests {
         .recv_timeout(Duration::from_secs(3))
         .unwrap()
         .unwrap()
+    }
+
+    #[test]
+    fn rebuild_never_reuses_unchanged_rows_while_scan_does() {
+        let root = root("rebuild-reuse");
+        let path = root.join("same.flac");
+        fs::write(&path, b"not decodable").unwrap();
+        let meta = fs::metadata(&path).unwrap();
+        let mtime = meta
+            .modified()
+            .unwrap()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos() as i64;
+        let source = source("internal", &root);
+        let (db, log) = database(&root);
+        db.sources(vec![source.clone()]).unwrap();
+        let (reply, result) = sync_channel(1);
+        db.tx
+            .send(DbCommand::Batch(
+                vec![Track {
+                    source_id: source.id.clone(),
+                    path: path.clone(),
+                    filename: "same.flac".into(),
+                    size: meta.len(),
+                    mtime,
+                    title: "Indexed".into(),
+                    ..Default::default()
+                }],
+                1,
+                reply,
+            ))
+            .unwrap();
+        result
+            .recv_timeout(Duration::from_secs(3))
+            .unwrap()
+            .unwrap();
+        let stop = AtomicBool::new(false);
+        let scan = scan_sources_with_identity_and_reuse(
+            &db,
+            std::slice::from_ref(&source),
+            &log,
+            &stop,
+            |_| true,
+            true,
+        )
+        .unwrap();
+        assert_eq!(scan.reused, 1);
+        let rebuild =
+            scan_sources_with_identity_and_reuse(&db, &[source], &log, &stop, |_| true, false)
+                .unwrap();
+        assert_eq!(rebuild.reused, 0);
+        // A file that cannot be re-read keeps its prior row: rebuild is not a wipe.
+        assert_eq!(tracks(&db)[0].title, "Indexed");
+        db.stop();
     }
 
     #[test]
