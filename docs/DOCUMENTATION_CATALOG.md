@@ -1,6 +1,6 @@
 # Y2Reborn complete document catalog
 
-Updated 2026-10-01. Every project-owned Markdown page in this repository
+Updated 2026-10-02. Every project-owned Markdown page in this repository
 is listed once; vendored upstream package documentation is excluded.
 Start with the current-state page; a historical
 report records its own build/session, not the presently installed image.
@@ -9,8 +9,8 @@ document links, rather than relocating or deleting proof. See the
 [shared knowledge rules](../../Y2Linux/docs/KNOWLEDGE_BASE.md)
 and the other repository's catalog for product-wide context.
 
-Indexed pages: **56**. Explicit historical/contract scope notices:
-**38**.
+Indexed pages: **57**. Explicit historical/contract scope notices:
+**39**.
 
 ## Entry
 
@@ -26,6 +26,7 @@ Indexed pages: **56**. Explicit historical/contract scope notices:
 | Page | Scope |
 | --- | --- |
 | [Reborn Baseline 01 architecture and operator contract](architecture/baseline-01.md) | Historical design / runbook |
+| [Boot progress and display hand-off](architecture/boot-handoff.md) | Source contract |
 | [Bluetooth codecs: current capability audit and proposed Auto policy](architecture/bluetooth-codecs.md) | Source contract |
 | [Live user volume](architecture/live-volume.md) | Source contract |
 | [Reborn ↔ Y2Linux platform API boundary](architecture/platform-api-boundary.md) | Source contract |

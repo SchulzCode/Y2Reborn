@@ -64,6 +64,8 @@ def main() -> int:
         if spec.name == "manifest.json":
             continue
         document = json.loads(spec.read_text())
+        if "quads" not in document:
+            continue  # data for other tools, e.g. boot-layout.json
         canvas = Image.new("RGBA", (WIDTH, HEIGHT), (9, 11, 13, 255))
         for quad in document["quads"]:
             draw_quad(canvas, quad, ui_font, display_font, icons, artwork)

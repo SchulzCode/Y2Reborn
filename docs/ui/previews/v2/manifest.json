@@ -1,7 +1,11 @@
 [
   "01-boot-splash",
+  "01b-boot-25",
+  "01c-boot-60",
+  "01d-boot-final-phase",
   "02-boot-handoff",
   "03-boot-fade",
+  "03b-boot-failed",
   "04-home",
   "05-music",
   "06-albums",
@@ -52,9 +56,10 @@
   "51-power-off-confirm",
   "52-empty-queue",
   "53-nothing-playing",
-  "90-shutdown-a-fade",
-  "90-shutdown-b-mark",
-  "90-shutdown-c-fadeout",
+  "90-shutdown-a-dissolve",
+  "90-shutdown-b-saving",
+  "90-shutdown-c-closing",
+  "90-shutdown-d-dimming",
   "93-shutdown-low-battery",
   "94-shutdown-final-black"
 ]

@@ -429,40 +429,110 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         manifest.push(name.to_owned());
     }
-    // Boot: the splash mark, the identical Reborn hand-off frame, a fade step.
-    write("01-boot-splash", &reborn_ui::boot_frame(), 0)?;
-    write("02-boot-handoff", &reborn_ui::boot_frame(), 0)?;
+    // Boot. The splash draws the first and last screens and every fill between
+    // them; Reborn's first frame is the complete boot screen over the UI.
+    let phase = |token: &str| {
+        reborn_ui::BOOT_PHASES
+            .iter()
+            .find(|p| p.token == token)
+            .expect("known boot phase")
+    };
+    let boot_state = |token: &str| {
+        let p = phase(token);
+        reborn_ui::boot_screen(f32::from(p.fill_permille) / 1000., p.label)
+    };
+    write("01-boot-splash", &boot_state("start"), 0)?;
+    write("01b-boot-25", &boot_state("fsck_complete"), 0)?;
+    write("01c-boot-60", &boot_state("graphics_ready"), 0)?;
+    write("01d-boot-final-phase", &boot_state("runtime_ready"), 0)?;
+    write("02-boot-handoff", &boot_state("ready"), 0)?;
     write(
         "03-boot-fade",
         &reborn_ui::boot_transition(home.clone(), 0.5),
         0,
     )?;
-    // Shutdown: UI fade, mark hold, fade out, final dark frame.
-    for (label, frame) in [("a-fade", 3), ("b-mark", 10), ("c-fadeout", 22)] {
+    write("03b-boot-failed", &reborn_ui::boot_failure_screen(), 0)?;
+    // Shutdown: UI into the "Saving" screen, the bar draining while closing,
+    // the dimmed last frame, the final dark frame.
+    let closing = reborn_ui::closing_label(false, false);
+    let close = reborn_ui::SHUTDOWN_CLOSE_FRAME;
+    for (label, frame, text) in [
+        ("a-dissolve", 3, closing),
+        ("b-saving", close - 1, closing),
+        ("c-closing", close + 4, closing),
+        ("d-dimming", reborn_ui::SHUTDOWN_FRAMES - 3, closing),
+    ] {
         write(
             &format!("90-shutdown-{label}"),
-            &reborn_ui::shutdown_frame(&home, frame, None),
+            &reborn_ui::shutdown_frame(&home, frame, text),
             0,
         )?;
     }
     write(
         "93-shutdown-low-battery",
-        &reborn_ui::shutdown_frame(&home, 12, Some("Battery empty")),
+        &reborn_ui::shutdown_frame(&home, close + 2, reborn_ui::closing_label(false, true)),
         0,
     )?;
     write("94-shutdown-final-black", &reborn_ui::black_frame(), 0)?;
     for name in [
         "01-boot-splash",
+        "01b-boot-25",
+        "01c-boot-60",
+        "01d-boot-final-phase",
         "02-boot-handoff",
         "03-boot-fade",
-        "90-shutdown-a-fade",
-        "90-shutdown-b-mark",
-        "90-shutdown-c-fadeout",
+        "03b-boot-failed",
+        "90-shutdown-a-dissolve",
+        "90-shutdown-b-saving",
+        "90-shutdown-c-closing",
+        "90-shutdown-d-dimming",
         "93-shutdown-low-battery",
         "94-shutdown-final-black",
     ] {
         manifest.push(name.into());
     }
+    // Everything the early splash needs to draw the same screens: the phase
+    // table, the layout and the rendered wordmark and status lines. Consumed by
+    // Y2Linux `tools/graphics/make-splash-mark.py`.
+    let mut texts = reborn_ui::BOOT_PHASES
+        .iter()
+        .map(|p| (p.label, reborn_ui::LABEL_Y))
+        .collect::<Vec<_>>();
+    for (i, line) in reborn_ui::BOOT_FAILURE_LABELS.iter().enumerate() {
+        texts.push((
+            *line,
+            reborn_ui::LABEL_Y + reborn_ui::FAILURE_LINE_PITCH * i as f32,
+        ));
+    }
+    let mut seen = vec![];
+    texts.retain(|t| {
+        let fresh = !seen.contains(&(t.0, t.1.to_bits()));
+        seen.push((t.0, t.1.to_bits()));
+        fresh
+    });
+    fs::write(
+        output.join("boot-layout.json"),
+        serde_json::to_vec_pretty(&json!({
+            "schema": "org.reborn.boot-layout/v1",
+            "width": 480, "height": 360,
+            "background": 0x090B0Du32,
+            "bar": {"x": reborn_ui::BAR_X, "y": reborn_ui::BAR_Y, "w": reborn_ui::BAR_W,
+                    "h": reborn_ui::BAR_H, "track": reborn_ui::BAR_TRACK >> 8,
+                    "fill": reborn_ui::BAR_FILL >> 8},
+            "phases": reborn_ui::BOOT_PHASES.iter().map(|p| json!({
+                "token": p.token, "label": p.label, "fill_permille": p.fill_permille,
+            })).collect::<Vec<_>>(),
+            "failure_tokens": reborn_ui::BOOT_FAILURE_TOKENS,
+            "failure_lines": reborn_ui::BOOT_FAILURE_LABELS.iter().enumerate().map(|(i, text)| json!({
+                "text": text,
+                "y": reborn_ui::LABEL_Y + reborn_ui::FAILURE_LINE_PITCH * i as f32,
+            })).collect::<Vec<_>>(),
+            "mark": reborn_ui::boot_mark_frame(),
+            "labels": texts.iter().map(|(text, y)| json!({
+                "text": text, "y": y, "quads": reborn_ui::boot_label_frame(text, *y),
+            })).collect::<Vec<_>>(),
+        }))?,
+    )?;
     manifest.sort();
     fs::write(
         output.join("manifest.json"),

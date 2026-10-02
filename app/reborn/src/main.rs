@@ -1715,6 +1715,8 @@ fn option(args: &[String], key: &str) -> Option<String> {
         .cloned()
 }
 fn startup_phase(log: &Observer, started: Instant, phase: &str) {
+    // The early splash maps the same milestone names to its progress bar.
+    reborn_platform::contract::boot_milestone(phase);
     log.emit(
         Level::Info,
         "startup",
@@ -1798,7 +1800,7 @@ fn run() -> Result<(), String> {
     }
     // Open the display as soon as the process is alive. The first bounded
     // frame below hands KMS to Reborn while storage and library workers start.
-    let mut graphics = if headless {
+    let graphics = if headless {
         log.health_set(
             "graphics",
             HealthState::Unavailable,
@@ -1830,25 +1832,10 @@ fn run() -> Result<(), String> {
     };
     startup_phase(&log, process_started, "graphics_ready");
     let ui = Ui::default();
+    // The early splash keeps the display, showing real startup progress, until
+    // the first complete UI frame below is ready. That frame is the hand-off:
+    // it is presented under a full boot-screen cover that dissolves at once.
     let mut first_frame_presented = false;
-    if let Some(g) = &mut graphics {
-        // Hand scanout to Reborn as soon as the renderer exists. The model is
-        // already restored, so this bounded initial frame gives the user the
-        // real UI while storage, library and radio workers start below it.
-        // The early splash shows exactly this mark, so the hand-off is seamless.
-        let draw = reborn_ui::boot_frame();
-        if g.render(&draw).is_ok() {
-            first_frame_presented = true;
-            log.emit(
-                Level::Info,
-                "startup",
-                "ready",
-                "First Reborn frame presented",
-                None,
-                json!({"display_handoff":"explicit KMS presentation","initial":true}),
-            );
-        }
-    }
     if let Some(m) = option(&args, "--music-dir") {
         model.settings.music_directory = m.into();
     }
@@ -1905,6 +1892,7 @@ fn run() -> Result<(), String> {
     );
     startup_phase(&log, process_started, "core_services_ready");
     let playback = playback::Playback::spawn(log.clone(), root.join("cache"))?;
+    startup_phase(&log, process_started, "audio_ready");
     let wifi = if headless {
         None
     } else {
@@ -1937,7 +1925,7 @@ fn run() -> Result<(), String> {
             Some(client::Client::spawn().map_err(|e| e.to_string())?)
         },
         platform_refresh_pending: false,
-        boot_fade: 6,
+        boot_fade: reborn_ui::BOOT_FADE_FRAMES,
         collection_art: if headless {
             None
         } else {
@@ -1972,18 +1960,6 @@ fn run() -> Result<(), String> {
         active_transport_generation: None,
     };
     startup_phase(&log, process_started, "runtime_ready");
-    if first_frame_presented && !headless {
-        if let Err(error) = reborn_platform::contract::application_ready() {
-            log.emit(
-                Level::Warn,
-                "platform",
-                "readiness",
-                &error,
-                None,
-                json!({}),
-            );
-        }
-    }
     let last_snapshot = Arc::new(Mutex::new(json!({"starting":true})));
     let watcher = last_snapshot.clone();
     let wl = log.clone();
@@ -2681,12 +2657,22 @@ fn run() -> Result<(), String> {
                 rt.model.platform.audio_facts = audio_facts(&rt.playback.audio_state(), &rt.model);
             }
             let mut draw = rt.ui.draw(&rt.model, &rt.model.library.tracks, rt.art);
-            if rt.boot_fade > 0 && first_frame_presented {
-                // Dissolve from the boot mark into the first real UI frame.
-                draw = reborn_ui::boot_transition(draw, f32::from(rt.boot_fade) / 7.);
+            if !first_frame_presented {
+                // The splash's bar completes while this first frame renders.
+                reborn_platform::contract::boot_milestone("ready");
+            }
+            let fading = rt.boot_fade > 0;
+            if fading {
+                // The first frame is the complete boot screen over the real UI
+                // (identical to the splash's last frame); it dissolves at once.
+                // A step is only consumed once its frame was presented.
+                draw = reborn_ui::boot_transition(
+                    draw,
+                    f32::from(rt.boot_fade) / f32::from(reborn_ui::BOOT_FADE_FRAMES),
+                );
+            }
+            if rt.graphics.is_none() && fading {
                 rt.boot_fade -= 1;
-            } else {
-                rt.boot_fade = 0;
             }
             if let Some(g) = &mut rt.graphics {
                 if let Err(e) = g.render(&draw) {
@@ -2707,33 +2693,41 @@ fn run() -> Result<(), String> {
                         rt.graphics = Some(g);
                     }
                     let _ = log.diagnostic(&root.join("diagnostics"), rt.snapshot(), true);
-                } else if !first_frame_presented {
-                    first_frame_presented = true;
-                    if !headless {
-                        if let Err(error) = reborn_platform::contract::application_ready() {
-                            log.emit(
-                                Level::Warn,
-                                "platform",
-                                "readiness",
-                                &error,
-                                None,
-                                json!({}),
+                } else {
+                    if fading {
+                        rt.boot_fade -= 1;
+                    }
+                    if !first_frame_presented {
+                        first_frame_presented = true;
+                        if !headless {
+                            if let Err(error) = reborn_platform::contract::application_ready() {
+                                log.emit(
+                                    Level::Warn,
+                                    "platform",
+                                    "readiness",
+                                    &error,
+                                    None,
+                                    json!({}),
+                                );
+                            }
+                        }
+                        log.emit(
+                            Level::Info,
+                            "startup",
+                            "ready",
+                            "First Reborn frame presented",
+                            None,
+                            json!({"display_handoff":"explicit KMS presentation",
+                            "elapsed_ms":process_started.elapsed().as_millis()}),
+                        );
+                        // Early splash evidence lives on the /run mount carried out
+                        // of initramfs; retain this bounded record alongside app logs.
+                        if let Some(bytes) = reborn_platform::contract::splash_evidence() {
+                            let _ = reborn_core::atomic_write(
+                                &root.join("logs/splash-boot.jsonl"),
+                                &bytes,
                             );
                         }
-                    }
-                    log.emit(
-                        Level::Info,
-                        "startup",
-                        "ready",
-                        "First Reborn frame presented",
-                        None,
-                        json!({"display_handoff":"explicit KMS presentation"}),
-                    );
-                    // Early splash evidence lives on the /run mount carried out
-                    // of initramfs; retain this bounded record alongside app logs.
-                    if let Some(bytes) = reborn_platform::contract::splash_evidence() {
-                        let _ =
-                            reborn_core::atomic_write(&root.join("logs/splash-boot.jsonl"), &bytes);
                     }
                 }
             }
@@ -2752,13 +2746,15 @@ fn run() -> Result<(), String> {
         rt.model.platform.shutting_down = Some(intent.clone());
         rt.model.navigation.modal = None;
         let last = rt.ui.draw(&rt.model, &rt.model.library.tracks, rt.art);
-        rt.graphics.take().map(|g| (g, last, intent.low_battery))
+        let closing = reborn_ui::closing_label(intent.restart, intent.low_battery);
+        rt.graphics.take().map(|g| (g, last, closing))
     });
-    let caption = |low: bool| low.then_some("Battery empty");
-    if let Some((g, last, low)) = farewell.as_mut() {
-        for frame in 0..7 {
+    // The UI dissolves into the shutdown screen, which says "Saving" while the
+    // real save below runs; its status then becomes the closing label.
+    if let Some((g, last, closing)) = farewell.as_mut() {
+        for frame in 0..reborn_ui::SHUTDOWN_CLOSE_FRAME {
             let started = Instant::now();
-            let _ = g.render(&reborn_ui::shutdown_frame(last, frame, caption(*low)));
+            let _ = g.render(&reborn_ui::shutdown_frame(last, frame, closing));
             thread::sleep(Duration::from_millis(34).saturating_sub(started.elapsed()));
         }
     }
@@ -2791,15 +2787,17 @@ fn run() -> Result<(), String> {
             json!({}),
         );
     }
-    if let Some((g, last, low)) = farewell.as_mut() {
-        for frame in 7..reborn_ui::SHUTDOWN_FRAMES {
+    if let Some((g, last, closing)) = farewell.as_mut() {
+        for frame in reborn_ui::SHUTDOWN_CLOSE_FRAME..reborn_ui::SHUTDOWN_FRAMES {
             let started = Instant::now();
-            let _ = g.render(&reborn_ui::shutdown_frame(last, frame, caption(*low)));
+            let _ = g.render(&reborn_ui::shutdown_frame(last, frame, closing));
             thread::sleep(Duration::from_millis(34).saturating_sub(started.elapsed()));
         }
         // Final dark frame first, then the backlight: the panel never shows a
-        // white, stale or console framebuffer while it is lit.
+        // white, stale or console framebuffer while it is lit. One refresh
+        // lets the black frame reach the panel before its light goes out.
         let _ = g.render(&reborn_ui::black_frame());
+        thread::sleep(Duration::from_millis(34));
         if let Err(error) = power::blank(true) {
             log.emit(
                 Level::Warn,

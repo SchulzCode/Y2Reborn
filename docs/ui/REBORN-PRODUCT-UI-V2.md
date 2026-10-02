@@ -134,22 +134,23 @@ Output, Brightness, Restart, Power Off.
 ## Boot and shutdown
 
 The early splash (Y2Linux `tools/graphics/reborn-splash.c`) shows the Reborn
-mark on the product background. Its pixels are generated from Reborn's own
-boot frame (`reborn_ui::boot_frame`) and a cross-repository test proves the
-splash frame and Reborn's hand-off frame are identical. While startup
-continues only the gold rule breathes (1.6 s, 55–100 %); there is no
-loading bar or percentage. Reborn presents the identical frame when it
-takes over the display, then dissolves into the first UI frame over six
-frames (~200 ms). The dissolve starts only once the UI is ready and is the
-only boot animation Reborn adds.
+wordmark, one thin white bar and a short status line on the product
+background. Its pixels are generated from Reborn's own boot screens
+(`reborn_ui::boot_screen`) and a cross-repository test proves the splash and
+Reborn's hand-off frame are identical. The bar fills to coarse real startup
+milestones and never shows a number. The splash keeps the display until
+Reborn's first complete UI frame is ready; that frame is presented under the
+full boot screen, which dissolves over seven frames (~240 ms). See
+[boot progress and hand-off](../architecture/boot-handoff.md).
 
-On a platform shutdown or restart intent Reborn renders the UI fading to the
-background (7 frames), the Reborn mark (with *Battery empty* for a
-low-battery shutdown), saves the session, closes audio and the library
-database, fades the mark out, presents a black frame, turns the backlight
-off, and then acknowledges (26 frames at ~34 ms ≈ 0.9 s of visuals plus
-the save time). The platform turns the backlight off again before init
-powers down, so a crashed or hung Reborn cannot leave a lit panel.
+On a platform shutdown or restart intent Reborn dissolves the UI into the same
+screen (**Saving**), saves the session and closes audio and the library
+database, shows **Shutting down** (or **Restarting**, **Battery empty**) while
+the bar drains and the screen dims, presents a black frame, turns the
+backlight off and then acknowledges (23 frames at ~34 ms ≈ 0.8 s of visuals
+plus the save time). The platform turns the backlight off before it stops a
+Reborn that did not acknowledge, and again before init powers down, so a
+crashed or hung Reborn cannot leave a lit panel.
 
 ## Wheel
 

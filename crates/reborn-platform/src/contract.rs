@@ -72,6 +72,19 @@ pub fn maintenance_pending() -> bool {
     Path::new("/data/system/platform/maintenance-pending").exists()
 }
 
+/// Tell the early splash which startup milestone was reached. Best effort: it
+/// only writes when the splash's runtime directory exists, never creates it and
+/// never fails startup. The splash maps the name to its bar and status line.
+pub fn boot_milestone(name: &str) {
+    write_milestone(Path::new("/run/reborn-splash"), name);
+}
+
+fn write_milestone(directory: &Path, name: &str) {
+    if directory.is_dir() {
+        let _ = fs::write(directory.join("phase"), format!("{name}\n"));
+    }
+}
+
 /// Bounded early-splash evidence from this boot, if the splash recorded any.
 pub fn splash_evidence() -> Option<Vec<u8>> {
     fs::read("/run/reborn-splash/events.jsonl")
@@ -82,6 +95,18 @@ pub fn splash_evidence() -> Option<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn milestones_reach_only_an_existing_splash_directory() {
+        let root = std::env::temp_dir().join(format!("reborn-milestone-{}", std::process::id()));
+        write_milestone(&root, "graphics_ready");
+        assert!(!root.exists(), "never creates the splash directory");
+        fs::create_dir_all(&root).unwrap();
+        write_milestone(&root, "graphics_ready");
+        write_milestone(&root, "audio_ready");
+        assert_eq!(fs::read(root.join("phase")).unwrap(), b"audio_ready\n");
+        fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn missing_qualification_stays_false_and_future_schema_is_rejected() {
         let caps = parse(br#"{"schema":"org.y2linux.capabilities/v1","capabilities":{"audio":{"implemented":true,"enabled":true}}}"#).unwrap();

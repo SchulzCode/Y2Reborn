@@ -874,17 +874,17 @@ fn storage_battery_and_pc_transfer_present_user_states() {
 
 #[test]
 fn boot_and_shutdown_frames_are_dark_and_end_black() {
-    let boot = boot_frame();
+    let boot = boot_screen(0., "Starting system");
     assert_eq!(boot[0].color, theme::color::BG);
     assert_eq!(focus_target_count(&boot), 0);
     let ui_frame = radios().draw(&app(Screen::Home), &library(), false);
     for frame in 0..SHUTDOWN_FRAMES {
-        let quads = shutdown_frame(&ui_frame, frame, None);
+        let quads = shutdown_frame(&ui_frame, frame, closing_label(false, false));
         assert!(quads
             .iter()
             .all(|q| q.color & 0xFF != 0 || q.glyph.is_some()));
     }
-    let last = shutdown_frame(&ui_frame, SHUTDOWN_FRAMES - 1, None);
+    let last = shutdown_frame(&ui_frame, SHUTDOWN_FRAMES - 1, closing_label(false, false));
     let overlay = last.last().unwrap();
     assert_eq!(overlay.color, theme::color::BG, "fully faded");
     assert_eq!(black_frame()[0].color, theme::color::BLACK);

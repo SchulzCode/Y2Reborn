@@ -23,78 +23,16 @@ pub fn visible_rows_for(screen: Screen) -> usize {
     }
 }
 
-/// The Reborn mark on the product background. The early splash in Y2Linux is
-/// generated from exactly these quads, so the hand-off frame is identical.
-pub fn boot_frame() -> Vec<Quad> {
-    let mut c = Canvas::new();
-    c.rect(0., 0., 480., 360., color::BG);
-    mark(&mut c, 1.);
-    c.finish()
-}
-
-fn mark(c: &mut Canvas, opacity: f32) {
-    let alpha = (opacity.clamp(0., 1.) * 255.).round() as u32;
-    let tint = |color: u32| (color & 0xFFFF_FF00) | alpha;
-    c.centered(240., 148., "Reborn", MARK_SCALE, tint(color::TEXT_PRIMARY));
-    c.rect(220., 198., 40., 2., tint(color::ACCENT_GOLD));
-}
-
-/// Dissolve from the boot mark into the first UI frame. `remaining` runs
-/// from 1 (all mark) to 0 (all UI); no frame is ever blank.
-pub fn boot_transition(ui: Vec<Quad>, remaining: f32) -> Vec<Quad> {
-    let mut quads = with_overlay(ui, remaining);
-    let mut c = Canvas::new();
-    mark(&mut c, remaining);
-    quads.extend(c.finish());
-    quads
-}
-pub const MARK_SCALE: f32 = 4.25;
-
-/// Frames of the shutdown transition at the UI's ~34 ms cadence (≈0.9 s).
-pub const SHUTDOWN_FRAMES: usize = 26;
-
-/// One shutdown frame: the current UI fades out (frames 0–6), the mark holds,
-/// then everything fades to the background. `ui` is the last UI frame.
-pub fn shutdown_frame(ui: &[Quad], frame: usize, caption: Option<&str>) -> Vec<Quad> {
-    let frame = frame.min(SHUTDOWN_FRAMES - 1);
-    if frame < 7 {
-        return with_overlay(ui.to_vec(), (frame + 1) as f32 / 7.);
-    }
-    let mut c = Canvas::new();
-    c.rect(0., 0., 480., 360., color::BG);
-    mark(&mut c, 1.);
-    if let Some(caption) = caption {
-        c.centered(240., 236., caption, type_scale::BODY, color::TEXT_SECONDARY);
-    }
-    let fade = frame.saturating_sub(16) as f32 / (SHUTDOWN_FRAMES - 17) as f32;
-    let mut quads = c.finish();
-    if fade > 0. {
-        quads = with_overlay(quads, fade);
-    }
-    quads
-}
-
-/// The final frame before the backlight turns off.
-pub fn black_frame() -> Vec<Quad> {
-    vec![Quad::rect(0., 0., 480., 360., color::BLACK)]
-}
-
-/// Cover `quads` with the background at `alpha` (0 transparent, 1 opaque).
-pub fn with_overlay(mut quads: Vec<Quad>, alpha: f32) -> Vec<Quad> {
-    let a = (alpha.clamp(0., 1.) * 255.).round() as u32;
-    quads.push(Quad::rect(
-        0.,
-        0.,
-        480.,
-        360.,
-        (color::BG & 0xFFFF_FF00) | a,
-    ));
-    for q in &mut quads {
-        if alpha >= 1. {
-            q.focus_target = false;
-        }
-    }
-    quads
+/// The wordmark with its accent rule, shown while an update is installed.
+fn update_mark(c: &mut Canvas) {
+    c.centered(
+        240.,
+        148.,
+        "Reborn",
+        crate::boot::MARK_SCALE,
+        color::TEXT_PRIMARY,
+    );
+    c.rect(220., 198., 40., 2., color::ACCENT_GOLD);
 }
 
 pub fn draw(ui: &Ui, m: &AppModel, tracks: &[Track], has_art: bool) -> Vec<Quad> {
@@ -104,7 +42,7 @@ pub fn draw(ui: &Ui, m: &AppModel, tracks: &[Track], has_art: bool) -> Vec<Quad>
         m.platform.busy,
         Some(reborn_core::PlatformTask::UpdateApply | reborn_core::PlatformTask::UpdateRollback)
     ) {
-        mark(&mut c, 1.);
+        update_mark(&mut c);
         c.centered(
             240.,
             236.,

@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+mod boot;
 mod catalog;
 mod components;
 pub mod diagnostics;
@@ -15,10 +16,14 @@ use reborn_core::{
 use reborn_graphics::Quad;
 use std::time::{Duration, Instant};
 
-pub use reborn_core::Effect;
-pub use screens::{
-    black_frame, boot_frame, boot_transition, shutdown_frame, with_overlay, SHUTDOWN_FRAMES,
+pub use boot::{
+    black_frame, boot_failure_screen, boot_label_frame, boot_mark_frame, boot_screen,
+    boot_transition, closing_label, shutdown_frame, with_overlay, BootPhase, BAR_FILL, BAR_H,
+    BAR_TRACK, BAR_W, BAR_X, BAR_Y, BOOT_FADE_FRAMES, BOOT_FAILURE_LABELS, BOOT_FAILURE_TOKENS,
+    BOOT_FINAL_LABEL, BOOT_PHASES, FAILURE_LINE_PITCH, LABEL_Y, SAVING_LABEL, SHUTDOWN_CLOSE_FRAME,
+    SHUTDOWN_FRAMES,
 };
+pub use reborn_core::Effect;
 
 /// Count the semantic focus markers emitted by the presentation layer. The
 /// marker is metadata only; the native renderer ignores it, while preview and
