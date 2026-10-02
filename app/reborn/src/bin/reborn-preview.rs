@@ -442,15 +442,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         reborn_ui::boot_screen(f32::from(p.fill_permille) / 1000., p.label)
     };
     write("01-boot-splash", &boot_state("start"), 0)?;
-    write("01b-boot-25", &boot_state("fsck_complete"), 0)?;
-    write("01c-boot-60", &boot_state("graphics_ready"), 0)?;
+    write("01b-boot-25", &boot_state("rc_time"), 0)?;
+    write("01c-boot-60", &boot_state("conn_wifi"), 0)?;
     write("01d-boot-final-phase", &boot_state("runtime_ready"), 0)?;
     write("02-boot-handoff", &boot_state("ready"), 0)?;
-    write(
-        "03-boot-fade",
-        &reborn_ui::boot_transition(home.clone(), 0.5),
-        0,
-    )?;
+    for (name, remaining) in [
+        ("03a-boot-fade-bar-out", 0.7),
+        ("03-boot-fade", 0.5),
+        ("03c-boot-fade-lift", 0.3),
+    ] {
+        write(
+            name,
+            &reborn_ui::boot_transition(home.clone(), remaining),
+            0,
+        )?;
+    }
     write("03b-boot-failed", &reborn_ui::boot_failure_screen(), 0)?;
     // Shutdown: UI into the "Saving" screen, the bar draining while closing,
     // the dimmed last frame, the final dark frame.
@@ -480,7 +486,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "01c-boot-60",
         "01d-boot-final-phase",
         "02-boot-handoff",
+        "03a-boot-fade-bar-out",
         "03-boot-fade",
+        "03c-boot-fade-lift",
         "03b-boot-failed",
         "90-shutdown-a-dissolve",
         "90-shutdown-b-saving",

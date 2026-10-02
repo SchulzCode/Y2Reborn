@@ -31,21 +31,36 @@ const fn phase(token: &'static str, label: &'static str, fill_permille: u16) -> 
 /// strictly increasing, so the bar can only move forward.
 pub const BOOT_PHASES: &[BootPhase] = &[
     phase("start", "Starting system", 0),
-    phase("storage_discovery", "Preparing storage", 60),
-    phase("rescue_update", "Preparing storage", 100),
-    phase("storage_preflight", "Preparing storage", 140),
-    phase("fsck_start", "Preparing storage", 180),
-    phase("fsck_complete", "Preparing storage", 250),
-    phase("root_data_mounted", "Starting system", 340),
-    phase("switch_root", "Starting system", 400),
-    phase("model_restored", "Starting system", 470),
-    phase("graphics_ready", "Loading music library", 600),
-    phase("storage_ready", "Loading music library", 660),
-    phase("library_workers_ready", "Starting audio", 730),
-    phase("core_services_ready", "Starting audio", 780),
-    phase("audio_ready", "Starting connectivity", 840),
-    phase("radio_workers_ready", "Starting Reborn", 900),
-    phase("runtime_ready", "Starting Reborn", 950),
+    phase("storage_discovery", "Preparing storage", 25),
+    phase("rescue_update", "Preparing storage", 45),
+    phase("storage_preflight", "Preparing storage", 65),
+    phase("fsck_start", "Preparing storage", 85),
+    phase("fsck_complete", "Preparing storage", 110),
+    phase("root_data_mounted", "Starting system", 140),
+    phase("switch_root", "Starting system", 160),
+    phase("rc_data", "Starting system", 200),
+    phase("rc_time", "Setting the clock", 240),
+    phase("rc_power", "Starting power", 270),
+    phase("rc_bluetooth", "Starting Bluetooth", 300),
+    phase("rc_connectivity", "Starting connectivity", 330),
+    phase("rc_readiness", "Starting connectivity", 360),
+    phase("platform_ready", "Starting connectivity", 400),
+    phase("conn_factory", "Starting connectivity", 440),
+    phase("conn_calibration", "Starting connectivity", 480),
+    phase("conn_activated", "Starting connectivity", 520),
+    phase("conn_wifi_wait", "Starting Wi-Fi", 540),
+    phase("conn_wifi", "Starting Wi-Fi", 600),
+    phase("conn_bluetooth_wait", "Starting Bluetooth", 620),
+    phase("conn_bluetooth", "Starting Bluetooth", 680),
+    phase("system_ready", "Starting Reborn", 700),
+    phase("model_restored", "Starting Reborn", 730),
+    phase("graphics_ready", "Loading music library", 770),
+    phase("storage_ready", "Loading music library", 800),
+    phase("library_workers_ready", "Starting audio", 850),
+    phase("core_services_ready", "Starting audio", 880),
+    phase("audio_ready", "Starting connectivity", 910),
+    phase("radio_workers_ready", "Starting Reborn", 940),
+    phase("runtime_ready", "Starting Reborn", 970),
     phase("ready", "Starting Reborn", 1000),
 ];
 
@@ -69,10 +84,13 @@ const LABEL_COLOR: u32 = color::TEXT_MUTED;
 pub const BAR_TRACK: u32 = color::SURFACE_BORDER;
 pub const BAR_FILL: u32 = color::TEXT_PRIMARY;
 
-/// Frames of the dissolve from the boot screen into the first UI frame
-/// (≈0.24 s at the UI's 34 ms cadence). The first frame is the full boot
-/// screen, so the hand-off is seamless; the last is the UI alone.
-pub const BOOT_FADE_FRAMES: u8 = 7;
+/// Frames of the reveal of the first UI frame (≈0.34 s at the UI's 34 ms
+/// cadence). The first frame is the full boot screen, so the hand-off is
+/// seamless; the last is the UI alone. The bar and status line finish first,
+/// then the wordmark lifts slightly while the cover dissolves, so the UI is
+/// never seen through the whole boot screen at once.
+pub const BOOT_FADE_FRAMES: u8 = 10;
+const REVEAL_LIFT: f32 = 8.;
 
 /// Shutdown schedule at the UI's 34 ms cadence (≈0.8 s): the UI dissolves into
 /// the shutdown screen showing "Saving"; the caller then saves and continues
@@ -89,11 +107,20 @@ fn tint(value: u32, opacity: f32) -> u32 {
     (value & 0xFFFF_FF00) | alpha
 }
 
-/// The wordmark alone.
+fn smooth(x: f32) -> f32 {
+    let x = x.clamp(0., 1.);
+    x * x * (3. - 2. * x)
+}
+
+/// The wordmark alone, `lift` pixels above its place.
 pub fn mark(c: &mut Canvas, opacity: f32) {
+    mark_at(c, opacity, 0.);
+}
+
+fn mark_at(c: &mut Canvas, opacity: f32, lift: f32) {
     c.centered(
         240.,
-        MARK_Y,
+        MARK_Y - lift,
         "Reborn",
         MARK_SCALE,
         tint(color::TEXT_PRIMARY, opacity),
@@ -159,12 +186,21 @@ pub fn boot_label_frame(text: &str, y: f32) -> Vec<Quad> {
     c.finish()
 }
 
-/// Dissolve from the boot screen into the first UI frame. `remaining` runs
-/// from 1 (all boot screen, bar full) to 0 (all UI); no frame is ever blank.
+/// Reveal the first UI frame. `remaining` runs from 1 (the boot screen, bar
+/// full, identical to the splash's last frame) to 0 (the UI alone); no frame is
+/// ever blank. The bar and status line fade out first; then the wordmark lifts
+/// a few pixels and dissolves together with the cover, on an ease-in-out curve.
 pub fn boot_transition(ui: Vec<Quad>, remaining: f32) -> Vec<Quad> {
-    let mut quads = with_overlay(ui, remaining);
+    let t = 1. - remaining.clamp(0., 1.);
+    let chrome = 1. - smooth(t / 0.4);
+    let reveal = smooth((t - 0.2) / 0.8);
+    let mut quads = with_overlay(ui, 1. - reveal);
     let mut c = Canvas::new();
-    group(&mut c, 1., BOOT_FINAL_LABEL, remaining);
+    mark_at(&mut c, 1. - reveal, REVEAL_LIFT * reveal);
+    if chrome > 0. {
+        bar(&mut c, 1., chrome);
+        label(&mut c, LABEL_Y, BOOT_FINAL_LABEL, chrome);
+    }
     quads.extend(c.finish());
     quads
 }
@@ -338,38 +374,63 @@ mod tests {
     }
 
     #[test]
-    fn dissolve_starts_as_the_boot_screen_and_ends_as_the_ui() {
+    fn reveal_starts_as_the_boot_screen_and_ends_as_the_ui() {
         let ui = vec![Quad::rect(0., 0., 480., 360., color::SURFACE)];
         let first = boot_transition(ui.clone(), 1.);
         let overlay = first.iter().find(|q| q.w == 480. && q.color == color::BG);
-        assert!(
-            overlay.is_some(),
-            "opaque cover on the first dissolve frame"
-        );
+        assert!(overlay.is_some(), "opaque cover on the first reveal frame");
         assert!(first.iter().all(|q| !q.focus_target));
-        // The first dissolve frame draws the same group as the splash's last.
+        // The first reveal frame draws the same group as the splash's last.
         let screen = boot_screen(1., BOOT_FINAL_LABEL);
         let first_shapes = first.iter().map(shape).collect::<Vec<_>>();
         assert!(screen
             .iter()
             .skip(1)
             .all(|q| first_shapes.contains(&shape(q))));
-        let mut previous = 2.;
-        for step in (1..=BOOT_FADE_FRAMES).rev() {
-            let remaining = f32::from(step) / f32::from(BOOT_FADE_FRAMES);
-            assert!(remaining < previous);
-            previous = remaining;
-            let quads = boot_transition(ui.clone(), remaining);
-            let cover = quads
+        let cover = |quads: &[Quad]| {
+            quads
                 .iter()
                 .find(|q| q.w == 480. && q.color & 0xFFFF_FF00 == color::BG & 0xFFFF_FF00)
-                .unwrap();
-            assert_eq!(
-                cover.color & 0xFF,
-                (remaining * 255.).round() as u32,
-                "cover alpha follows the fade"
+                .map_or(0, |q| q.color & 0xFF)
+        };
+        let glyph_alpha = |quads: &[Quad], from: usize| {
+            quads
+                .iter()
+                .filter(|q| q.glyph.is_some())
+                .nth(from)
+                .map_or(0, |q| q.color & 0xFF)
+        };
+        // "Reborn" is the first six glyphs, the status line follows.
+        let (mut cover_before, mut mark_before, mut chrome_before) = (256, 256, 256);
+        let mut lift_before = 0.;
+        for step in (1..=BOOT_FADE_FRAMES).rev() {
+            let quads = boot_transition(ui.clone(), f32::from(step) / f32::from(BOOT_FADE_FRAMES));
+            let (c, m, status) = (
+                cover(&quads),
+                glyph_alpha(&quads, 0),
+                glyph_alpha(&quads, 6),
             );
+            assert!(c <= cover_before && m <= mark_before && status <= chrome_before);
+            (cover_before, mark_before, chrome_before) = (c, m, status);
+            let y = quads.iter().find(|q| q.glyph.is_some()).unwrap().y;
+            let lift = first.iter().find(|q| q.glyph.is_some()).unwrap().y - y;
+            assert!(
+                (0. ..=REVEAL_LIFT + 0.01).contains(&lift) && lift >= lift_before,
+                "wordmark only rises, by at most {REVEAL_LIFT} px: {lift}"
+            );
+            lift_before = lift;
         }
+        // The status line is gone before the wordmark and cover are.
+        let mid = boot_transition(ui.clone(), 0.55);
+        assert_eq!(glyph_alpha(&mid, 6), 0, "status already faded");
+        assert!(
+            glyph_alpha(&mid, 0) > 180 && cover(&mid) > 180,
+            "wordmark and cover still there"
+        );
+        // The last frame is nearly the UI alone.
+        let last = boot_transition(ui, 1. / f32::from(BOOT_FADE_FRAMES));
+        assert!(cover(&last) < 30 && glyph_alpha(&last, 0) < 30);
+        assert_eq!(glyph_alpha(&last, 6), 0);
     }
 
     #[test]

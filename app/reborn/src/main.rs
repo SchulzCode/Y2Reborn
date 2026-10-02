@@ -2102,6 +2102,11 @@ fn run() -> Result<(), String> {
         }
         if let Some(input) = &mut inputs {
             for event in input.poll() {
+                // The first frame is revealed under the boot cover; input only
+                // counts once the finished UI is fully visible.
+                if rt.boot_fade > 0 {
+                    continue;
+                }
                 if !rt.model.screen_off {
                     rt.interaction_hints.interactive();
                 }

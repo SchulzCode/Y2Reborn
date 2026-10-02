@@ -139,8 +139,10 @@ background. Its pixels are generated from Reborn's own boot screens
 (`reborn_ui::boot_screen`) and a cross-repository test proves the splash and
 Reborn's hand-off frame are identical. The bar fills to coarse real startup
 milestones and never shows a number. The splash keeps the display until
-Reborn's first complete UI frame is ready; that frame is presented under the
-full boot screen, which dissolves over seven frames (~240 ms). See
+Reborn's first complete UI frame is ready (Reborn itself starts last, after the
+platform services and enabled radios are up); that frame is presented under
+the full boot screen, which is revealed over ten frames (~340 ms) with input
+held until it is done. See
 [boot progress and hand-off](../architecture/boot-handoff.md).
 
 On a platform shutdown or restart intent Reborn dissolves the UI into the same
