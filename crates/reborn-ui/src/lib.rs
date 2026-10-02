@@ -614,6 +614,7 @@ impl Ui {
                     );
                 }
                 rows.push(Item::new("Restart", "confirm:reboot"));
+                rows.push(Item::new("Sleep", "sleep"));
                 rows.push(Item::new("Power Off", "confirm:power_off"));
                 rows
             }
@@ -652,6 +653,9 @@ impl Ui {
                     })
                 })
                 .collect(),
+            Some(Modal::EqBand(_)) => (-12..=12)
+                .map(|gain| Item::new(format!("{gain:+} dB"), format!("eq_gain:{gain}")))
+                .collect(),
             Some(Modal::Confirm(action)) => {
                 let mut rows = vec![
                     Item::new("Cancel", "cancel"),
@@ -686,6 +690,22 @@ impl Ui {
                 "Bluetooth Codec",
                 "Your headphones use the closest codec they support.",
             ),
+            Some(Modal::EqBand(index)) => {
+                let defaults = reborn_core::flat_eq_bands();
+                let bands = if m.settings.eq_bands.is_empty() {
+                    &defaults
+                } else {
+                    &m.settings.eq_bands
+                };
+                let title = bands
+                    .get(index)
+                    .map(|b| pages::eq_frequency(b.frequency_hz))
+                    .unwrap_or_else(|| "Equalizer".into());
+                return (
+                    title,
+                    "Turn the wheel to choose gain. Select applies; Back cancels.".into(),
+                );
+            }
             Some(Modal::Confirm(action)) => confirm_copy(action),
             Some(Modal::ContextMenu) => {
                 let key = m.navigation.context_key.as_deref();
@@ -959,6 +979,23 @@ impl Ui {
         if let Some(name) = key.strip_prefix("task:") {
             return Effect::Platform(platform_task(name));
         }
+        if let Some(index) = key
+            .strip_prefix("eq_band:")
+            .and_then(|s| s.parse::<usize>().ok())
+        {
+            let defaults = reborn_core::flat_eq_bands();
+            let bands = if m.settings.eq_bands.is_empty() {
+                &defaults
+            } else {
+                &m.settings.eq_bands
+            };
+            if let Some(band) = bands.get(index) {
+                let focus = (band.gain_db.round().clamp(-12., 12.) as i32 + 12) as usize;
+                Self::open_modal(m, Modal::EqBand(index));
+                m.navigation.modal_focus = focus;
+            }
+            return Effect::None;
+        }
         if let Some(name) = key.strip_prefix("confirm:") {
             if let Some(action) = confirm_action(name) {
                 Self::open_modal(m, Modal::Confirm(action));
@@ -1008,6 +1045,34 @@ impl Ui {
                 Self::open_modal(m, Modal::OutputPicker);
                 Effect::None
             }
+            "codec_preference" => {
+                Self::open_modal(m, Modal::CodecPicker);
+                Effect::None
+            }
+            "ldac_quality" => {
+                let q = m.platform.snapshot.bluetooth_quality;
+                if !q.ldac_supported {
+                    return None;
+                }
+                Effect::Platform(PlatformTask::LdacQuality(q.requested_quality?.next()))
+            }
+            "sbc_quality" => {
+                let q = m.platform.snapshot.bluetooth_quality;
+                if !q.sbc_supported {
+                    return None;
+                }
+                Effect::Platform(PlatformTask::SbcQuality(q.requested_sbc?.next()))
+            }
+            "ldac_abr" => {
+                let q = m.platform.snapshot.bluetooth_quality;
+                if !q.abr_supported {
+                    return None;
+                }
+                Effect::Platform(PlatformTask::LdacAbr(!q.requested_abr?))
+            }
+            "screen_off" => Effect::ScreenSleep,
+            "eq_enabled" => Effect::SetEqEnabled(!m.settings.eq_enabled),
+            "eq_reset" => Effect::ResetEq,
             "replay_gain" => Effect::SetReplayGain(match m.settings.replay_gain {
                 reborn_core::ReplayGainMode::Off => reborn_core::ReplayGainMode::Track,
                 reborn_core::ReplayGainMode::Track => reborn_core::ReplayGainMode::Album,
@@ -1160,6 +1225,11 @@ impl Ui {
         let key = row.key.clone();
         match m.navigation.modal.clone() {
             Some(Modal::QuickSettings) => {
+                if key == "sleep" {
+                    Self::close_modal(m);
+                    Self::go(m, Screen::Sleep, "");
+                    return Effect::None;
+                }
                 if let Some(name) = key.strip_prefix("confirm:") {
                     if let Some(action) = confirm_action(name) {
                         Self::open_modal(m, Modal::Confirm(action));
@@ -1194,6 +1264,13 @@ impl Ui {
                     .find(|c| key == format!("codec:{}", c.label()));
                 preference
                     .map(Effect::SetCodecPreference)
+                    .unwrap_or(Effect::None)
+            }
+            Some(Modal::EqBand(index)) => {
+                Self::close_modal(m);
+                key.strip_prefix("eq_gain:")
+                    .and_then(|s| s.parse::<i8>().ok())
+                    .map(|gain_db| Effect::SetEqBandGain { index, gain_db })
                     .unwrap_or(Effect::None)
             }
             Some(Modal::Confirm(confirm)) => {
@@ -1424,11 +1501,13 @@ fn route(key: &str) -> Option<Screen> {
         "bluetooth" => Screen::Bluetooth,
         "pc_transfer" => Screen::PcTransfer,
         "audio" => Screen::SettingsAudio,
+        "equalizer" => Screen::Equalizer,
         "playback" => Screen::SettingsPlayback,
         "library" => Screen::SettingsLibrary,
         "display" => Screen::SettingsDisplay,
         "system" => Screen::SettingsSystem,
         "battery" => Screen::Battery,
+        "sleep" => Screen::Sleep,
         "storage" => Screen::Storage,
         "update" => Screen::Update,
         "about" => Screen::About,
@@ -1448,6 +1527,8 @@ fn platform_task(name: &str) -> PlatformTask {
         "update_cancel" => UpdateCancel,
         "update_rollback" => UpdateRollback,
         "export" => Export,
+        "diagnostics_export" => DiagnosticsExport,
+        "sleep" => SleepRequest,
         "storage_benchmark" => StorageBenchmark,
         "library_benchmark" => LibraryBenchmark,
         "network" => NetworkCheck,

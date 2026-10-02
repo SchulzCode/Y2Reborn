@@ -117,6 +117,7 @@ fn model() -> AppModel {
     m.platform.snapshot = client::snapshot(&status(), &caps());
     m.platform.battery = BatteryState {
         percent: Some(72),
+        estimated: true,
         charging: ChargingState::OnBattery,
         level: LowBattery::Normal,
     };
@@ -310,6 +311,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     case!("33-battery-low", at(Screen::Battery, ""), |_, m| {
         m.platform.battery = BatteryState {
             percent: Some(8),
+            estimated: true,
             charging: ChargingState::OnBattery,
             level: LowBattery::Low,
         };
@@ -382,7 +384,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "51-power-off-confirm",
         at(Screen::SettingsSystem, ""),
         |ui, m| {
-            m.navigation.focus = 7;
+            m.navigation.focus = ui
+                .rows(m, &m.library.tracks)
+                .iter()
+                .position(|row| row.key == "confirm:power_off")
+                .unwrap();
             ui.model_action(m, Action::Select);
         }
     );
@@ -395,6 +401,57 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         m.queue.clear();
         m.queue_entry_ids.clear();
         m.playback = PlaybackState::Stopped;
+    });
+
+    case!("54-equalizer", at(Screen::Equalizer, ""), |_, m| {
+        m.settings.eq_enabled = true;
+        m.settings.eq_bands = reborn_core::flat_eq_bands();
+        m.settings.eq_bands[0].gain_db = 2.;
+    });
+    case!("55-equalizer-gain", at(Screen::Equalizer, ""), |_, m| {
+        m.navigation.modal = Some(reborn_core::Modal::EqBand(0));
+        m.navigation.modal_focus = 14;
+    });
+    case!("56-sleep-refused", at(Screen::Sleep, ""), |_, m| {
+        m.platform.snapshot.sleep.phase = reborn_core::platform::SleepPhase::Refused;
+        m.platform.snapshot.sleep.problem =
+            Some(reborn_core::platform::SleepProblem::QualificationPending);
+    });
+    case!("57-sleep-playback", at(Screen::Sleep, ""), |_, m| {
+        m.platform.snapshot.sleep.phase = reborn_core::platform::SleepPhase::Refused;
+        m.platform.snapshot.sleep.problem =
+            Some(reborn_core::platform::SleepProblem::PlaybackActive);
+    });
+    case!("58-sleep-restored", at(Screen::Sleep, ""), |_, m| {
+        m.platform.snapshot.sleep.phase = reborn_core::platform::SleepPhase::Restored;
+        m.platform.snapshot.sleep.same_boot = Some(true);
+        m.platform.snapshot.sleep.wake = reborn_core::platform::WakeReason::Power;
+    });
+    case!("59-ldac-quality", at(Screen::Bluetooth, ""), |ui, m| {
+        use reborn_core::platform::{BluetoothQuality, LdacQuality, SbcQuality};
+        use reborn_core::CodecPreference;
+        ui.bluetooth.codec_choices = vec![
+            CodecPreference::Auto,
+            CodecPreference::Sbc,
+            CodecPreference::Ldac,
+        ];
+        m.platform.snapshot.bluetooth_quality = BluetoothQuality {
+            sbc_supported: true,
+            requested_sbc: Some(SbcQuality::High),
+            effective_sbc: Some(SbcQuality::High),
+            ldac_supported: true,
+            abr_supported: true,
+            requested_quality: Some(LdacQuality::High),
+            effective_quality: Some(LdacQuality::Standard),
+            requested_abr: Some(true),
+            effective_abr: Some(false),
+            pending_restart: true,
+        };
+        m.navigation.focus = ui
+            .rows(m, &m.library.tracks)
+            .iter()
+            .position(|row| row.key == "ldac_quality")
+            .unwrap();
     });
 
     let mut manifest = vec![];

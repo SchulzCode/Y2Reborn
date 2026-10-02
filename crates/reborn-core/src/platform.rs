@@ -9,8 +9,126 @@
 pub struct BatteryState {
     /// Only set when the platform publishes a valid state of charge.
     pub percent: Option<u8>,
+    /// True for voltage-derived SOC; it is not a calibrated fuel gauge.
+    pub estimated: bool,
     pub charging: ChargingState,
     pub level: LowBattery,
+}
+
+/// Deliberate system sleep is independent of display blanking. The platform
+/// owns admission and restoration; Reborn never knows PM register details.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SleepPhase {
+    #[default]
+    Awake,
+    Requested,
+    Refused,
+    Sleeping,
+    Restoring,
+    Restored,
+    RestoreFailed,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SleepProblem {
+    #[default]
+    Other,
+    QualificationPending,
+    ChargerActive,
+    PlaybackActive,
+    Busy,
+    DifferentBoot,
+    RestorationFailed,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum WakeReason {
+    #[default]
+    Unknown,
+    Power,
+    Rtc,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SleepState {
+    pub phase: SleepPhase,
+    pub problem: Option<SleepProblem>,
+    pub wake: WakeReason,
+    pub same_boot: Option<bool>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LdacQuality {
+    Mobile,
+    Standard,
+    High,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SbcQuality {
+    High,
+    Xq,
+    XqPlus,
+}
+impl SbcQuality {
+    pub const fn argument(self) -> &'static str {
+        match self {
+            Self::High => "high",
+            Self::Xq => "xq",
+            Self::XqPlus => "xq+",
+        }
+    }
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::High => "Standard",
+            Self::Xq => "XQ",
+            Self::XqPlus => "XQ+",
+        }
+    }
+    pub const fn next(self) -> Self {
+        match self {
+            Self::High => Self::Xq,
+            Self::Xq => Self::XqPlus,
+            Self::XqPlus => Self::High,
+        }
+    }
+}
+impl LdacQuality {
+    pub const fn argument(self) -> &'static str {
+        match self {
+            Self::Mobile => "mobile",
+            Self::Standard => "standard",
+            Self::High => "high",
+        }
+    }
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Mobile => "Connection · 303/330 kbps",
+            Self::Standard => "Balanced · 606/660 kbps",
+            Self::High => "Quality · 909/990 kbps",
+        }
+    }
+    pub const fn next(self) -> Self {
+        match self {
+            Self::Mobile => Self::Standard,
+            Self::Standard => Self::High,
+            Self::High => Self::Mobile,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct BluetoothQuality {
+    pub sbc_supported: bool,
+    pub requested_sbc: Option<SbcQuality>,
+    pub effective_sbc: Option<SbcQuality>,
+    pub ldac_supported: bool,
+    pub abr_supported: bool,
+    pub requested_quality: Option<LdacQuality>,
+    pub effective_quality: Option<LdacQuality>,
+    pub requested_abr: Option<bool>,
+    pub effective_abr: Option<bool>,
+    pub pending_restart: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -174,6 +292,8 @@ pub struct PlatformSnapshot {
     pub info: PlatformInfo,
     pub storage: StorageState,
     pub usb: UsbTransfer,
+    pub sleep: SleepState,
+    pub bluetooth_quality: BluetoothQuality,
     pub update: UpdateState,
     pub health: HealthLevel,
     /// Capability keys whose platform flag is `enabled`.

@@ -700,12 +700,31 @@ impl Runtime {
                 if self.model.platform.busy.is_some() {
                     return Ok(());
                 }
+                if task == reborn_core::PlatformTask::SleepRequest {
+                    use reborn_core::platform::{SleepPhase, SleepProblem, SleepState};
+                    if matches!(
+                        self.model.playback,
+                        PlaybackState::Playing | PlaybackState::Buffering
+                    ) {
+                        self.model.platform.snapshot.sleep = SleepState {
+                            phase: SleepPhase::Refused,
+                            problem: Some(SleepProblem::PlaybackActive),
+                            ..Default::default()
+                        };
+                        return Ok(());
+                    }
+                    self.checkpoint();
+                }
                 let worker = self.platform.as_ref().ok_or("System service is starting")?;
                 worker
                     .commands
                     .try_send(task)
                     .map_err(|_| "busy: another operation is still running")?;
                 self.model.platform.busy = Some(task);
+                if task == reborn_core::PlatformTask::SleepRequest {
+                    self.model.platform.snapshot.sleep.phase =
+                        reborn_core::platform::SleepPhase::Requested;
+                }
                 if task != reborn_core::PlatformTask::Refresh {
                     self.model.platform.failure = None;
                     self.model.platform.result = None;
@@ -717,10 +736,11 @@ impl Runtime {
                 self.model.playback = PlaybackState::Stopped;
             }
             Effect::SetCodecPreference(preference) => {
-                if self.model.playback != PlaybackState::Stopped
-                    || self.pending_reconfiguration.is_some()
-                {
-                    return Err("Stop playback before codec negotiation".into());
+                if !codec_change_allowed(
+                    self.model.playback,
+                    self.pending_reconfiguration.is_some(),
+                ) {
+                    return Err("Pause music before changing codec".into());
                 }
                 let address = self
                     .bt_state
@@ -1074,6 +1094,35 @@ impl Runtime {
                 }
                 self.checkpoint();
             }
+            Effect::SetEqEnabled(enabled) => {
+                if self.model.settings.eq_bands.is_empty() {
+                    self.model.settings.eq_bands = reborn_core::flat_eq_bands();
+                }
+                self.model.settings.eq_enabled = enabled;
+                self.reload_dsp()?;
+            }
+            Effect::SetEqBandGain { index, gain_db } => {
+                if self.model.settings.eq_bands.is_empty() {
+                    self.model.settings.eq_bands = reborn_core::flat_eq_bands();
+                }
+                let band = self
+                    .model
+                    .settings
+                    .eq_bands
+                    .get_mut(index)
+                    .filter(|_| index < 8)
+                    .ok_or("That equalizer band has changed")?;
+                band.gain_db = f32::from(gain_db.clamp(-12, 12));
+                if self.model.settings.eq_enabled {
+                    self.reload_dsp()?;
+                } else {
+                    self.checkpoint();
+                }
+            }
+            Effect::ResetEq => {
+                self.model.settings.eq_bands = reborn_core::flat_eq_bands();
+                self.reload_dsp()?;
+            }
             Effect::SetBrightness(percent) => {
                 self.model.settings.brightness = percent.clamp(10, 100);
                 if !self.headless {
@@ -1090,6 +1139,7 @@ impl Runtime {
                     ..Default::default()
                 };
                 let reload = self.model.settings.gapless_enabled != defaults.gapless_enabled
+                    || self.model.settings.eq_enabled
                     || self.model.settings.replay_gain != defaults.replay_gain
                     || self.model.settings.crossfade_ms != defaults.crossfade_ms
                     || self.model.settings.repeat != defaults.repeat;
@@ -1267,6 +1317,17 @@ impl Runtime {
         Ok(())
     }
     /// Apply typed replies from the platform client.
+    fn reload_dsp(&mut self) -> Result<(), String> {
+        if matches!(
+            self.model.playback,
+            PlaybackState::Playing | PlaybackState::Buffering
+        ) {
+            self.load()?;
+        }
+        self.checkpoint();
+        Ok(())
+    }
+
     fn poll_platform(&mut self) {
         let Some(worker) = &self.platform else {
             return;
@@ -1277,6 +1338,21 @@ impl Runtime {
         let mut refresh = false;
         let p = &mut self.model.platform;
         match reply {
+            client::Reply::Sleep(result) => {
+                p.busy = None;
+                match result {
+                    Ok(state) => {
+                        p.snapshot.sleep = state;
+                        p.failure = None;
+                    }
+                    Err(error) => {
+                        p.snapshot.sleep.phase = reborn_core::platform::SleepPhase::Refused;
+                        p.snapshot.sleep.problem = Some(reborn_core::platform::SleepProblem::Other);
+                        p.failure = Some(error.clone());
+                        self.ui.flash(error);
+                    }
+                }
+            }
             client::Reply::Snapshot(snapshot) => {
                 self.platform_refresh_pending = false;
                 let health = p.snapshot.health;
@@ -1300,11 +1376,30 @@ impl Runtime {
                 refresh = true;
                 match result {
                     Ok(result) => {
+                        if !result.succeeded {
+                            p.failure =
+                                Some("The operation did not finish. See Latest Result.".into());
+                            p.result = Some(result);
+                            self.ui
+                                .flash("The operation did not finish. See Latest Result.");
+                            self.dirty.mark_render();
+                            return;
+                        }
                         p.failure = None;
                         p.result = Some(result);
                         match task {
                             UpdateCheck | UpdateStage | UpdateCancel => {}
                             Export => self.ui.flash("Player data exported"),
+                            LdacQuality(_) | LdacAbr(_) | SbcQuality(_) => {
+                                self.ui.flash("Quality saved. Restart the player to apply.")
+                            }
+                            DiagnosticsExport => {
+                                self.ui.flash("Diagnostic report saved. See Latest Result.");
+                                self.model.screen = reborn_core::Screen::DiagnosticSection;
+                                self.model.navigation.filter = "result".into();
+                                self.model.navigation.focus = 0;
+                                self.model.navigation.scroll = 0;
+                            }
                             _ => self.ui.flash("Check finished. See Latest Result."),
                         }
                     }
@@ -1646,6 +1741,8 @@ fn platform_backed(screen: Screen) -> bool {
             | Screen::PcTransfer
             | Screen::SettingsLibrary
             | Screen::SettingsSystem
+            | Screen::Sleep
+            | Screen::Bluetooth
             | Screen::Storage
             | Screen::Update
             | Screen::About
@@ -1654,15 +1751,25 @@ fn platform_backed(screen: Screen) -> bool {
     )
 }
 
+fn codec_change_allowed(playback: PlaybackState, reconfiguring: bool) -> bool {
+    // Pause releases the sink; the platform's PCM lease still authoritatively
+    // refuses a switch while the asynchronous release is finishing.
+    !reconfiguring && matches!(playback, PlaybackState::Stopped | PlaybackState::Paused)
+}
+
 /// Observation cadence while such a screen is visible. A cable plug should
 /// appear promptly on PC Transfer; other pages change rarely.
 fn platform_refresh_interval(screen: Screen) -> Duration {
-    Duration::from_secs(if screen == Screen::PcTransfer { 4 } else { 15 })
+    Duration::from_secs(if matches!(screen, Screen::PcTransfer | Screen::Sleep) {
+        4
+    } else {
+        15
+    })
 }
 
 fn friendly_error(error: &str) -> String {
     let lower = error.to_ascii_lowercase();
-    if lower.contains("connect bluetooth") || lower.contains("stop playback") {
+    if lower.contains("connect bluetooth") || lower.contains("pause music") {
         // Already user language.
         return error.to_owned();
     }
@@ -2415,10 +2522,11 @@ fn run() -> Result<(), String> {
                     address,
                     preference,
                 } => {
-                    if rt.model.playback != PlaybackState::Stopped
-                        || rt.pending_reconfiguration.is_some()
-                    {
-                        Err("Stop playback before codec negotiation".into())
+                    if !codec_change_allowed(
+                        rt.model.playback,
+                        rt.pending_reconfiguration.is_some(),
+                    ) {
+                        Err("Pause music before changing codec".into())
                     } else {
                         rt.bluetooth
                             .as_ref()
@@ -3384,5 +3492,24 @@ mod loop_interval_tests {
         assert_eq!(main_loop_interval(false), Duration::from_millis(15));
         assert_eq!(main_loop_interval(true), Duration::from_millis(50));
         assert!(main_loop_interval(true) < Duration::from_millis(100));
+    }
+}
+
+#[cfg(test)]
+mod feature_product_tests {
+    use super::*;
+    #[test]
+    fn paused_player_can_change_codec_without_a_hidden_stop_action() {
+        for state in [PlaybackState::Stopped, PlaybackState::Paused] {
+            assert!(codec_change_allowed(state, false));
+            assert!(!codec_change_allowed(state, true));
+        }
+        for state in [
+            PlaybackState::Playing,
+            PlaybackState::Buffering,
+            PlaybackState::Error,
+        ] {
+            assert!(!codec_change_allowed(state, false));
+        }
     }
 }

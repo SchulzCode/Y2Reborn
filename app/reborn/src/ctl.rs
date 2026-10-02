@@ -38,7 +38,11 @@ fn command(a: &[String]) -> Result<Command, String> {
                 Some("aptX") => reborn_core::CodecPreference::Aptx,
                 Some("aptX-HD") => reborn_core::CodecPreference::AptxHd,
                 Some("LDAC") => reborn_core::CodecPreference::Ldac,
-                _ => return Err("Use bluetooth codec Auto|SBC ADDRESS".into()),
+                _ => {
+                    return Err(
+                        "Use bluetooth codec Auto|SBC|SBC-XQ|AAC|aptX|aptX-HD|LDAC ADDRESS".into(),
+                    )
+                }
             };
             return Ok(Command::BluetoothCodec {
                 address: a.get(3).ok_or("Bluetooth address required")?.clone(),
@@ -71,7 +75,7 @@ fn command(a: &[String]) -> Result<Command, String> {
 fn run() -> Result<i32, String> {
     let args = std::env::args().skip(1).collect::<Vec<_>>();
     if args.iter().any(|s| s == "--help") {
-        io::stdout().write_all(b"rebornctl status|audio|health|metrics|snapshot|logs|events|log-level|diagnose|test|scan|input|play|pause|resume|stop|seek|output [--json] [--socket PATH]\nrebornctl wifi|bluetooth scan|on|off [--json]\nrebornctl bluetooth codec Auto|SBC ADDRESS (playback must be stopped)\nRadio scan enables that radio and reports progress through status.\n").map_err(|e|e.to_string())?;
+        io::stdout().write_all(b"rebornctl status|audio|health|metrics|snapshot|logs|events|log-level|diagnose|test|scan|input|play|pause|resume|stop|seek|output [--json] [--socket PATH]\nrebornctl wifi|bluetooth scan|on|off [--json]\nrebornctl bluetooth codec Auto|SBC|SBC-XQ|AAC|aptX|aptX-HD|LDAC ADDRESS (pause playback first)\nRadio scan enables that radio and reports progress through status.\n").map_err(|e|e.to_string())?;
         return Ok(0);
     }
     let path = PathBuf::from(arg(&args, "--socket").unwrap_or("/run/reborn/control.sock"));
@@ -143,6 +147,28 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn every_classic_codec_uses_the_typed_preference_command() {
+        for codec in ["Auto", "SBC", "SBC-XQ", "AAC", "aptX", "aptX-HD", "LDAC"] {
+            let cmd = command(&[
+                "bluetooth".into(),
+                "codec".into(),
+                codec.into(),
+                "11:22:33:44:55:66".into(),
+            ])
+            .unwrap();
+            let value = serde_json::to_value(cmd).unwrap();
+            assert_eq!(value["op"], "bluetooth_codec");
+            assert_eq!(value["preference"], codec);
+        }
+        assert!(command(&[
+            "bluetooth".into(),
+            "codec".into(),
+            "aptX-Adaptive".into(),
+            "11:22:33:44:55:66".into()
+        ])
+        .is_err());
+    }
     #[test]
     fn radio_commands_use_worker_protocol() {
         for name in ["wifi", "bluetooth"] {
