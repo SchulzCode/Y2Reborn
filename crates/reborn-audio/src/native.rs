@@ -596,6 +596,51 @@ mod format_tests {
     }
 
     #[test]
+    fn s32_alsa_contract_and_observed_bluetooth_plan_preserve_the_container() {
+        assert_eq!(format_contract(2).unwrap(), PcmFormat::S32LE);
+        let directory = std::env::temp_dir().join(format!("reborn-s32-{}", std::process::id()));
+        let log = Observer::new(&directory).unwrap();
+        let (spec, params) = AlsaSink::plan_named(
+            "null",
+            AudioOutput::Bluetooth("01:02:03:04:05:06".into()),
+            96_000,
+            false,
+            PcmFormat::S32LE,
+            true,
+            None,
+            log.clone(),
+            1,
+        )
+        .unwrap();
+        assert_eq!(spec.format, PcmFormat::S32LE);
+        assert_eq!(
+            (spec.valid_bits, spec.physical_bits, spec.rate),
+            (32, 32, 96_000)
+        );
+        assert!(!params.fallback);
+        let mut sink = AlsaSink::open_named(
+            "null",
+            96_000,
+            PcmFormat::S32LE,
+            false,
+            Some(&spec),
+            log.clone(),
+            1,
+        )
+        .unwrap();
+        // Low bits are deliberately nonzero; this exercises the same ALSA
+        // frame contract used by real sinks, without claiming DAC capture.
+        let frames: Vec<u8> = [256_i32, -256, 512, -512]
+            .into_iter()
+            .flat_map(i32::to_le_bytes)
+            .collect();
+        assert_eq!(sink.write(&frames).unwrap(), 2);
+        drop(sink);
+        drop(log);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
     fn unknown_native_format_is_rejected() {
         assert!(format(4).is_err());
         assert!(format_contract(4).is_err());

@@ -76,6 +76,7 @@ fn app(screen: Screen) -> AppModel {
     m.platform.snapshot = snapshot();
     m.platform.battery = BatteryState {
         percent: Some(72),
+        estimated: true,
         charging: ChargingState::Charging,
         level: LowBattery::Normal,
     };
@@ -172,7 +173,7 @@ fn visible_text(ui: &Ui, m: &AppModel) -> String {
     text
 }
 
-const NORMAL_SCREENS: [Screen; 22] = [
+const NORMAL_SCREENS: [Screen; 24] = [
     Screen::Home,
     Screen::Music,
     Screen::Albums,
@@ -187,11 +188,13 @@ const NORMAL_SCREENS: [Screen; 22] = [
     Screen::Bluetooth,
     Screen::PcTransfer,
     Screen::SettingsAudio,
+    Screen::Equalizer,
     Screen::SettingsPlayback,
     Screen::SettingsLibrary,
     Screen::SettingsDisplay,
     Screen::SettingsSystem,
     Screen::Battery,
+    Screen::Sleep,
     Screen::Storage,
     Screen::Update,
     Screen::About,
@@ -906,4 +909,173 @@ fn only_preferences_and_session_survive_serialization() {
     assert!(restored.platform.busy.is_none());
     assert_eq!(restored.playback, PlaybackState::Paused);
     let _ = PathBuf::new();
+}
+
+#[test]
+fn equalizer_edits_one_db_per_detent_and_only_applies_on_select() {
+    let mut ui = radios();
+    let mut m = app(Screen::Equalizer);
+    let rows = ui.rows(&m, &m.library.tracks);
+    assert_eq!(rows.len(), 7);
+    assert_eq!(
+        ui.model_action(&mut m, Action::Select),
+        Effect::SetEqEnabled(true)
+    );
+    m.navigation.focus = 1;
+    assert_eq!(ui.model_action(&mut m, Action::Select), Effect::None);
+    assert_eq!(m.navigation.modal, Some(Modal::EqBand(0)));
+    assert_eq!(m.navigation.modal_focus, 12);
+    assert_eq!(
+        ui.model_action(&mut m, Action::WheelClockwise(8)),
+        Effect::None
+    );
+    assert_eq!(m.navigation.modal_focus, 13);
+    assert_eq!(
+        ui.model_action(&mut m, Action::WheelCounterClockwise(8)),
+        Effect::None
+    );
+    assert_eq!(m.navigation.modal_focus, 12);
+    assert!(
+        m.settings.eq_bands.is_empty(),
+        "preview must not alter DSP or persisted state"
+    );
+    assert_eq!(
+        ui.model_action(&mut m, Action::Select),
+        Effect::SetEqBandGain {
+            index: 0,
+            gain_db: 0
+        }
+    );
+    assert_eq!(m.navigation.modal, None);
+    ui.model_action(&mut m, Action::Select);
+    for _ in 0..40 {
+        ui.model_action(&mut m, Action::WheelClockwise(5));
+    }
+    assert_eq!(m.navigation.modal_focus, 24);
+    let quads = ui.draw(&m, &m.library.tracks, false);
+    assert_eq!(focus_target_count(&quads), 1);
+    for q in quads {
+        assert!(q.y >= 0. && q.y + q.h <= 360., "EQ modal overflow: {q:?}");
+    }
+    ui.model_action(&mut m, Action::Back);
+    assert_eq!(m.navigation.modal, None);
+    assert!(m.settings.eq_bands.is_empty());
+}
+
+#[test]
+fn sleep_and_screen_off_are_distinct_product_actions_with_recoverable_refusal() {
+    use reborn_core::platform::{SleepPhase, SleepProblem};
+    let mut ui = radios();
+    let mut m = app(Screen::Sleep);
+    assert_eq!(
+        ui.model_action(&mut m, Action::Select),
+        Effect::Platform(PlatformTask::SleepRequest)
+    );
+    m.platform.snapshot.sleep.phase = SleepPhase::Refused;
+    for (problem, wording) in [
+        (SleepProblem::QualificationPending, "system update"),
+        (SleepProblem::ChargerActive, "Disconnect the charger"),
+        (SleepProblem::PlaybackActive, "Pause music"),
+    ] {
+        m.platform.snapshot.sleep.problem = Some(problem);
+        assert!(visible_text(&ui, &m).contains(wording));
+    }
+    m.navigation.focus = 1;
+    assert_eq!(ui.model_action(&mut m, Action::Select), Effect::ScreenSleep);
+    m.platform.snapshot.sleep.phase = SleepPhase::RestoreFailed;
+    assert!(visible_text(&ui, &m).contains("Wake Needs Attention"));
+    assert!(ui
+        .rows(&m, &m.library.tracks)
+        .iter()
+        .any(|r| r.key == "confirm:power_off"));
+}
+
+#[test]
+fn diagnostic_export_is_distinct_from_private_backup_and_soc_is_labelled() {
+    let mut ui = radios();
+    let mut m = app(Screen::Diagnostics);
+    let rows = ui.rows(&m, &m.library.tracks);
+    let index = rows
+        .iter()
+        .position(|r| r.key == "task:diagnostics_export")
+        .unwrap();
+    assert!(rows[index].secondary.contains("Redacted"));
+    assert!(rows
+        .iter()
+        .any(|r| r.key == "task:export" && r.secondary.contains("Private")));
+    m.navigation.focus = index;
+    assert_eq!(
+        ui.model_action(&mut m, Action::Select),
+        Effect::Platform(PlatformTask::DiagnosticsExport)
+    );
+    ui.show_operation_result(&mut m);
+    assert_eq!(m.screen, Screen::DiagnosticSection);
+    assert_eq!(m.navigation.filter, "result");
+    ui.model_action(&mut m, Action::Back);
+    assert_eq!(m.screen, Screen::Diagnostics);
+    assert_eq!(m.navigation.focus, index);
+    m.screen = Screen::Battery;
+    assert!(visible_text(&ui, &m).contains("Estimated Charge"));
+    m.platform.battery.estimated = false;
+    assert!(!visible_text(&ui, &m).contains("Estimated"));
+}
+
+#[test]
+fn ldac_controls_need_real_runtime_support_and_preference_is_not_actual() {
+    use reborn_core::platform::{BluetoothQuality, LdacQuality};
+    let mut ui = radios();
+    let mut m = app(Screen::Bluetooth);
+    m.settings.codec_preference = CodecPreference::Ldac;
+    ui.bluetooth.codec_choices = vec![CodecPreference::Sbc, CodecPreference::Ldac];
+    assert!(!ui
+        .rows(&m, &m.library.tracks)
+        .iter()
+        .any(|r| r.key == "ldac_quality"));
+    m.platform.snapshot.bluetooth_quality = BluetoothQuality {
+        ldac_supported: true,
+        abr_supported: true,
+        requested_quality: Some(LdacQuality::High),
+        effective_quality: Some(LdacQuality::Standard),
+        requested_abr: Some(true),
+        effective_abr: Some(false),
+        pending_restart: true,
+        ..Default::default()
+    };
+    let rows = ui.rows(&m, &m.library.tracks);
+    assert!(rows
+        .iter()
+        .any(|r| r.key == "codec_preference" && r.secondary == "LDAC"));
+    assert!(visible_text(&ui, &m).contains("Restart the player"));
+    m.navigation.focus = rows.iter().position(|r| r.key == "ldac_quality").unwrap();
+    assert_eq!(
+        ui.model_action(&mut m, Action::Select),
+        Effect::Platform(PlatformTask::LdacQuality(LdacQuality::Mobile))
+    );
+    m.navigation.focus = rows.iter().position(|r| r.key == "ldac_abr").unwrap();
+    assert_eq!(
+        ui.model_action(&mut m, Action::Select),
+        Effect::Platform(PlatformTask::LdacAbr(false))
+    );
+}
+
+#[test]
+fn sbc_only_peer_can_enable_xq_without_a_hidden_codec_picker() {
+    use reborn_core::platform::{BluetoothQuality, SbcQuality};
+    let mut ui = radios();
+    let mut m = app(Screen::Bluetooth);
+    ui.bluetooth.codec_choices.clear();
+    ui.bluetooth.sbc_quality_available = true;
+    m.platform.snapshot.bluetooth_quality = BluetoothQuality {
+        sbc_supported: true,
+        requested_sbc: Some(SbcQuality::High),
+        ..Default::default()
+    };
+    assert!(!ui
+        .rows(&m, &m.library.tracks)
+        .iter()
+        .any(|r| r.key == "codec_preference"));
+    assert_eq!(
+        select_key(&mut ui, &mut m, "sbc_quality"),
+        Effect::Platform(PlatformTask::SbcQuality(SbcQuality::Xq))
+    );
 }

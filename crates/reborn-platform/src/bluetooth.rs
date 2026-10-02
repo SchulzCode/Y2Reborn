@@ -108,10 +108,17 @@ impl Status {
         .filter(|(name, _)| usable(name))
         .map(|(_, preference)| preference)
         .collect();
+        if crate::codecs::experimental_xq_enabled() && usable("SBC") {
+            choices.insert(1, CodecPreference::SbcXq);
+        }
         if choices.len() < 2 {
             return vec![];
         }
-        if policy.eligibility.values().any(|e| e.auto_eligible) {
+        if policy
+            .eligibility
+            .values()
+            .any(|e| e.auto_eligible || e.experimental_eligible)
+        {
             choices.insert(0, CodecPreference::Auto);
         }
         choices
@@ -594,65 +601,8 @@ fn pcm_lease_at(directory: &std::path::Path) -> Result<Option<std::fs::File>, St
 fn dbus_error(e: dbus::Error) -> String {
     format!("D-Bus org.bluez: {}", e.name().unwrap_or("unknown"))
 }
-fn codec_request(
-    c: &Connection,
-    current: &Status,
-    address: &str,
-    preference: reborn_core::CodecPreference,
-) -> Result<crate::codecs::Session, String> {
-    use dbus::arg::Variant;
-    use std::io::Read;
-    let pcm = current.playback_pcm(address)?;
-    if pcm.running != Some(false) || pcm.transport_generation == 0 {
-        return Err("Release the Bluetooth PCM before codec selection".into());
-    }
-    let owner = current
-        .bluealsa_owner
-        .as_deref()
-        .ok_or("BlueALSA owner missing")?;
-    let bluez = current
-        .bluez_owner
-        .as_deref()
-        .ok_or("BlueZ owner missing")?;
-    let mut bytes = Vec::new();
-    let inventory_path = "/etc/y2linux/bluetooth-codecs.json";
-    // An exclusive PCM lease excludes probes and live/paused app sink handles.
-    use std::os::unix::fs::OpenOptionsExt;
-    let pcm_lock = std::fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .mode(0o600)
-        .custom_flags(libc::O_NOFOLLOW)
-        .open("/run/y2/bt-pcm.lock")
-        .map_err(|e| e.to_string())?;
-    pcm_lock
-        .try_lock()
-        .map_err(|_| "Bluetooth PCM still open; stop playback and retry")?;
-    std::fs::File::open(inventory_path)
-        .map_err(|e| e.to_string())?
-        .take(65537)
-        .read_to_end(&mut bytes)
-        .map_err(|e| e.to_string())?;
-    if bytes.len() > 65536 {
-        return Err("codec inventory too large".into());
-    }
-    let inventory: crate::codecs::Inventory =
-        serde_json::from_slice(&bytes).map_err(|_| "invalid platform codec inventory")?;
-    let manager = c.with_proxy(owner, "/org/bluealsa", Duration::from_secs(1));
-    let runtime: Vec<String> = manager
-        .get("org.bluealsa.Manager1", "Codecs")
-        .map_err(dbus_error)?;
-    let runtime: Vec<String> = runtime
-        .iter()
-        .filter_map(|s| s.strip_prefix("a2dp-source:").map(str::to_string))
-        .collect();
-    let proxy = c.with_proxy(owner, pcm.object.as_str(), Duration::from_secs(2));
-    let (mutual,): (HashMap<String, PropMap>,) = proxy
-        .method_call("org.bluealsa.PCM1", "GetCodecs", ())
-        .map_err(dbus_error)?;
-    // Restrict source PCM to the implemented stereo 44.1/48-kHz sink path.
-    let compatible: Vec<String> = mutual
+fn compatible_codecs(mutual: &HashMap<String, PropMap>) -> Vec<String> {
+    mutual
         .iter()
         .filter_map(|(name, p)| {
             let stereo = p
@@ -667,7 +617,154 @@ fn codec_request(
                 });
             (stereo && rate).then(|| name.clone())
         })
+        .collect()
+}
+
+fn read_codec_inventory(path: &Path) -> Result<crate::codecs::Inventory, String> {
+    use std::io::Read;
+    let mut bytes = Vec::new();
+    std::fs::File::open(path)
+        .map_err(|e| e.to_string())?
+        .take(65537)
+        .read_to_end(&mut bytes)
+        .map_err(|e| e.to_string())?;
+    if bytes.len() > 65536 {
+        return Err("codec inventory too large".into());
+    }
+    serde_json::from_slice(&bytes).map_err(|_| "invalid platform codec inventory".into())
+}
+
+/// Eligibility discovery is observation only. It neither acquires the PCM nor
+/// invokes SelectCodec/Connect, and can run while a current stream is playing.
+fn discover_codec_policy(
+    c: &Connection,
+    current: &Status,
+    inventory_path: &Path,
+    experimental: bool,
+) -> Result<crate::codecs::Session, String> {
+    let mut peers = current.devices.iter().filter(|d| d.connected && d.audio);
+    let device = peers.next().ok_or("no connected audio peer")?;
+    if peers.next().is_some() {
+        return Err("ambiguous connected audio peers".into());
+    }
+    let pcm = current.playback_pcm(&device.address)?;
+    if pcm.transport_generation == 0 {
+        return Err("unobserved transport epoch".into());
+    }
+    let owner = current
+        .bluealsa_owner
+        .as_deref()
+        .ok_or("BlueALSA owner missing")?;
+    let bluez = current
+        .bluez_owner
+        .as_deref()
+        .ok_or("BlueZ owner missing")?;
+    let inventory = read_codec_inventory(inventory_path)?;
+    let manager = c.with_proxy(owner, "/org/bluealsa", Duration::from_millis(350));
+    let runtime: Vec<String> = manager
+        .get("org.bluealsa.Manager1", "Codecs")
+        .map_err(dbus_error)?;
+    let runtime: Vec<String> = runtime
+        .into_iter()
+        .filter_map(|name| name.strip_prefix("a2dp-source:").map(str::to_owned))
         .collect();
+    let proxy = c.with_proxy(owner, pcm.object.as_str(), Duration::from_millis(350));
+    let (mutual,): (HashMap<String, PropMap>,) = proxy
+        .method_call("org.bluealsa.PCM1", "GetCodecs", ())
+        .map_err(dbus_error)?;
+    let observed: PropMap = proxy.get_all("org.bluealsa.PCM1").map_err(dbus_error)?;
+    if name_owner(c, "org.bluealsa").as_deref() != Some(owner)
+        || name_owner(c, "org.bluez").as_deref() != Some(bluez)
+        || text(&observed, "Device") != pcm.device
+        || text(&observed, "Transport") != pcm.transport
+        || text(&observed, "Mode") != pcm.mode
+        || text(&observed, "Codec") != pcm.codec.as_deref().unwrap_or("")
+        || observed.get("Rate").and_then(|v| v.0.as_u64()) != pcm.rate.map(u64::from)
+        || observed.get("Format").and_then(|v| v.0.as_u64()) != pcm.format.map(u64::from)
+    {
+        return Err("codec capability observation changed".into());
+    }
+    let mut session = crate::codecs::Session::new_experimental(
+        pcm.transport_generation,
+        CodecPreference::Sbc,
+        &inventory,
+        &runtime,
+        &compatible_codecs(&mutual),
+        experimental,
+    );
+    session.state = "ObservedCapabilities".into();
+    Ok(session)
+}
+
+fn refresh_codec_policy(
+    previous: Option<&crate::codecs::Session>,
+    current: &Status,
+    discover: impl FnOnce() -> Result<crate::codecs::Session, String>,
+) -> Option<crate::codecs::Session> {
+    let peers: Vec<_> = current
+        .devices
+        .iter()
+        .filter(|d| d.connected && d.audio)
+        .collect();
+    if peers.len() != 1 {
+        return None;
+    }
+    let pcm = current.playback_pcm(&peers[0].address).ok()?;
+    if let Some(previous) =
+        previous.filter(|p| p.generation == pcm.transport_generation && p.generation != 0)
+    {
+        return Some(previous.clone());
+    }
+    discover().ok()
+}
+
+fn codec_request(
+    c: &Connection,
+    current: &Status,
+    address: &str,
+    preference: reborn_core::CodecPreference,
+) -> Result<crate::codecs::Session, String> {
+    use dbus::arg::Variant;
+    let pcm = current.playback_pcm(address)?;
+    if pcm.running != Some(false) || pcm.transport_generation == 0 {
+        return Err("Release the Bluetooth PCM before codec selection".into());
+    }
+    let owner = current
+        .bluealsa_owner
+        .as_deref()
+        .ok_or("BlueALSA owner missing")?;
+    let bluez = current
+        .bluez_owner
+        .as_deref()
+        .ok_or("BlueZ owner missing")?;
+    let inventory_path = "/etc/y2linux/bluetooth-codecs.json";
+    // An exclusive PCM lease excludes probes and live/paused app sink handles.
+    use std::os::unix::fs::OpenOptionsExt;
+    let pcm_lock = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open("/run/y2/bt-pcm.lock")
+        .map_err(|e| e.to_string())?;
+    pcm_lock
+        .try_lock()
+        .map_err(|_| "Bluetooth PCM still open; stop playback and retry")?;
+    let inventory = read_codec_inventory(Path::new(inventory_path))?;
+    let manager = c.with_proxy(owner, "/org/bluealsa", Duration::from_secs(1));
+    let runtime: Vec<String> = manager
+        .get("org.bluealsa.Manager1", "Codecs")
+        .map_err(dbus_error)?;
+    let runtime: Vec<String> = runtime
+        .iter()
+        .filter_map(|s| s.strip_prefix("a2dp-source:").map(str::to_string))
+        .collect();
+    let proxy = c.with_proxy(owner, pcm.object.as_str(), Duration::from_secs(2));
+    let (mutual,): (HashMap<String, PropMap>,) = proxy
+        .method_call("org.bluealsa.PCM1", "GetCodecs", ())
+        .map_err(dbus_error)?;
+    let compatible = compatible_codecs(&mutual);
     let mut session = crate::codecs::Session::new_experimental(
         pcm.transport_generation,
         preference,
@@ -676,6 +773,8 @@ fn codec_request(
         &compatible,
         crate::codecs::experimental_enabled(),
     );
+    session.apply_context(crate::codecs::context(address, pcm.codec.as_deref()));
+    crate::codecs::history(address, pcm.codec.as_deref(), None);
     let sequence: u32 = proxy
         .get("org.bluealsa.PCM1", "Sequence")
         .map_err(dbus_error)?;
@@ -761,6 +860,7 @@ fn codec_request(
                     )) =>
             {
                 let _ = std::fs::remove_file(marker);
+                crate::codecs::history(address, None, Some(&codec));
             }
             Err(_) => {
                 session.fail("codec_completion_unknown_no_retry");
@@ -1113,9 +1213,8 @@ impl Bluetooth {
                                         daemon_invalidated.swap(false, Ordering::AcqRel),
                                     );
                                     adapter = a;
-                                    s.codec_policy = current.codec_policy.clone().map(|mut p| {
-                                        if !s.pcms.iter().any(|pcm| pcm.transport_generation == p.generation) { p.state="TransportChanged".into(); }
-                                        p
+                                    s.codec_policy = refresh_codec_policy(current.codec_policy.as_ref(), &s, || {
+                                        discover_codec_policy(&c, &s, Path::new("/etc/y2linux/bluetooth-codecs.json"), crate::codecs::experimental_enabled())
                                     });
                                     s.scan = current.scan.clone();
                                     s.error = operation_error.clone();
@@ -1404,6 +1503,162 @@ pub fn scan_test(seconds: u64) -> Result<serde_json::Value, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fresh_codec_choices_are_read_only_epoch_bound_and_do_not_need_a_request() {
+        use dbus::{arg::Variant, channel::Channel};
+        use std::io::{BufRead, BufReader};
+        use std::process::{Command as Process, Stdio};
+        let mut bus = Process::new("dbus-daemon")
+            .args(["--session", "--nofork", "--nopidfile", "--print-address=1"])
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let mut address = String::new();
+        BufReader::new(bus.stdout.take().unwrap())
+            .read_line(&mut address)
+            .unwrap();
+        let connect = || {
+            let mut channel = Channel::open_private(address.trim()).unwrap();
+            channel.register().unwrap();
+            Connection::from(channel)
+        };
+        let server = connect();
+        for name in ["org.bluez", "org.bluealsa"] {
+            server.request_name(name, false, true, false).unwrap();
+        }
+        let owner = server.unique_name().to_string();
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let received = calls.clone();
+        server.start_receive(
+            MatchRule::new_method_call(),
+            Box::new(move |msg, conn| {
+                let method = msg.member().unwrap().to_string();
+                received.lock().unwrap().push(method.clone());
+                let reply = match method.as_str() {
+                    "Get" => {
+                        let (interface, property): (String, String) = msg.read2().unwrap();
+                        assert_eq!(
+                            (interface.as_str(), property.as_str()),
+                            ("org.bluealsa.Manager1", "Codecs")
+                        );
+                        msg.method_return().append1(Variant(vec![
+                            "a2dp-source:SBC".to_owned(),
+                            "a2dp-source:AAC".to_owned(),
+                            "a2dp-source:LDAC".to_owned(),
+                        ]))
+                    }
+                    "GetCodecs" => {
+                        let mut codecs = HashMap::<String, PropMap>::new();
+                        for name in ["SBC", "AAC"] {
+                            let mut props = PropMap::new();
+                            props.insert("Channels".into(), Variant(Box::new(vec![2_u8])));
+                            props.insert("Rates".into(), Variant(Box::new(vec![44100_u32, 48000])));
+                            codecs.insert(name.into(), props);
+                        }
+                        msg.method_return().append1(codecs)
+                    }
+                    "GetAll" => {
+                        let mut props = PropMap::new();
+                        for (key, value) in [
+                            ("Device", "/org/bluez/hci0/dev_01_02_03_04_05_06"),
+                            ("Transport", "A2DP-source"),
+                            ("Mode", "sink"),
+                            ("Codec", "SBC"),
+                        ] {
+                            props.insert(key.into(), Variant(Box::new(value.to_owned())));
+                        }
+                        props.insert("Rate".into(), Variant(Box::new(44100_u32)));
+                        props.insert("Format".into(), Variant(Box::new(0x8210_u16)));
+                        msg.method_return().append1(props)
+                    }
+                    _ => panic!("eligibility discovery must never mutate radio: {method}"),
+                };
+                conn.send(reply).unwrap();
+                true
+            }),
+        );
+        let quit = Arc::new(AtomicBool::new(false));
+        let ending = quit.clone();
+        let thread = thread::spawn(move || {
+            while !ending.load(Ordering::Relaxed) {
+                server.process(Duration::from_millis(10)).unwrap();
+            }
+        });
+        let directory = std::env::temp_dir().join(format!("reborn-codec-discovery-{}", bus.id()));
+        std::fs::create_dir_all(&directory).unwrap();
+        let inventory = directory.join("inventory.json");
+        std::fs::write(&inventory, serde_json::to_vec(&json!({"schema":1,"codecs":{
+            "SBC":{"compiled_locally":true,"distribution_approved":true,"platform_qualified":false},
+            "AAC":{"compiled_locally":true,"distribution_approved":false,"platform_qualified":false,"owner_private_experiment":true},
+            "LDAC":{"compiled_locally":true,"distribution_approved":false,"platform_qualified":false,"owner_private_experiment":true}
+        }})).unwrap()).unwrap();
+        let mut current = Status {
+            available: true,
+            powered: true,
+            bluealsa: true,
+            bluez_owner: Some(owner.clone()),
+            bluealsa_owner: Some(owner),
+            devices: vec![Device {
+                path: "/org/bluez/hci0/dev_01_02_03_04_05_06".into(),
+                address: "01:02:03:04:05:06".into(),
+                connected: true,
+                audio: true,
+                ..Default::default()
+            }],
+            pcms: vec![BluetoothPcm {
+                object: "/org/bluealsa/hci0/dev_01_02_03_04_05_06/a2dp".into(),
+                device: "/org/bluez/hci0/dev_01_02_03_04_05_06".into(),
+                transport: "A2DP-source".into(),
+                mode: "sink".into(),
+                codec: Some("SBC".into()),
+                rate: Some(44100),
+                format: Some(0x8210),
+                channels: Some(2),
+                running: Some(true),
+                transport_generation: 17,
+            }],
+            ..Default::default()
+        };
+        let client = connect();
+        current.codec_policy = refresh_codec_policy(None, &current, || {
+            discover_codec_policy(&client, &current, &inventory, true)
+        });
+        assert_eq!(
+            current.codec_choices(),
+            vec![
+                CodecPreference::Auto,
+                CodecPreference::Sbc,
+                CodecPreference::Aac
+            ]
+        );
+        let policy = current.codec_policy.as_ref().unwrap();
+        assert!(
+            policy.requested.is_none() && policy.selected.is_none() && policy.visited.is_empty()
+        );
+        assert_eq!(policy.state, "ObservedCapabilities");
+        assert_eq!(*calls.lock().unwrap(), vec!["Get", "GetCodecs", "GetAll"]);
+        assert!(refresh_codec_policy(Some(policy), &current, || panic!(
+            "unchanged epoch is cached"
+        ))
+        .is_some());
+        let previous = current.codec_policy.clone();
+        current.pcms[0].transport_generation += 1;
+        assert!(
+            refresh_codec_policy(previous.as_ref(), &current, || Err("peer changed".into()))
+                .is_none()
+        );
+        current.devices[0].connected = false;
+        assert!(refresh_codec_policy(previous.as_ref(), &current, || panic!(
+            "disconnected peer must not be queried"
+        ))
+        .is_none());
+        quit.store(true, Ordering::Relaxed);
+        thread.join().unwrap();
+        bus.kill().unwrap();
+        bus.wait().unwrap();
+        std::fs::remove_dir_all(directory).unwrap();
+    }
 
     #[test]
     fn codec_rows_only_offer_policy_enabled_codecs_the_peer_supports() {
@@ -2066,7 +2321,19 @@ mod pcm_lease_tests {
         drop(exclusive);
         assert!(super::pcm_lease_at(&dir).is_err());
         std::fs::remove_file(dir.join("bt-codec-uncertain.json")).unwrap();
-        assert!(super::pcm_lease_at(&dir).is_ok());
+        // The exclusive descriptor can be inherited across the same concurrent
+        // fork interval. Require its real release within the same bounded wait.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        loop {
+            if super::pcm_lease_at(&dir).is_ok() {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "exclusive lease not released"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
         std::fs::remove_dir_all(dir).unwrap();
     }
 }

@@ -54,6 +54,12 @@ pub fn root(m: &AppModel) -> Vec<Item> {
             .map(|(id, label)| Item::new(*label, format!("diag:{id}"))),
     );
     rows.extend([
+        action(
+            "Export Diagnostic Report",
+            "task:diagnostics_export",
+            "Redacted report for sharing",
+            idle,
+        ),
         action("Network Check", "task:network", "Read-only readiness", idle),
         action(
             "Storage Benchmark",
@@ -70,7 +76,7 @@ pub fn root(m: &AppModel) -> Vec<Item> {
         action(
             "Export Player Data",
             "task:export",
-            "Settings, queue and library for USB retrieval",
+            "Private backup; keep it to yourself",
             idle,
         ),
         action(

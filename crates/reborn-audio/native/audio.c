@@ -118,6 +118,8 @@ static snd_pcm_format_t pcm_format(unsigned format) {
   switch (format) {
   case 1:
     return SND_PCM_FORMAT_S16_LE;
+  case 2:
+    return SND_PCM_FORMAT_S32_LE;
   case 3:
     return SND_PCM_FORMAT_S24_LE;
   default:
@@ -144,12 +146,12 @@ static int test_candidate(snd_pcm_t *pcm, unsigned rate, unsigned format) {
   int r = snd_pcm_hw_params_any(pcm, p);
   if (r < 0)
     return r;
-  if ((r = snd_pcm_hw_params_test_access(pcm, p,
+  if ((r = snd_pcm_hw_params_set_access(pcm, p,
                                          SND_PCM_ACCESS_RW_INTERLEAVED)) < 0)
     return r;
-  if ((r = snd_pcm_hw_params_test_format(pcm, p, pcm_format(format))) < 0)
+  if ((r = snd_pcm_hw_params_set_format(pcm, p, pcm_format(format))) < 0)
     return r;
-  if ((r = snd_pcm_hw_params_test_channels(pcm, p, 2)) < 0)
+  if ((r = snd_pcm_hw_params_set_channels(pcm, p, 2)) < 0)
     return r;
   return snd_pcm_hw_params_test_rate(pcm, p, rate, 0);
 }
@@ -165,14 +167,20 @@ int rb_alsa_plan(const char *name, unsigned requested_rate,
   int r = snd_pcm_open(&pcm, name, SND_PCM_STREAM_PLAYBACK, SND_PCM_NONBLOCK);
   if (r < 0)
     return r;
-  unsigned candidates[2] = {preferred_format, strict_format ? 0u : 1u};
-  if (!strict_format && preferred_format == 1)
-    candidates[1] = 2;
-  if (candidates[0] == candidates[1])
-    candidates[1] = 0;
+  /* Each candidate must satisfy access/format/channels/rate together.
+   * A 24-in-32 sink is useful when S32 is rejected, and must precede S16.
+   * Observed Bluetooth PCM is strict: no substitute format is allowed. */
+  unsigned candidates[3] = {preferred_format, 0, 0};
+  unsigned count = 1;
+  if (!strict_format) {
+    const unsigned alternatives[] = {2, 3, 1};
+    for (unsigned i = 0; i < 3; i++)
+      if (alternatives[i] != preferred_format)
+        candidates[count++] = alternatives[i];
+  }
   unsigned selected = 0;
   int last = -EINVAL;
-  for (unsigned i = 0; i < 2; i++) {
+  for (unsigned i = 0; i < count; i++) {
     unsigned format = candidates[i];
     if (!format)
       continue;

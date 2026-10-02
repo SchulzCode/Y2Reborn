@@ -8,9 +8,10 @@
 //! display is off.
 use reborn_core::{
     platform::{
-        DiagnosticSection, Fact, HealthLevel, OperationResult, PlatformInfo, PlatformSnapshot,
-        SdCard, StorageState, UpdatePhase, UpdateProblem, UpdateState, UsbTransfer, VolumeSpace,
-        VolumeState,
+        BluetoothQuality, DiagnosticSection, Fact, HealthLevel, LdacQuality, OperationResult,
+        PlatformInfo, PlatformSnapshot, SbcQuality, SdCard, SleepPhase, SleepProblem, SleepState,
+        StorageState, UpdatePhase, UpdateProblem, UpdateState, UsbTransfer, VolumeSpace,
+        VolumeState, WakeReason,
     },
     PlatformTask,
 };
@@ -35,6 +36,7 @@ pub enum Reply {
     Health(HealthLevel, DiagnosticSection),
     Operation(PlatformTask, Result<OperationResult, String>),
     Failed(PlatformTask, String),
+    Sleep(Result<SleepState, String>),
 }
 
 pub struct Client {
@@ -168,6 +170,28 @@ fn execute(task: PlatformTask) -> Reply {
         UpdateCancel => call(&["update", "cancel"], 30),
         UpdateRollback => call(&["update", "rollback"], 30),
         Export => call(&["export-state", "--include-database"], 120),
+        DiagnosticsExport => call(&["export-diagnostics"], 120),
+        LdacQuality(quality) => call(
+            &["codec-settings", "--ldac-quality", quality.argument()],
+            10,
+        ),
+        SbcQuality(quality) => call(&["codec-settings", "--sbc-quality", quality.argument()], 10),
+        LdacAbr(enabled) => call(
+            &[
+                "codec-settings",
+                "--ldac-abr",
+                if enabled { "on" } else { "off" },
+            ],
+            10,
+        ),
+        SleepRequest => {
+            return Reply::Sleep(
+                call(&["sleep", "request"], 30)
+                    .and_then(|v| schema(v, "org.y2linux.sleep/v1"))
+                    .map(|v| sleep(&v))
+                    .map_err(|e| friendly_error(&e)),
+            );
+        }
         StorageBenchmark => call(
             &[
                 "bench-storage",
@@ -429,10 +453,112 @@ pub fn snapshot(status: &Value, caps: &Value) -> PlatformSnapshot {
         },
         storage: storage(status),
         usb: usb(status),
+        sleep: sleep(&status["power"]["sleep"]),
+        bluetooth_quality: bluetooth_quality(&status["bluetooth"]["codec_settings"]),
         update: update(status, ota),
         health: HealthLevel::Unknown,
         diagnostics: diagnostics(status, caps),
         enabled,
+    }
+}
+
+fn ldac_quality(value: &Value) -> Option<LdacQuality> {
+    match value.as_str() {
+        Some("mobile") => Some(LdacQuality::Mobile),
+        Some("standard") => Some(LdacQuality::Standard),
+        Some("high") => Some(LdacQuality::High),
+        _ => None,
+    }
+}
+
+fn sbc_quality(value: &Value) -> Option<SbcQuality> {
+    match value.as_str() {
+        Some("high") => Some(SbcQuality::High),
+        Some("xq") => Some(SbcQuality::Xq),
+        Some("xq+") => Some(SbcQuality::XqPlus),
+        _ => None,
+    }
+}
+
+pub fn bluetooth_quality(value: &Value) -> BluetoothQuality {
+    if value["schema"] != "org.y2linux.codec-settings/v1" {
+        return BluetoothQuality::default();
+    }
+    BluetoothQuality {
+        sbc_supported: value["supported"]["sbc_quality"]
+            .as_array()
+            .is_some_and(|v| {
+                ["high", "xq", "xq+"]
+                    .iter()
+                    .all(|name| v.iter().any(|x| x == name))
+            }),
+        requested_sbc: sbc_quality(&value["requested"]["sbc_quality"]),
+        effective_sbc: sbc_quality(&value["effective"]["sbc_quality"]),
+        ldac_supported: value["supported"]["ldac_quality"]
+            .as_array()
+            .is_some_and(|v| {
+                ["mobile", "standard", "high"]
+                    .iter()
+                    .all(|name| v.iter().any(|x| x == name))
+            }),
+        abr_supported: value["supported"]["ldac_abr"] == true,
+        requested_quality: ldac_quality(&value["requested"]["ldac_quality"]),
+        effective_quality: ldac_quality(&value["effective"]["ldac_quality"]),
+        requested_abr: value["requested"]["ldac_abr"].as_bool(),
+        effective_abr: value["effective"]["ldac_abr"].as_bool(),
+        pending_restart: value["pending_restart"] == true,
+    }
+}
+
+/// A successful kernel exit is insufficient: only the service's complete
+/// restoration record and same-boot identity may present a restored player.
+pub fn sleep(value: &Value) -> SleepState {
+    if value["schema"] != "org.y2linux.sleep/v1" {
+        return SleepState::default();
+    }
+    let mut phase = match value["state"].as_str() {
+        Some("requested") => SleepPhase::Requested,
+        Some("refused") => SleepPhase::Refused,
+        Some("sleeping") => SleepPhase::Sleeping,
+        Some("restoring") => SleepPhase::Restoring,
+        Some("restored") => SleepPhase::Restored,
+        Some("restore_failed") => SleepPhase::RestoreFailed,
+        _ => SleepPhase::Awake,
+    };
+    let same_boot = value["same_boot"].as_bool();
+    let problem = if phase == SleepPhase::Restored
+        && (same_boot != Some(true) || value["kernel_completed"] != true)
+    {
+        phase = SleepPhase::RestoreFailed;
+        Some(SleepProblem::DifferentBoot)
+    } else {
+        value["reason"].as_str().filter(|s| !s.is_empty()).map(|s| {
+            if s.contains("qualification") {
+                SleepProblem::QualificationPending
+            } else if s.contains("charger") {
+                SleepProblem::ChargerActive
+            } else if s.contains("playback") || s.contains("audio_active") {
+                SleepProblem::PlaybackActive
+            } else if s.contains("busy") || s.contains("maintenance") || s.contains("in_progress") {
+                SleepProblem::Busy
+            } else if s.contains("boot") {
+                SleepProblem::DifferentBoot
+            } else if s.contains("restore") {
+                SleepProblem::RestorationFailed
+            } else {
+                SleepProblem::Other
+            }
+        })
+    };
+    SleepState {
+        phase,
+        problem,
+        same_boot,
+        wake: match value["wake_reason"].as_str() {
+            Some("power") => WakeReason::Power,
+            Some("rtc") => WakeReason::Rtc,
+            _ => WakeReason::Unknown,
+        },
     }
 }
 
@@ -615,6 +741,34 @@ fn diagnostics(s: &Value, caps: &Value) -> Vec<DiagnosticSection> {
             fact("Trusted peer", &s["bluetooth"]["selected_peer"]["trusted"]),
             fact("Reconnect state", &s["bluetooth"]["reconnect"]["state"]),
             fact(
+                "Saved SBC quality",
+                &s["bluetooth"]["codec_settings"]["requested"]["sbc_quality"],
+            ),
+            fact(
+                "Effective SBC quality",
+                &s["bluetooth"]["codec_settings"]["effective"]["sbc_quality"],
+            ),
+            fact(
+                "Saved LDAC quality",
+                &s["bluetooth"]["codec_settings"]["requested"]["ldac_quality"],
+            ),
+            fact(
+                "Effective LDAC quality",
+                &s["bluetooth"]["codec_settings"]["effective"]["ldac_quality"],
+            ),
+            fact(
+                "Saved LDAC ABR",
+                &s["bluetooth"]["codec_settings"]["requested"]["ldac_abr"],
+            ),
+            fact(
+                "Effective LDAC ABR",
+                &s["bluetooth"]["codec_settings"]["effective"]["ldac_abr"],
+            ),
+            fact(
+                "Quality restart pending",
+                &s["bluetooth"]["codec_settings"]["pending_restart"],
+            ),
+            fact(
                 "Optional codecs built",
                 &caps["capabilities"]["bluetooth"]["optional_codecs"],
             ),
@@ -645,6 +799,10 @@ fn diagnostics(s: &Value, caps: &Value) -> Vec<DiagnosticSection> {
     });
     // CPU, memory and thermal
     let mut cpu = vec![
+        fact("Sleep state", &s["power"]["sleep"]["state"]),
+        fact("Sleep reason", &s["power"]["sleep"]["reason"]),
+        fact("Wake reason", &s["power"]["sleep"]["wake_reason"]),
+        fact("Sleep same boot", &s["power"]["sleep"]["same_boot"]),
         fact("Cores online", &s["cpu"]["online"]),
         fact("Load average", &s["cpu"]["load_average"]),
         Fact::new(
@@ -822,10 +980,17 @@ fn operation(r: &Value) -> OperationResult {
         ("Release", "release_version"),
         ("Archive", "path"),
         ("SHA-256", "sha256"),
+        ("Redacted", "redacted"),
     ] {
         if let Some(v) = text(&r[key]) {
             facts.push(Fact::new(label, v));
         }
+    }
+    if r["redacted"] == true {
+        facts.push(Fact::new(
+            "Retrieve report",
+            "Connect to your computer and copy this archive from the exports folder.",
+        ));
     }
     if let Some(v) = text(&r["record"]["result"]) {
         facts.push(Fact::new("Result", v));
@@ -847,7 +1012,7 @@ fn operation(r: &Value) -> OperationResult {
         facts.push(fact("DNS ready", &r["wifi"]["dns_ready"]));
     }
     OperationResult {
-        succeeded: r["record"]["result"] != "FAILED",
+        succeeded: r["record"]["result"] != "FAILED" && r["state"] != "Failed",
         facts,
     }
 }
@@ -1008,5 +1173,69 @@ mod tests {
         assert!(get("eMMC faults").contains("timeout 2"));
         // An older kernel without the mode record keeps the clock summary.
         assert!(get("SD").starts_with("cap 50000000 Hz"));
+    }
+}
+
+#[cfg(test)]
+mod feature_completion_tests {
+    use super::*;
+
+    #[test]
+    fn sleep_requires_complete_same_boot_restoration_and_names_refusal() {
+        let mut v = json!({"schema":"org.y2linux.sleep/v1", "state":"refused", "reason":"physical_qualification_required"});
+        assert_eq!(sleep(&v).phase, SleepPhase::Refused);
+        assert_eq!(sleep(&v).problem, Some(SleepProblem::QualificationPending));
+        v["state"] = json!("restored");
+        assert_eq!(sleep(&v).phase, SleepPhase::RestoreFailed);
+        v["same_boot"] = json!(true);
+        v["kernel_completed"] = json!(true);
+        v["reason"] = Value::Null;
+        v["wake_reason"] = json!("rtc");
+        assert_eq!(
+            sleep(&v),
+            SleepState {
+                phase: SleepPhase::Restored,
+                same_boot: Some(true),
+                wake: WakeReason::Rtc,
+                problem: None
+            }
+        );
+        v["same_boot"] = json!(false);
+        assert_eq!(sleep(&v).phase, SleepPhase::RestoreFailed);
+        v["schema"] = json!("org.y2linux.sleep/v2");
+        assert_eq!(sleep(&v), SleepState::default());
+    }
+
+    #[test]
+    fn quality_settings_keep_saved_and_effective_values_separate() {
+        let v = json!({"schema":"org.y2linux.codec-settings/v1",
+            "requested":{"ldac_quality":"high","ldac_abr":true,"sbc_quality":"xq"},
+            "effective":{"ldac_quality":"standard","ldac_abr":false,"sbc_quality":"high"},
+            "supported":{"ldac_quality":["mobile","standard","high"],"ldac_abr":true,"sbc_quality":["high","xq","xq+"]},
+            "pending_restart":true});
+        let q = bluetooth_quality(&v);
+        assert!(q.pending_restart && q.ldac_supported && q.abr_supported && q.sbc_supported);
+        assert_eq!(q.requested_quality, Some(LdacQuality::High));
+        assert_eq!(q.effective_quality, Some(LdacQuality::Standard));
+        assert_eq!(q.requested_sbc, Some(SbcQuality::Xq));
+        assert_eq!(q.effective_sbc, Some(SbcQuality::High));
+        assert_eq!(q.requested_abr, Some(true));
+        assert_eq!(q.effective_abr, Some(false));
+        assert_eq!(bluetooth_quality(&json!({})), BluetoothQuality::default());
+    }
+
+    #[test]
+    fn export_failure_is_not_reported_as_complete_and_retrieval_is_explained() {
+        let failed = operation(&json!({"state":"Failed","failure":"disk_full"}));
+        assert!(!failed.succeeded);
+        let success = operation(
+            &json!({"state":"Complete","redacted":true,"path":"/data/exports/report.tar.gz"}),
+        );
+        assert!(success.succeeded);
+        assert!(success.facts.iter().any(|f| f.label == "Retrieve report"));
+        assert!(success
+            .facts
+            .iter()
+            .any(|f| f.label == "Archive" && f.value == "/data/exports/report.tar.gz"));
     }
 }

@@ -368,8 +368,9 @@ pub fn dialog(c: &mut Canvas, title: &str, body: &str, rows: &[Item], focus: usi
     const PITCH: f32 = 40.;
     let lines = crate::screens::wrap_lines(body, 376., 14., 3);
     let header = 54. + lines.len() as f32 * 20. + if lines.is_empty() { 0. } else { 10. };
-    let visible = rows.len().clamp(1, 6);
-    let height = (header + visible as f32 * PITCH + 14.).min(328.);
+    let capacity = ((328. - header - 14.) / PITCH).floor().clamp(1., 6.) as usize;
+    let visible = rows.len().clamp(1, capacity);
+    let height = header + visible as f32 * PITCH + 14.;
     let top_edge = ((360. - height) / 2.).max(16.);
     c.rect(0., 0., 480., 360., color::SCRIM_STRONG);
     c.rounded(32., top_edge, 416., height, 10., color::SURFACE);

@@ -200,6 +200,20 @@ impl Default for EqBand {
         }
     }
 }
+
+/// Five broad bands for the wheel-driven editor. The existing FFmpeg EQ and
+/// limiter perform the processing; these are product defaults, not a new DSP.
+pub const EQ_FREQUENCIES: [u32; 5] = [60, 250, 1_000, 4_000, 12_000];
+pub fn flat_eq_bands() -> Vec<EqBand> {
+    EQ_FREQUENCIES
+        .iter()
+        .map(|hz| EqBand {
+            frequency_hz: *hz as f32,
+            gain_db: 0.,
+            q: 1.,
+        })
+        .collect()
+}
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "id", rename_all = "snake_case")]
 pub enum MediaSource {
@@ -323,11 +337,13 @@ pub enum Screen {
     Bluetooth,
     PcTransfer,
     SettingsAudio,
+    Equalizer,
     SettingsPlayback,
     SettingsLibrary,
     SettingsDisplay,
     SettingsSystem,
     Battery,
+    Sleep,
     Storage,
     Update,
     About,
@@ -370,6 +386,7 @@ pub enum Modal {
     QuickSettings,
     OutputPicker,
     CodecPicker,
+    EqBand(usize),
     Confirm(ConfirmAction),
 }
 
@@ -398,6 +415,11 @@ pub enum PlatformTask {
     UpdateCancel,
     UpdateRollback,
     Export,
+    DiagnosticsExport,
+    SleepRequest,
+    LdacQuality(platform::LdacQuality),
+    LdacAbr(bool),
+    SbcQuality(platform::SbcQuality),
     StorageBenchmark,
     LibraryBenchmark,
     NetworkCheck,
@@ -573,6 +595,12 @@ pub enum Effect {
     ScreenSleep,
     ScreenWake,
     SetReplayGain(ReplayGainMode),
+    SetEqEnabled(bool),
+    SetEqBandGain {
+        index: usize,
+        gain_db: i8,
+    },
+    ResetEq,
     SetBrightness(u8),
     SetCrossfade(u32),
     SetGapless(bool),

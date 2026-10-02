@@ -21,7 +21,8 @@ Y2Linux platform services → kernel → hardware
    and `y2-media` tools, Y2 device names, backlight and power-supply sysfs,
    the workload device and the power socket are only touched there.
 2. **The UI receives typed models.** `reborn-core::platform` defines
-   `BatteryState`, `ChargingState`, `LowBattery`, `StorageState`,
+   `BatteryState`, `ChargingState`, `LowBattery`, `SleepState`/`SleepPhase`/
+   `SleepProblem`/`WakeReason`, `BluetoothQuality`, `StorageState`,
    `VolumeSpace`, `SdCard`, `UsbTransfer`, `UpdateState`/`UpdatePhase`/
    `UpdateProblem`, `HealthLevel`, `WifiProblem`, `PlatformInfo`,
    `PlatformSnapshot`, `DiagnosticSection`/`Fact`, `ShutdownIntent` and
@@ -36,7 +37,7 @@ Y2Linux platform services → kernel → hardware
    presents these; it does not re-derive them.
 4. **One poller.** `client::Client` is a single worker. The application
    requests a refresh when a platform-backed screen becomes visible and
-   then at most every 15 s (4 s on PC Transfer), never with the display off.
+   then at most every 15 s (4 s on PC Transfer and Sleep), never with the display off.
    Operations trigger one refresh afterwards. Battery is read every 2 s from
    the platform's power record (file reads, no process).
 5. **Application-owned standard APIs stay in Reborn.** FFmpeg decode and
@@ -59,6 +60,9 @@ Y2Linux platform services → kernel → hardware
 | Shutdown / restart request and acknowledgement | `power::request_shutdown`, `power::shutdown_intent`, `power::acknowledge_shutdown` |
 | Backlight off/on, brightness | `power::blank`, `power::brightness_available`, `power::set_brightness` |
 | Update check, stage, apply, cancel, rollback | `PlatformTask::Update*` via `client::Client` |
+| Deliberate sleep | `PlatformTask::SleepRequest` → `y2-platform sleep request`; typed `power.sleep` observation |
+| SBC/LDAC quality, LDAC ABR | `PlatformTask::{SbcQuality, LdacQuality, LdacAbr}` → `codec-settings`; saved/effective state kept separate |
+| Redacted report export | `PlatformTask::DiagnosticsExport` → `export-diagnostics`; separate from private `Export` |
 | Export, health, network check, benchmarks | `PlatformTask::{Export, Health, NetworkCheck, StorageBenchmark, LibraryBenchmark}` |
 | Bluetooth PCM lease (codec-switch exclusion) | `bluetooth::playback_pcm_lease` |
 | Application readiness, maintenance gate, splash evidence | `contract::{application_ready, maintenance_pending, splash_evidence}` |

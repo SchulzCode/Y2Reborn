@@ -6,8 +6,8 @@
 use crate::{components::output_label, BluetoothDeviceView, Item, NetworkView, Ui, WifiStatus};
 use reborn_core::{
     platform::{
-        human_bytes, ChargingState, HealthLevel, LowBattery, SdCard, UpdatePhase, UpdateProblem,
-        UsbTransfer, VolumeSpace, VolumeState, WifiProblem,
+        human_bytes, ChargingState, HealthLevel, LowBattery, SdCard, SleepPhase, SleepProblem,
+        UpdatePhase, UpdateProblem, UsbTransfer, VolumeSpace, VolumeState, WakeReason, WifiProblem,
     },
     AppModel, MediaSource, PlatformTask, RepeatMode, Screen, Track,
 };
@@ -108,12 +108,15 @@ pub fn page(ui: &Ui, m: &AppModel, tracks: &[Track]) -> Page {
         Screen::PcTransfer => pc_transfer(m),
         Screen::SettingsAudio => Page::rows(vec![
             row("Output", "output", output_name(ui, m)),
+            row("Equalizer", "equalizer", on_off(m.settings.eq_enabled)),
+            Item::new("Output Details", "diag:audio"),
             row(
                 "ReplayGain",
                 "replay_gain",
                 crate::replay_gain_label(m.settings.replay_gain),
             ),
         ]),
+        Screen::Equalizer => equalizer(m),
         Screen::SettingsPlayback => Page::rows(vec![
             row("Shuffle", "shuffle", on_off(m.settings.shuffle)),
             row("Repeat", "repeat", crate::repeat_label(m.settings.repeat)),
@@ -147,6 +150,7 @@ pub fn page(ui: &Ui, m: &AppModel, tracks: &[Track]) -> Page {
         }
         Screen::SettingsSystem => system(m),
         Screen::Battery => battery(m),
+        Screen::Sleep => sleep(m),
         Screen::Storage => storage(m),
         Screen::Update => update(m),
         Screen::About => Page::default()
@@ -350,6 +354,42 @@ fn bluetooth(ui: &Ui, m: &AppModel) -> Page {
             d.description(&m.output),
         ));
     }
+    if !b.codec_choices.is_empty() {
+        rows.push(row(
+            "Codec Preference",
+            "codec_preference",
+            m.settings.codec_preference.label(),
+        ));
+    }
+    let quality = m.platform.snapshot.bluetooth_quality;
+    if quality.sbc_supported && b.sbc_quality_available {
+        if let Some(q) = quality.requested_sbc {
+            rows.push(disabled(
+                row("SBC Quality", "sbc_quality", q.label()),
+                m.platform.busy.is_none(),
+            ));
+        }
+    }
+    if b.codec_choices
+        .contains(&reborn_core::CodecPreference::Ldac)
+    {
+        if quality.ldac_supported {
+            if let Some(q) = quality.requested_quality {
+                rows.push(disabled(
+                    row("LDAC Quality", "ldac_quality", q.label()),
+                    m.platform.busy.is_none(),
+                ));
+            }
+        }
+        if quality.abr_supported {
+            if let Some(abr) = quality.requested_abr {
+                rows.push(disabled(
+                    row("LDAC Auto Rate", "ldac_abr", on_off(abr)),
+                    m.platform.busy.is_none(),
+                ));
+            }
+        }
+    }
     let scanning = b.scan.active();
     rows.push(disabled(
         row(
@@ -364,7 +404,9 @@ fn bluetooth(ui: &Ui, m: &AppModel) -> Page {
         !scanning,
     ));
     let mut page = Page::rows(rows);
-    page.status = if let Some(problem) = &b.problem {
+    page.status = if quality.pending_restart {
+        Some("Restart the player to apply the saved codec quality.".into())
+    } else if let Some(problem) = &b.problem {
         Some(problem.clone())
     } else {
         match b.scan {
@@ -473,6 +515,7 @@ fn system(m: &AppModel) -> Page {
     let s = &m.platform.snapshot;
     Page::rows(vec![
         row("Battery", "battery", battery_summary(m)),
+        row("Sleep", "sleep", "Pause and rest the player"),
         row(
             "Storage",
             "storage",
@@ -521,7 +564,14 @@ fn battery(m: &AppModel) -> Page {
         LowBattery::Normal => Page::default(),
     };
     let page = match b.percent {
-        Some(p) => page.fact("Charge", format!("{p}%")),
+        Some(p) => page.fact(
+            if b.estimated {
+                "Estimated Charge"
+            } else {
+                "Charge"
+            },
+            format!("{p}%"),
+        ),
         None => page,
     };
     page.fact(
@@ -533,6 +583,70 @@ fn battery(m: &AppModel) -> Page {
             ChargingState::Unknown => "Checking…",
         },
     )
+}
+
+pub(crate) fn eq_frequency(hz: f32) -> String {
+    if hz >= 1_000. {
+        format!("{} kHz", hz / 1_000.)
+    } else {
+        format!("{hz:.0} Hz")
+    }
+}
+
+fn equalizer(m: &AppModel) -> Page {
+    let defaults = reborn_core::flat_eq_bands();
+    let bands = if m.settings.eq_bands.is_empty() {
+        &defaults
+    } else {
+        &m.settings.eq_bands
+    };
+    let mut rows = vec![row(
+        "Equalizer",
+        "eq_enabled",
+        on_off(m.settings.eq_enabled),
+    )];
+    rows.extend(bands.iter().take(8).enumerate().map(|(index, band)| {
+        row(
+            &eq_frequency(band.frequency_hz),
+            &format!("eq_band:{index}"),
+            format!("{:+.0} dB", band.gain_db),
+        )
+    }));
+    rows.push(Item::new("Reset to Flat", "eq_reset"));
+    Page::rows(rows)
+}
+
+fn sleep(m: &AppModel) -> Page {
+    let s = m.platform.snapshot.sleep;
+    let (title, body) = match s.phase {
+        SleepPhase::Requested => ("Preparing to Sleep…", "The player is checking that it can sleep safely."),
+        SleepPhase::Sleeping => ("Sleeping", "Press Power to wake the player."),
+        SleepPhase::Restoring => ("Waking…", "Restoring your player."),
+        SleepPhase::Restored => ("Ready", match s.wake {
+            WakeReason::Power => "The Power button woke your player.",
+            WakeReason::Rtc => "The wake timer woke your player.",
+            WakeReason::Unknown => "Your player is awake again.",
+        }),
+        SleepPhase::RestoreFailed => ("Wake Needs Attention", "Save your place and restart the player. Diagnostics has the last sleep result."),
+        SleepPhase::Refused => ("Player Stayed Awake", match s.problem {
+            Some(SleepProblem::ChargerActive) => "Disconnect the charger before putting the player to sleep.",
+            Some(SleepProblem::PlaybackActive) => "Pause music before putting the player to sleep. Power can turn off the screen while music plays.",
+            Some(SleepProblem::QualificationPending) => "Sleep needs a system update before it can be used. You can turn off the screen or power off.",
+            Some(SleepProblem::Busy) => "The player is finishing another task. Try again when it finishes.",
+            _ => "The player could not sleep safely. Try again or power off.",
+        }),
+        SleepPhase::Awake => ("Sleep", "Pause music, then sleep. A short press of Power only turns off the screen."),
+    };
+    let busy = m.platform.busy.is_some()
+        || matches!(
+            s.phase,
+            SleepPhase::Requested | SleepPhase::Sleeping | SleepPhase::Restoring
+        );
+    Page::hero(title, body).with_rows(vec![
+        disabled(Item::new("Sleep Now", "task:sleep"), !busy),
+        Item::new("Turn Off Screen", "screen_off"),
+        Item::new("Power Off", "confirm:power_off"),
+    ])
 }
 
 pub fn free_text(v: &VolumeSpace) -> Option<String> {

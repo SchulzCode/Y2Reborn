@@ -718,6 +718,60 @@ mod tests {
             .join(n)
     }
     #[test]
+    fn packed24_decode_float_dsp_and_sink_packing_keep_bits_below_s16() {
+        let path = std::env::temp_dir().join(format!("reborn-lowbits-{}.wav", std::process::id()));
+        let pattern = [
+            0_i32, 1, -1, 127, -127, 255, -255, 256, -256, 257, -257, 1023, -1023, 32767, -32768, 0,
+        ];
+        let values: Vec<i32> = (0..1024)
+            .flat_map(|frame| [pattern[frame % 16], pattern[(frame + 5) % 16]])
+            .collect();
+        for rate in [44_100_u32, 48_000, 88_200, 96_000] {
+            let length = (values.len() * 3) as u32;
+            let mut wav = Vec::new();
+            wav.extend_from_slice(b"RIFF");
+            wav.extend_from_slice(&(length + 36).to_le_bytes());
+            wav.extend_from_slice(b"WAVEfmt ");
+            wav.extend_from_slice(&16_u32.to_le_bytes());
+            wav.extend_from_slice(&1_u16.to_le_bytes());
+            wav.extend_from_slice(&2_u16.to_le_bytes());
+            wav.extend_from_slice(&rate.to_le_bytes());
+            wav.extend_from_slice(&(rate * 6).to_le_bytes());
+            wav.extend_from_slice(&6_u16.to_le_bytes());
+            wav.extend_from_slice(&24_u16.to_le_bytes());
+            wav.extend_from_slice(b"data");
+            wav.extend_from_slice(&length.to_le_bytes());
+            for value in &values {
+                wav.extend_from_slice(&value.to_le_bytes()[..3]);
+            }
+            std::fs::write(&path, wav).unwrap();
+            for format in [PcmFormat::S24LE, PcmFormat::S32LE] {
+                let mut decoder = Decoder::open_with(
+                    &path,
+                    OutputSpec { rate, format },
+                    DspConfig::with_volume(100),
+                    Cancel::new().unwrap(),
+                )
+                .unwrap();
+                let mut output = Vec::new();
+                while let Some(block) = decoder.read().unwrap() {
+                    output.extend_from_slice(&block.data);
+                }
+                assert_eq!(output.len(), values.len() * 4);
+                for (sample, expected) in output.chunks_exact(4).zip(&values) {
+                    let word = i32::from_le_bytes(sample.try_into().unwrap());
+                    let signed24 = if format == PcmFormat::S32LE {
+                        word >> 8
+                    } else {
+                        (word << 8) >> 8
+                    };
+                    assert_eq!(signed24, *expected, "{rate} {format:?}");
+                }
+            }
+        }
+        std::fs::remove_file(path).unwrap();
+    }
+    #[test]
     fn fixture_formats_are_float_processed_and_s32_output() {
         for n in [
             "tone.wav",

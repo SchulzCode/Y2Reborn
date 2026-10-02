@@ -73,6 +73,10 @@ pub fn battery(status: &Value) -> BatteryState {
     };
     BatteryState {
         percent: battery_percent(status),
+        estimated: matches!(
+            status["platform"]["battery"]["source"].as_str(),
+            Some("voltage_estimate" | "hybrid")
+        ),
         charging,
         level,
     }
