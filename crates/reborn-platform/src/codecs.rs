@@ -29,8 +29,19 @@ pub struct Eligibility {
     pub auto_eligible: bool,
     pub experimental_eligible: bool,
 }
+#[derive(Clone, Default, Serialize, Deserialize)]
+pub struct PolicyContext {
+    /// Measured load informs the next connection attempt only; never switch a
+    /// playing transport simply because a scan or transient burst occurred.
+    pub wifi_heavy_transfer: bool,
+    pub cpu_pressure: bool,
+    pub last_negotiated: Option<String>,
+    pub repeated_failures: BTreeSet<String>,
+}
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Session {
+    #[serde(default)]
+    pub context: PolicyContext,
     pub generation: u64,
     pub preference: CodecPreference,
     pub eligibility: BTreeMap<String, Eligibility>,
@@ -92,6 +103,7 @@ impl Session {
             })
             .collect();
         Self {
+            context: PolicyContext::default(),
             generation,
             preference,
             eligibility,
@@ -116,10 +128,20 @@ impl Session {
         }
         // At most two preferred attempts plus conformant SBC fallback. No XQ,
         // nonconformant bitpool, opaque codec blobs or unsupported high rates.
-        let mut preferred: Vec<&str> = ["LDAC", "aptX-HD", "aptX", "AAC"]
+        let mut ranked = vec!["LDAC", "aptX-HD", "aptX", "AAC"];
+        if let Some(previous) = self.context.last_negotiated.as_deref() {
+            if let Some(index) = ranked.iter().position(|name| *name == previous) {
+                let stable = ranked.remove(index);
+                ranked.insert(0, stable);
+            }
+        }
+        let mut preferred: Vec<&str> = ranked
             .into_iter()
             .filter(|name| {
-                self.preference == CodecPreference::Auto
+                !(self.preference != CodecPreference::Auto
+                    || self.context.repeated_failures.contains(*name)
+                    || (self.context.wifi_heavy_transfer && matches!(*name, "LDAC" | "aptX-HD"))
+                    || (self.context.cpu_pressure && matches!(*name, "LDAC" | "AAC")))
                     && (self.eligibility[*name].auto_eligible
                         || self.eligibility[*name].experimental_eligible)
             })
@@ -143,7 +165,12 @@ impl Session {
                         && e.mutually_usable
                         && e.distribution_approved)
             } else if self.preference == CodecPreference::SbcXq {
-                e.experimental_eligible && experimental_xq_enabled()
+                // XQ is a quality policy of SBC. If its startup policy or peer
+                // mode is absent, retain conformant SBC instead of no audio.
+                e.compiled_locally
+                    && e.runtime_enabled
+                    && e.mutually_usable
+                    && e.distribution_approved
             } else if self.preference != CodecPreference::Sbc && *name != "SBC" {
                 e.auto_eligible || e.experimental_eligible
             } else {
@@ -162,6 +189,11 @@ impl Session {
         self.requested = Some(next.into());
         Some(next.into())
     }
+    pub fn apply_context(&mut self, context: PolicyContext) {
+        if self.state == "Ready" && self.visited.is_empty() {
+            self.context = context;
+        }
+    }
     pub fn accepted(&mut self, codec: &str) {
         self.selected = Some(codec.into());
         self.state = "AwaitingNegotiatedObservation".into();
@@ -171,28 +203,192 @@ impl Session {
         self.reason = Some(reason.into());
     }
 }
-pub fn experimental_enabled() -> bool {
-    std::fs::read("/data/bluetooth/codec-policy.json")
-        .ok()
-        .filter(|b| b.len() <= 4096)
-        .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok())
-        .is_some_and(|v| v["schema"] == 1 && v["experimental"] == true)
+fn read_value(path: &str) -> Option<serde_json::Value> {
+    use std::io::Read;
+    let mut bytes = Vec::new();
+    std::fs::File::open(path)
+        .ok()?
+        .take(65_537)
+        .read_to_end(&mut bytes)
+        .ok()?;
+    (bytes.len() <= 65_536)
+        .then(|| serde_json::from_slice(&bytes).ok())
+        .flatten()
 }
-fn experimental_xq_enabled() -> bool {
-    std::fs::read("/data/bluetooth/codec-policy.json")
-        .ok()
-        .filter(|b| b.len() <= 4096)
-        .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok())
-        .is_some_and(|v| {
-            v["schema"] == 1
-                && v["experimental"] == true
-                && matches!(v["sbc_quality"].as_str(), Some("xq" | "xq+"))
-        })
+pub fn experimental_enabled() -> bool {
+    if let Some(v) = read_value("/data/bluetooth/codec-policy.json") {
+        return v["schema"] == 1 && v["experimental"] == true;
+    }
+    read_value("/etc/y2linux/bluetooth-codecs.json")
+        .is_some_and(|v| v["schema"] == 1 && v["private_integration_enabled"] == true)
+}
+pub fn experimental_xq_enabled() -> bool {
+    // Requested daemon quality may differ until restart. Expose XQ only when
+    // the current boot's startup receipt has actually selected that policy.
+    let boot = std::fs::read_to_string("/proc/sys/kernel/random/boot_id").unwrap_or_default();
+    read_value("/run/y2/codec-runtime.json").is_some_and(|v| {
+        v["boot_id"].as_str() == Some(boot.trim())
+            && v["settings"]["experimental"] == true
+            && matches!(v["settings"]["sbc_quality"].as_str(), Some("xq" | "xq+"))
+    })
+}
+/// Read-only policy inputs: stale radio records never constrain a new session.
+pub fn context(address: &str, observed_codec: Option<&str>) -> PolicyContext {
+    let mut result = PolicyContext {
+        last_negotiated: observed_codec.map(str::to_owned),
+        ..Default::default()
+    };
+    if !(address.len() == 17
+        && address.split(':').count() == 6
+        && address
+            .split(':')
+            .all(|v| v.len() == 2 && v.bytes().all(|b| b.is_ascii_hexdigit())))
+    {
+        return result;
+    }
+    let boot = std::fs::read_to_string("/proc/sys/kernel/random/boot_id").unwrap_or_default();
+    if let (Some(value), Some(now)) = (
+        read_value("/run/y2/coexistence.json"),
+        crate::native::monotonic_seconds(),
+    ) {
+        let age = value["monotonic_s"].as_f64().map(|stamp| now - stamp);
+        if value["boot_id"].as_str() == Some(boot.trim())
+            && age.is_some_and(|v| (0.0..10.0).contains(&v))
+        {
+            result.wifi_heavy_transfer = value["wifi_heavy_transfer"] == true;
+            result.cpu_pressure = value["cpu_pressure"].as_str().is_some_and(|psi| {
+                psi.lines()
+                    .find(|line| line.starts_with("some "))
+                    .is_some_and(|line| {
+                        line.split_whitespace()
+                            .find_map(|part| part.strip_prefix("avg10=")?.parse::<f64>().ok())
+                            .is_some_and(|v| v >= 20.0)
+                    })
+            });
+        }
+    }
+    if let Some(value) = read_value("/data/bluetooth/codec-history.json") {
+        if value["schema"] == 1 {
+            let peer = &value["peers"][address.to_ascii_uppercase()];
+            if result.last_negotiated.is_none() {
+                result.last_negotiated = peer["last_negotiated"].as_str().map(str::to_owned);
+            }
+            if let Some(failures) = peer["failures"].as_object() {
+                result.repeated_failures = failures
+                    .iter()
+                    .filter(|(_, v)| v.as_u64().is_some_and(|n| n >= 2))
+                    .map(|(k, _)| k.clone())
+                    .collect();
+            }
+        }
+    }
+    result
+}
+/// Store only observed negotiation or explicit supported-method rejection.
+/// No periodic writes and no inference that a selected request sounded good.
+pub fn history(address: &str, negotiated: Option<&str>, rejected: Option<&str>) {
+    if !(address.len() == 17
+        && address.split(':').count() == 6
+        && address
+            .split(':')
+            .all(|v| v.len() == 2 && v.bytes().all(|b| b.is_ascii_hexdigit())))
+    {
+        return;
+    }
+    let path = "/data/bluetooth/codec-history.json";
+    let mut value = read_value(path)
+        .filter(|v| v["schema"] == 1)
+        .unwrap_or_else(|| serde_json::json!({"schema":1,"peers":{}}));
+    let Some(peers) = value["peers"].as_object_mut() else {
+        return;
+    };
+    let address = address.to_ascii_uppercase();
+    if peers.len() >= 64 && !peers.contains_key(&address) {
+        return;
+    }
+    let peer = peers
+        .entry(address)
+        .or_insert_with(|| serde_json::json!({"failures":{}}));
+    if !peer.is_object() {
+        *peer = serde_json::json!({"failures":{}});
+    }
+    if !peer["failures"].is_object() {
+        peer["failures"] = serde_json::json!({});
+    }
+    if let Some(codec) =
+        negotiated.filter(|c| ["SBC", "AAC", "aptX", "aptX-HD", "LDAC"].contains(c))
+    {
+        peer["last_negotiated"] = codec.into();
+        peer["failures"][codec] = 0.into();
+    }
+    if let Some(codec) = rejected.filter(|c| ["SBC", "AAC", "aptX", "aptX-HD", "LDAC"].contains(c))
+    {
+        let count = peer["failures"][codec]
+            .as_u64()
+            .unwrap_or(0)
+            .saturating_add(1)
+            .min(255);
+        peer["failures"][codec] = count.into();
+    }
+    if let Ok(bytes) = serde_json::to_vec(&value) {
+        let _ = reborn_core::atomic_write(std::path::Path::new(path), &bytes);
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn auto_uses_history_and_current_load_once_without_flapping() {
+        let names: Vec<String> = ["SBC", "AAC", "aptX", "aptX-HD", "LDAC"]
+            .into_iter()
+            .map(str::to_owned)
+            .collect();
+        let inv = Inventory {
+            schema: 1,
+            codecs: names
+                .iter()
+                .map(|name| {
+                    (
+                        name.clone(),
+                        Capability {
+                            compiled_locally: true,
+                            distribution_approved: true,
+                            platform_qualified: true,
+                            owner_private_experiment: false,
+                        },
+                    )
+                })
+                .collect(),
+        };
+        let mut session = Session::new(2, CodecPreference::Auto, &inv, &names, &names);
+        session.apply_context(PolicyContext {
+            last_negotiated: Some("AAC".into()),
+            ..Default::default()
+        });
+        assert_eq!(session.next(2, 0).as_deref(), Some("AAC"));
+        session.accepted("AAC");
+        session.apply_context(PolicyContext {
+            wifi_heavy_transfer: true,
+            cpu_pressure: true,
+            ..Default::default()
+        });
+        assert!(session.next(2, 1).is_none());
+        let mut busy = Session::new(3, CodecPreference::Auto, &inv, &names, &names);
+        busy.apply_context(PolicyContext {
+            wifi_heavy_transfer: true,
+            cpu_pressure: true,
+            repeated_failures: BTreeSet::from(["aptX".into()]),
+            ..Default::default()
+        });
+        assert_eq!(busy.next(3, 0).as_deref(), Some("SBC"));
+        let mut explicit = Session::new(4, CodecPreference::Ldac, &inv, &names, &names);
+        explicit.apply_context(PolicyContext {
+            repeated_failures: BTreeSet::from(["LDAC".into()]),
+            ..Default::default()
+        });
+        assert_eq!(explicit.next(4, 0).as_deref(), Some("LDAC"));
+    }
     #[test]
     fn experimental_gate_allows_private_compiled_codec_without_faking_qualification() {
         let mut inventory = Inventory {

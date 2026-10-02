@@ -108,10 +108,17 @@ impl Status {
         .filter(|(name, _)| usable(name))
         .map(|(_, preference)| preference)
         .collect();
+        if crate::codecs::experimental_xq_enabled() && usable("SBC") {
+            choices.insert(1, CodecPreference::SbcXq);
+        }
         if choices.len() < 2 {
             return vec![];
         }
-        if policy.eligibility.values().any(|e| e.auto_eligible) {
+        if policy
+            .eligibility
+            .values()
+            .any(|e| e.auto_eligible || e.experimental_eligible)
+        {
             choices.insert(0, CodecPreference::Auto);
         }
         choices
@@ -676,6 +683,8 @@ fn codec_request(
         &compatible,
         crate::codecs::experimental_enabled(),
     );
+    session.apply_context(crate::codecs::context(address, pcm.codec.as_deref()));
+    crate::codecs::history(address, pcm.codec.as_deref(), None);
     let sequence: u32 = proxy
         .get("org.bluealsa.PCM1", "Sequence")
         .map_err(dbus_error)?;
@@ -761,6 +770,7 @@ fn codec_request(
                     )) =>
             {
                 let _ = std::fs::remove_file(marker);
+                crate::codecs::history(address, None, Some(&codec));
             }
             Err(_) => {
                 session.fail("codec_completion_unknown_no_retry");
