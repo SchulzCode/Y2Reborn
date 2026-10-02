@@ -45,7 +45,7 @@ acceleration and direction-reset logic is unchanged; the EQ picker uses the
 existing one-detent value policy. Long modal lists now compute visible rows
 from the actual description height so the focused row remains on screen.
 
-Validation: `cargo fmt --all -- --check`, strict workspace clippy and 233
+Validation: `cargo fmt --all -- --check`, strict workspace clippy and 238
 workspace tests passed, including API-boundary, shutdown and input tests.
 `reborn-preview` emits 69 deterministic native-resolution cases; the new EQ,
 long EQ picker, sleep refusal and LDAC settings cases were rendered and viewed.
