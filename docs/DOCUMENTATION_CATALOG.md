@@ -9,8 +9,8 @@ document links, rather than relocating or deleting proof. See the
 [shared knowledge rules](../../Y2Linux/docs/KNOWLEDGE_BASE.md)
 and the other repository's catalog for product-wide context.
 
-Indexed pages: **57**. Explicit historical/contract scope notices:
-**39**.
+Indexed pages: **58**. Explicit historical/contract scope notices:
+**40**.
 
 ## Entry
 
@@ -90,6 +90,7 @@ Indexed pages: **57**. Explicit historical/contract scope notices:
 | [Reborn UI v1 implementation and candidate report](ui/REBORN-UI-V1-REPORT.md) | UI design / scoped candidate |
 | [Reborn Product UI v2](ui/REBORN-PRODUCT-UI-V2.md) | Source contract |
 | [Reborn Product UI v2 navigation and focus map](ui/REBORN-PRODUCT-NAVIGATION-V2.md) | Source contract |
+| [Product v2 feature-completion controls](ui/REBORN-FEATURE-COMPLETION.md) | Source contract |
 | [Reborn UI v1](ui/REBORN-UI-V1.md) | UI design / scoped candidate |
 
 ## Design Assets

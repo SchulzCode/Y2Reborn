@@ -17,6 +17,7 @@ use reborn_platform::{avrcp, bluetooth, input, power, storage, wifi};
 use reborn_ui::{BluetoothDeviceView, BluetoothView, NetworkView, Ui, WifiStatus, WifiView};
 use serde_json::{json, Value};
 use std::{
+    collections::HashSet,
     fs,
     io::Write,
     path::{Path, PathBuf},
@@ -1395,10 +1396,7 @@ impl Runtime {
                             }
                             DiagnosticsExport => {
                                 self.ui.flash("Diagnostic report saved. See Latest Result.");
-                                self.model.screen = reborn_core::Screen::DiagnosticSection;
-                                self.model.navigation.filter = "result".into();
-                                self.model.navigation.focus = 0;
-                                self.model.navigation.scroll = 0;
+                                self.ui.show_operation_result(&mut self.model);
                             }
                             _ => self.ui.flash("Check finished. See Latest Result."),
                         }
@@ -1669,6 +1667,11 @@ fn bluetooth_view(s: &bluetooth::Status) -> BluetoothView {
             })
             .collect(),
         codec_choices: s.codec_choices(),
+        sbc_quality_available: s.codec_policy.as_ref().is_some_and(|p| {
+            p.eligibility
+                .get("SBC")
+                .is_some_and(|e| e.compiled_locally && e.runtime_enabled && e.mutually_usable)
+        }),
         problem: s
             .error
             .as_deref()
@@ -1755,6 +1758,52 @@ fn codec_change_allowed(playback: PlaybackState, reconfiguring: bool) -> bool {
     // Pause releases the sink; the platform's PCM lease still authoritatively
     // refuses a switch while the asynchronous release is finishing.
     !reconfiguring && matches!(playback, PlaybackState::Stopped | PlaybackState::Paused)
+}
+
+/// A codec change can replace its PCM object. Remember the connected peer,
+/// not that object generation, to avoid starting a new Auto policy repeatedly.
+#[derive(Default)]
+struct CodecReconnect {
+    attempted: HashSet<String>,
+}
+impl CodecReconnect {
+    fn next(
+        &mut self,
+        status: &bluetooth::Status,
+        playback: PlaybackState,
+        reconfiguring: bool,
+    ) -> Option<String> {
+        if !status.available {
+            return None; // A failed observation is not a disconnection.
+        }
+        self.attempted.retain(|address| {
+            status.powered
+                && status
+                    .devices
+                    .iter()
+                    .any(|d| d.connected && d.address.eq_ignore_ascii_case(address))
+        });
+        if !status.powered || !status.bluealsa || !codec_change_allowed(playback, reconfiguring) {
+            return None;
+        }
+        status
+            .devices
+            .iter()
+            .find(|d| {
+                d.connected
+                    && d.audio
+                    && d.paired
+                    && d.bonded
+                    && !self.attempted.contains(&d.address)
+                    && status.playback_pcm(&d.address).is_ok_and(|pcm| {
+                        pcm.running == Some(false) && pcm.transport_generation != 0
+                    })
+            })
+            .map(|d| d.address.clone())
+    }
+    fn sent(&mut self, address: String) {
+        self.attempted.insert(address);
+    }
 }
 
 /// Observation cadence while such a screen is visible. A cable plug should
@@ -2120,6 +2169,7 @@ fn run() -> Result<(), String> {
     let mut player_publish = Instant::now() - Duration::from_secs(1);
     let mut platform_refresh = Instant::now() - Duration::from_secs(30);
     let mut last_platform_screen = rt.model.screen;
+    let mut codec_reconnect = CodecReconnect::default();
     while !reborn_platform::stop_requested() {
         if let Some(worker) = &mut rt.collection_art {
             let desired = if matches!(rt.model.screen, Screen::Album | Screen::Artist)
@@ -2408,6 +2458,22 @@ fn run() -> Result<(), String> {
         let mut bt_lost = false;
         if let Some(service) = &rt.bluetooth {
             while let Ok(s) = service.events.try_recv() {
+                if let Some(address) = codec_reconnect.next(
+                    &s,
+                    rt.model.playback,
+                    rt.pending_reconfiguration.is_some(),
+                ) {
+                    if service
+                        .commands
+                        .try_send(bluetooth::Command::Codec {
+                            address: address.clone(),
+                            preference: rt.model.settings.codec_preference,
+                        })
+                        .is_ok()
+                    {
+                        codec_reconnect.sent(address);
+                    }
+                }
                 if let AudioOutput::Bluetooth(address) = &rt.model.output {
                     bt_lost = rt
                         .bt_state
@@ -2528,7 +2594,8 @@ fn run() -> Result<(), String> {
                     ) {
                         Err("Pause music before changing codec".into())
                     } else {
-                        rt.bluetooth
+                        let result = rt
+                            .bluetooth
                             .as_ref()
                             .ok_or("Bluetooth service unavailable".into())
                             .and_then(|worker| {
@@ -2540,7 +2607,12 @@ fn run() -> Result<(), String> {
                                     })
                                     .map(|_| json!({"accepted":true,"negotiated":false}))
                                     .map_err(|_| "Bluetooth busy".into())
-                            })
+                            });
+                        if result.is_ok() {
+                            rt.model.settings.codec_preference = preference;
+                            rt.dirty.mark_both();
+                        }
+                        result
                     }
                 }
                 Command::Radio { radio, action } => {
@@ -3511,5 +3583,69 @@ mod feature_product_tests {
         ] {
             assert!(!codec_change_allowed(state, false));
         }
+    }
+}
+
+#[cfg(test)]
+mod codec_reconnect_tests {
+    use super::*;
+    fn status() -> bluetooth::Status {
+        let mut status = bluetooth::Status::default();
+        status.available = true;
+        status.powered = true;
+        status.bluealsa = true;
+        status.devices.push(bluetooth::Device {
+            address: "AA".into(),
+            path: "/peer".into(),
+            connected: true,
+            audio: true,
+            paired: true,
+            bonded: true,
+            ..Default::default()
+        });
+        status.pcms.push(reborn_core::BluetoothPcm {
+            device: "/peer".into(),
+            transport: "A2DP-source".into(),
+            mode: "sink".into(),
+            running: Some(false),
+            transport_generation: 1,
+            ..Default::default()
+        });
+        status
+    }
+    #[test]
+    fn saved_codec_retries_only_on_real_reconnect_and_never_during_playback() {
+        let mut guard = CodecReconnect::default();
+        let mut s = status();
+        assert!(guard.next(&s, PlaybackState::Playing, false).is_none());
+        assert!(guard.next(&s, PlaybackState::Paused, true).is_none());
+        s.pcms[0].running = None;
+        assert!(guard.next(&s, PlaybackState::Paused, false).is_none());
+        s.pcms[0].running = Some(false);
+        assert_eq!(
+            guard.next(&s, PlaybackState::Paused, false).as_deref(),
+            Some("AA")
+        );
+        // Queue-full does not consume the sole attempt; caller confirms send.
+        assert_eq!(
+            guard.next(&s, PlaybackState::Paused, false).as_deref(),
+            Some("AA")
+        );
+        guard.sent("AA".into());
+        s.pcms[0].transport_generation = 2; // Codec selection may recreate PCM.
+        assert!(guard.next(&s, PlaybackState::Paused, false).is_none());
+        s.available = false;
+        s.devices[0].connected = false;
+        assert!(guard.next(&s, PlaybackState::Paused, false).is_none());
+        s.available = true;
+        s.devices[0].connected = true; // Failed snapshot did not prove a disconnect.
+        assert!(guard.next(&s, PlaybackState::Paused, false).is_none());
+        s.devices[0].connected = false;
+        assert!(guard.next(&s, PlaybackState::Paused, false).is_none());
+        s.devices[0].connected = true;
+        assert_eq!(
+            guard.next(&s, PlaybackState::Stopped, false).as_deref(),
+            Some("AA")
+        );
     }
 }

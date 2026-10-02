@@ -1,5 +1,7 @@
 # Product v2 feature-completion controls
 
+<!-- knowledge-base-scope: source-contract -->
+
 This pass extends Product v2. It does not claim physical sleep, codec or audio
 qualification. Current output capabilities still come from the platform.
 
@@ -22,7 +24,10 @@ qualification. Current output capabilities still come from the platform.
 - **Bluetooth:** codec preference and the observed device codec remain separate.
   A paused player can now select a codec; there is no hidden requirement to use
   a command-line Stop action. Existing transport and PCM lease guards remain.
-  Optional choices require the current enabled/mutual capability set.
+  Optional choices require the current enabled/mutual capability set, discovered
+  read-only when the transport first appears. The saved preference is attempted
+  once per observed connection after playback is paused/stopped; replacement PCM
+  objects do not retrigger it. SBC-only peers still expose their quality setting.
   SBC quality and LDAC quality/Auto Rate controls use the platform's supported
   settings. Saved changes say **restart required**; Diagnostics distinguishes
   saved values from the current daemon's startup receipt. LDAC quality labels

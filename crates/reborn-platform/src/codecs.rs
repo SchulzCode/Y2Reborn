@@ -296,33 +296,72 @@ pub fn history(address: &str, negotiated: Option<&str>, rejected: Option<&str>) 
         return;
     }
     let path = "/data/bluetooth/codec-history.json";
-    let mut value = read_value(path)
-        .filter(|v| v["schema"] == 1)
-        .unwrap_or_else(|| serde_json::json!({"schema":1,"peers":{}}));
-    let Some(peers) = value["peers"].as_object_mut() else {
-        return;
-    };
+    if let Some(value) = update_history(read_value(path), address, negotiated, rejected) {
+        if let Ok(bytes) = serde_json::to_vec(&value) {
+            if bytes.len() <= 65_536 {
+                let _ = reborn_core::atomic_write(std::path::Path::new(path), &bytes);
+            }
+        }
+    }
+}
+
+fn update_history(
+    retained: Option<serde_json::Value>,
+    address: &str,
+    negotiated: Option<&str>,
+    rejected: Option<&str>,
+) -> Option<serde_json::Value> {
+    const CODECS: [&str; 5] = ["SBC", "AAC", "aptX", "aptX-HD", "LDAC"];
+    let negotiated = negotiated.filter(|name| CODECS.contains(name));
+    let rejected = rejected.filter(|name| CODECS.contains(name));
+    if negotiated.is_none() && rejected.is_none() {
+        return None;
+    }
+    // Preserve only the bounded schema. Restored/edited files can contain
+    // arbitrary extra data; never grow or recopy it into the next receipt.
+    let mut value = serde_json::json!({"schema":1,"peers":{}});
+    let peers = value["peers"].as_object_mut()?;
+    if let Some(retained) = retained.filter(|value| value["schema"] == 1) {
+        if let Some(saved) = retained["peers"].as_object() {
+            for (address, peer) in saved
+                .iter()
+                .filter(|(address, _)| {
+                    address.len() == 17
+                        && address.split(':').count() == 6
+                        && address
+                            .split(':')
+                            .all(|v| v.len() == 2 && v.bytes().all(|b| b.is_ascii_hexdigit()))
+                })
+                .take(64)
+            {
+                let mut clean = serde_json::json!({"failures":{}});
+                if let Some(codec) = peer["last_negotiated"]
+                    .as_str()
+                    .filter(|c| CODECS.contains(c))
+                {
+                    clean["last_negotiated"] = codec.into();
+                }
+                for codec in CODECS {
+                    if let Some(count) = peer["failures"][codec].as_u64() {
+                        clean["failures"][codec] = count.min(255).into();
+                    }
+                }
+                peers.insert(address.to_ascii_uppercase(), clean);
+            }
+        }
+    }
     let address = address.to_ascii_uppercase();
     if peers.len() >= 64 && !peers.contains_key(&address) {
-        return;
+        return None;
     }
     let peer = peers
         .entry(address)
         .or_insert_with(|| serde_json::json!({"failures":{}}));
-    if !peer.is_object() {
-        *peer = serde_json::json!({"failures":{}});
-    }
-    if !peer["failures"].is_object() {
-        peer["failures"] = serde_json::json!({});
-    }
-    if let Some(codec) =
-        negotiated.filter(|c| ["SBC", "AAC", "aptX", "aptX-HD", "LDAC"].contains(c))
-    {
+    if let Some(codec) = negotiated {
         peer["last_negotiated"] = codec.into();
         peer["failures"][codec] = 0.into();
     }
-    if let Some(codec) = rejected.filter(|c| ["SBC", "AAC", "aptX", "aptX-HD", "LDAC"].contains(c))
-    {
+    if let Some(codec) = rejected {
         let count = peer["failures"][codec]
             .as_u64()
             .unwrap_or(0)
@@ -330,14 +369,37 @@ pub fn history(address: &str, negotiated: Option<&str>, rejected: Option<&str>) 
             .min(255);
         peer["failures"][codec] = count.into();
     }
-    if let Ok(bytes) = serde_json::to_vec(&value) {
-        let _ = reborn_core::atomic_write(std::path::Path::new(path), &bytes);
-    }
+    Some(value)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn history_retains_only_bounded_codec_events_and_observation_clears_failure() {
+        let address = "AA:BB:CC:DD:EE:FF";
+        let retained = serde_json::json!({"schema":1, "owner_notes":"x".repeat(65_000),
+            "peers":{address:{"last_negotiated":"invented", "name":"Private headphones",
+                "failures":{"LDAC":999999, "owner secret":999999}}}});
+        let value = update_history(Some(retained), address, None, Some("LDAC")).unwrap();
+        assert_eq!(value["peers"][address]["failures"]["LDAC"], 255);
+        assert!(serde_json::to_vec(&value).unwrap().len() < 150);
+        assert!(value["owner_notes"].is_null());
+        assert!(value["peers"][address]["name"].is_null());
+        let observed = update_history(Some(value), address, Some("LDAC"), None).unwrap();
+        assert_eq!(observed["peers"][address]["last_negotiated"], "LDAC");
+        assert_eq!(observed["peers"][address]["failures"]["LDAC"], 0);
+        assert!(update_history(None, address, Some("unknown"), None).is_none());
+        let mut too_many = serde_json::json!({"schema":1,"peers":{}});
+        for id in 0..100 {
+            too_many["peers"][format!("00:00:00:00:00:{id:02X}")] = serde_json::json!({});
+        }
+        assert!(update_history(Some(too_many.clone()), address, Some("SBC"), None).is_none());
+        let bounded =
+            update_history(Some(too_many), "00:00:00:00:00:00", None, Some("LDAC")).unwrap();
+        assert_eq!(bounded["peers"].as_object().unwrap().len(), 64);
+        assert!(serde_json::to_vec(&bounded).unwrap().len() < 65_536);
+    }
     #[test]
     fn auto_uses_history_and_current_load_once_without_flapping() {
         let names: Vec<String> = ["SBC", "AAC", "aptX", "aptX-HD", "LDAC"]

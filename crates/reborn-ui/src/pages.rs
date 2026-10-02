@@ -362,7 +362,7 @@ fn bluetooth(ui: &Ui, m: &AppModel) -> Page {
         ));
     }
     let quality = m.platform.snapshot.bluetooth_quality;
-    if quality.sbc_supported && b.codec_choices.contains(&reborn_core::CodecPreference::Sbc) {
+    if quality.sbc_supported && b.sbc_quality_available {
         if let Some(q) = quality.requested_sbc {
             rows.push(disabled(
                 row("SBC Quality", "sbc_quality", q.label()),

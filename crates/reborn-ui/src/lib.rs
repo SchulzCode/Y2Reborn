@@ -164,6 +164,8 @@ pub struct BluetoothView {
     pub devices: Vec<BluetoothDeviceView>,
     /// Policy-enabled codecs the connected peer can use; empty hides the row.
     pub codec_choices: Vec<CodecPreference>,
+    /// SBC quality is useful even when SBC is the peer's only usable codec.
+    pub sbc_quality_available: bool,
     pub problem: Option<String>,
 }
 
@@ -202,6 +204,12 @@ impl Ui {
         let effect = self.action(model, &tracks, action);
         model.library.tracks = tracks;
         effect
+    }
+
+    /// An asynchronous operation may finish after navigation moved elsewhere.
+    /// Keep that current page as the parent of the result, just like Select.
+    pub fn show_operation_result(&mut self, model: &mut AppModel) {
+        Self::go(model, Screen::DiagnosticSection, "result");
     }
 
     pub fn normalize(&self, m: &mut AppModel, tracks: &[Track]) {

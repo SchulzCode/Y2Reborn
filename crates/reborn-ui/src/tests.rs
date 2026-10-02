@@ -1008,6 +1008,12 @@ fn diagnostic_export_is_distinct_from_private_backup_and_soc_is_labelled() {
         ui.model_action(&mut m, Action::Select),
         Effect::Platform(PlatformTask::DiagnosticsExport)
     );
+    ui.show_operation_result(&mut m);
+    assert_eq!(m.screen, Screen::DiagnosticSection);
+    assert_eq!(m.navigation.filter, "result");
+    ui.model_action(&mut m, Action::Back);
+    assert_eq!(m.screen, Screen::Diagnostics);
+    assert_eq!(m.navigation.focus, index);
     m.screen = Screen::Battery;
     assert!(visible_text(&ui, &m).contains("Estimated Charge"));
     m.platform.battery.estimated = false;
@@ -1049,5 +1055,27 @@ fn ldac_controls_need_real_runtime_support_and_preference_is_not_actual() {
     assert_eq!(
         ui.model_action(&mut m, Action::Select),
         Effect::Platform(PlatformTask::LdacAbr(false))
+    );
+}
+
+#[test]
+fn sbc_only_peer_can_enable_xq_without_a_hidden_codec_picker() {
+    use reborn_core::platform::{BluetoothQuality, SbcQuality};
+    let mut ui = radios();
+    let mut m = app(Screen::Bluetooth);
+    ui.bluetooth.codec_choices.clear();
+    ui.bluetooth.sbc_quality_available = true;
+    m.platform.snapshot.bluetooth_quality = BluetoothQuality {
+        sbc_supported: true,
+        requested_sbc: Some(SbcQuality::High),
+        ..Default::default()
+    };
+    assert!(!ui
+        .rows(&m, &m.library.tracks)
+        .iter()
+        .any(|r| r.key == "codec_preference"));
+    assert_eq!(
+        select_key(&mut ui, &mut m, "sbc_quality"),
+        Effect::Platform(PlatformTask::SbcQuality(SbcQuality::Xq))
     );
 }
