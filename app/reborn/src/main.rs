@@ -2929,6 +2929,10 @@ impl Runtime {
                 self.model.settings.album_view = view;
                 self.checkpoint();
             }
+            Effect::SetAlbumWall(on) => {
+                self.model.settings.album_wall = on;
+                self.checkpoint();
+            }
             Effect::SetNowPlayingWheel(wheel) => {
                 self.model.settings.now_playing_wheel = wheel;
                 self.checkpoint();

@@ -209,6 +209,7 @@ pub fn page(ui: &Ui, m: &AppModel, tracks: &[Track]) -> Page {
         Screen::Customize => Page::rows(vec![
             row("Home Menu", "home_menu", home_summary(m)).with_kind(RowKind::Chevron),
             row("Cover Flow", "album_view", m.settings.album_view.label()),
+            row("Wall", "album_wall", on_off(m.settings.album_wall)),
             row("Artists", "artists_list", m.settings.artists_list.label()),
             row(
                 "Now Playing Wheel",
