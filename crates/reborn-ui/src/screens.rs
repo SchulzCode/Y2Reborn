@@ -61,6 +61,8 @@ pub fn draw(ui: &Ui, m: &AppModel, tracks: &[Track], has_art: bool) -> Vec<Quad>
         | Screen::Folders
         | Screen::Album
         | Screen::Artist
+        | Screen::Playlists
+        | Screen::Playlist
         | Screen::Queue => views_library::browse(&mut c, ui, m, tracks, has_art, interactive),
         Screen::Settings
         | Screen::Wifi
@@ -100,6 +102,8 @@ fn native_screen(
         | Screen::Folders
         | Screen::Album
         | Screen::Artist
+        | Screen::Playlists
+        | Screen::Playlist
         | Screen::Queue => views_library::browse(c, ui, m, tracks, has_art, interactive),
         Screen::Settings
         | Screen::Wifi
@@ -142,6 +146,8 @@ fn layout_keys(m: &AppModel, page: Option<&Page>, empty: bool) -> &'static [&'st
         Screen::Album => &["album", "list"],
         Screen::Artist => &["artist", "list"],
         Screen::Queue => &["queue", "list"],
+        Screen::Playlists => &["playlists", "list"],
+        Screen::Playlist => &["playlist", "list"],
         Screen::Equalizer => &["equalizer"],
         Screen::TextEntry | Screen::Pairing => &[],
         Screen::ValueDetail => &["value", "page"],
@@ -597,6 +603,10 @@ pub fn screen_title(m: &AppModel) -> String {
         }
         Screen::Album => "Album".into(),
         Screen::Artist => "Artist".into(),
+        Screen::Playlists => "Playlists".into(),
+        Screen::Playlist => crate::catalog::playlist(m)
+            .map(|p| p.name.clone())
+            .unwrap_or_else(|| "Playlist".into()),
         Screen::NowPlaying => "Now Playing".into(),
         Screen::Queue => "Up next".into(),
         Screen::TrackInfo => "Song info".into(),

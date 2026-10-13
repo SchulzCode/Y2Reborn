@@ -2193,3 +2193,173 @@ fn now_playing_radio_offers_favorite_and_stop_only() {
         Effect::Radio(RadioRequest::ToggleFavoriteCurrent)
     );
 }
+
+fn with_playlists(screen: Screen) -> AppModel {
+    let mut m = app(screen);
+    let playlist =
+        |id: i64, name: &str, ids: &[i64], unresolved: u32, online: bool| reborn_core::Playlist {
+            id,
+            source_id: if online { "internal" } else { "sd" }.into(),
+            path: format!("/data/music/Playlists/{name}.m3u8").into(),
+            name: name.into(),
+            track_ids: ids.to_vec(),
+            unresolved,
+            online,
+        };
+    m.library.playlists = vec![
+        playlist(11, "Calm", &[0, 2], 0, true),
+        playlist(12, "On Card", &[5], 0, false),
+        playlist(10, "Road Trip", &[4, 1, 4, 99], 2, true),
+    ];
+    m
+}
+
+#[test]
+fn playlists_list_names_counts_and_missing_songs_and_hides_removed_media() {
+    let ui = radios();
+    let m = with_playlists(Screen::Playlists);
+    let rows = ui.rows(&m, &m.library.tracks);
+    let summary: Vec<_> = rows
+        .iter()
+        .map(|r| (r.label.as_str(), r.key.as_str(), r.secondary.as_str()))
+        .collect();
+    assert_eq!(
+        summary,
+        [
+            ("Calm", "playlist:11", "2 songs"),
+            ("Road Trip", "playlist:10", "3 songs · 3 missing"),
+        ]
+    );
+    assert_eq!(rows[1].art, Some(4));
+    assert!(drawn_text(&ui.draw(&m, &m.library.tracks, false)).contains("Road Trip"));
+}
+
+#[test]
+fn playlists_are_listed_a_to_z_like_the_rest_of_the_library() {
+    let ui = radios();
+    let mut m = with_playlists(Screen::Playlists);
+    m.library.playlists[1].online = true;
+    m.library.playlists[1].name = "The Best".into();
+    let labels: Vec<_> = ui
+        .rows(&m, &m.library.tracks)
+        .into_iter()
+        .map(|r| r.label)
+        .collect();
+    assert_eq!(labels, ["The Best", "Calm", "Road Trip"]);
+}
+
+#[test]
+fn playlist_plays_from_the_selected_song_with_the_whole_playlist_in_file_order() {
+    let mut ui = radios();
+    let mut m = with_playlists(Screen::Music);
+    select_key(&mut ui, &mut m, "playlists");
+    assert_eq!(m.screen, Screen::Playlists);
+    select_key(&mut ui, &mut m, "playlist:10");
+    assert_eq!(m.screen, Screen::Playlist);
+    assert_eq!(screens::screen_title(&m), "Road Trip");
+    let keys: Vec<_> = ui
+        .rows(&m, &m.library.tracks)
+        .into_iter()
+        .map(|r| r.key)
+        .collect();
+    assert_eq!(keys, ["track:4", "track:1", "track:4"]);
+    // The second occurrence of a repeated song starts there, not at the first.
+    ui.model_action(&mut m, Action::WheelClockwise(1));
+    ui.model_action(&mut m, Action::WheelClockwise(1));
+    assert_eq!(
+        ui.model_action(&mut m, Action::Select),
+        Effect::PlayPlaylist {
+            members: vec![4, 1, 4],
+            position: 2
+        }
+    );
+    assert_eq!(m.screen, Screen::NowPlaying);
+    ui.model_action(&mut m, Action::Back);
+    assert_eq!((m.screen, m.navigation.focus), (Screen::Playlist, 2));
+    ui.model_action(&mut m, Action::Back);
+    assert_eq!((m.screen, m.navigation.focus), (Screen::Playlists, 1));
+}
+
+#[test]
+fn playlist_options_play_shuffle_or_queue_the_whole_playlist() {
+    let mut ui = radios();
+    let mut m = with_playlists(Screen::Playlists);
+    m.navigation.focus = 1;
+    ui.model_action(&mut m, Action::ContextMenu);
+    assert_eq!(m.navigation.modal, Some(Modal::ContextMenu));
+    assert_eq!(ui.modal_copy(&m).0, "Road Trip");
+    let labels: Vec<_> = ui
+        .modal_rows_public(&m, &m.library.tracks)
+        .into_iter()
+        .map(|r| r.label)
+        .collect();
+    assert_eq!(labels, ["Play", "Shuffle", "Play Next", "Add to Queue"]);
+    m.navigation.modal_focus = 3;
+    assert_eq!(
+        ui.model_action(&mut m, Action::Select),
+        Effect::AddToQueueCollection(vec![4, 1, 4])
+    );
+    ui.model_action(&mut m, Action::ContextMenu);
+    m.navigation.modal_focus = 2;
+    assert_eq!(
+        ui.model_action(&mut m, Action::Select),
+        Effect::PlayNextCollection(vec![4, 1, 4])
+    );
+    ui.model_action(&mut m, Action::ContextMenu);
+    assert_eq!(
+        ui.model_action(&mut m, Action::Select),
+        Effect::PlayPlaylist {
+            members: vec![4, 1, 4],
+            position: 0
+        }
+    );
+    assert_eq!(m.screen, Screen::NowPlaying);
+    // A playlist's song has the usual song options.
+    let mut m = with_playlists(Screen::Playlist);
+    m.navigation.filter = "playlist:10".into();
+    ui.model_action(&mut m, Action::ContextMenu);
+    let labels: Vec<_> = ui
+        .modal_rows_public(&m, &m.library.tracks)
+        .into_iter()
+        .map(|r| r.label)
+        .collect();
+    assert_eq!(
+        labels,
+        ["Play next", "Add to queue", "Go to album", "Go to artist"]
+    );
+    m.navigation.modal_focus = 1;
+    assert_eq!(
+        ui.model_action(&mut m, Action::Select),
+        Effect::AddToQueue(4)
+    );
+}
+
+#[test]
+fn playlist_empty_states_explain_what_to_do() {
+    let mut ui = radios();
+    let mut m = app(Screen::Playlists);
+    assert_eq!(ui.row_count(&m, &m.library.tracks), 0);
+    let copy = super::views_library::empty_catalog_copy(&m);
+    assert!(copy.contains("No playlists yet"), "{copy}");
+    assert!(drawn_text(&ui.draw(&m, &m.library.tracks, false)).contains("No playlists yet"));
+    assert_eq!(ui.model_action(&mut m, Action::Select), Effect::ScanLibrary);
+    let mut m = with_playlists(Screen::Playlist);
+    m.library.playlists[2].track_ids = vec![99];
+    m.navigation.filter = "playlist:10".into();
+    assert_eq!(ui.row_count(&m, &m.library.tracks), 0);
+    let copy = super::views_library::empty_catalog_copy(&m);
+    assert!(copy.contains("No songs found"), "{copy}");
+    for term in ENGINEERING {
+        assert!(!copy.contains(term));
+    }
+}
+
+#[test]
+fn music_menu_reaches_playlists() {
+    let mut ui = radios();
+    let mut m = with_playlists(Screen::Music);
+    select_key(&mut ui, &mut m, "playlists");
+    assert_eq!(m.screen, Screen::Playlists);
+    ui.model_action(&mut m, Action::Back);
+    assert_eq!(m.screen, Screen::Music);
+}

@@ -431,6 +431,10 @@ pub enum Screen {
     Folders,
     Album,
     Artist,
+    /// Imported M3U/M3U8 playlists.
+    Playlists,
+    /// One playlist; the navigation filter holds `playlist:<id>`.
+    Playlist,
     NowPlaying,
     Queue,
     TrackInfo,
@@ -579,6 +583,9 @@ pub struct Playlist {
 pub struct LibraryState {
     #[serde(skip)]
     pub tracks: Vec<Track>,
+    /// Playlists, sorted by name.
+    #[serde(skip)]
+    pub playlists: Vec<Playlist>,
     #[serde(skip)]
     pub scanning: bool,
     pub last_scan: Option<ScanSummary>,
@@ -725,6 +732,13 @@ pub enum Effect {
         selected: usize,
         members: Vec<usize>,
         shuffle: bool,
+    },
+    /// Replace the queue with `members` (library indices, possibly repeated)
+    /// in this order and start at `position` within them. Shuffle and repeat
+    /// settings still apply.
+    PlayPlaylist {
+        members: Vec<usize>,
+        position: usize,
     },
     PlayQueue(usize),
     PlayNext(usize),

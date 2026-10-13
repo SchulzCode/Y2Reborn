@@ -2,9 +2,9 @@
 use crate::{album_filter, display_or_unknown, track_matches, Item};
 use reborn_core::{
     sort::{sort_key, SortAs},
-    AppModel, Screen, Track,
+    AppModel, Playlist, Screen, Track,
 };
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 /// A genre's cover track, its albums, its song count and whether the cover
 /// track has artwork.
 type GenreStats<'a> = (usize, BTreeSet<(&'a str, &'a str)>, usize, bool);
@@ -208,6 +208,44 @@ impl Catalog {
                     }
                 }
             }
+            Screen::Playlists => {
+                let index = id_index(tracks);
+                // A to Z as everywhere: case, accents and a leading article aside.
+                let mut playlists: Vec<_> =
+                    m.library.playlists.iter().filter(|p| p.online).collect();
+                playlists.sort_by_cached_key(|p| title_key(&p.name));
+                for p in playlists {
+                    let members = members_with(&index, tracks, p);
+                    // Entries that matched no song, or a song since removed
+                    // or on media that is not inserted.
+                    let missing = p.unresolved as usize + (p.track_ids.len() - members.len());
+                    let songs = match members.len() {
+                        1 => "1 song".to_owned(),
+                        n => format!("{n} songs"),
+                    };
+                    let mut item = Item::new(&p.name, format!("playlist:{}", p.id)).with_secondary(
+                        if missing > 0 {
+                            format!("{songs} · {missing} missing")
+                        } else {
+                            songs
+                        },
+                    );
+                    item.art = members
+                        .iter()
+                        .copied()
+                        .find(|i| tracks[*i].artwork)
+                        .or(members.first().copied());
+                    self.push(item);
+                }
+            }
+            Screen::Playlist => {
+                if let Some(p) = playlist(m) {
+                    let index = id_index(tracks);
+                    for i in members_with(&index, tracks, p) {
+                        self.rows.push(Row::Track(i));
+                    }
+                }
+            }
             Screen::Tracks | Screen::Album | Screen::Artist => {
                 if matches!(m.screen, Screen::Album | Screen::Artist) {
                     self.push(Item::new("Play", "play:collection"));
@@ -284,6 +322,31 @@ fn artist_key(name: &str) -> (String, String) {
 }
 fn title_key(name: &str) -> (String, String) {
     (sort_key(name, SortAs::Title), name.to_owned())
+}
+/// Library index of every track id; built when a playlist view is rebuilt,
+/// never per wheel tick.
+fn id_index(tracks: &[Track]) -> HashMap<i64, usize> {
+    tracks.iter().enumerate().map(|(i, t)| (t.id, i)).collect()
+}
+fn members_with(index: &HashMap<i64, usize>, tracks: &[Track], p: &Playlist) -> Vec<usize> {
+    p.track_ids
+        .iter()
+        .filter_map(|id| index.get(id).copied())
+        .filter(|i| tracks[*i].online)
+        .collect()
+}
+/// The playlist with id `id` (as written in a `playlist:<id>` key).
+pub fn playlist_by_key<'a>(m: &'a AppModel, key: &str) -> Option<&'a Playlist> {
+    let id = key.strip_prefix("playlist:")?.parse::<i64>().ok()?;
+    m.library.playlists.iter().find(|p| p.id == id)
+}
+/// The playlist the Playlist screen shows.
+pub fn playlist(m: &AppModel) -> Option<&Playlist> {
+    playlist_by_key(m, &m.navigation.filter)
+}
+/// Library indices of a playlist's playable songs, in file order.
+pub fn playlist_members(tracks: &[Track], p: &Playlist) -> Vec<usize> {
+    members_with(&id_index(tracks), tracks, p)
 }
 fn album_item(album: &str, artist: &str, index: usize, t: &Track) -> Item {
     let mut item = Item::new(display_or_unknown(album), album_filter(t)).with_secondary(

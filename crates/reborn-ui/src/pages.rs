@@ -86,6 +86,7 @@ pub fn page(ui: &Ui, m: &AppModel, tracks: &[Track]) -> Page {
             Item::new("Artists", "artists"),
             Item::new("Genres", "genres"),
             Item::new("Songs", "tracks"),
+            Item::new("Playlists", "playlists"),
             Item::new("Folders", "folders"),
         ]),
         Screen::NowPlaying if m.current().is_none() => Page::hero(

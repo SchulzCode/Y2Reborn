@@ -842,6 +842,8 @@ impl Ui {
             | Screen::Folders
             | Screen::Artist
             | Screen::Album
+            | Screen::Playlists
+            | Screen::Playlist
             | Screen::Tracks => self.catalog_rows(m, tracks),
             Screen::Queue => self.queue_rows(m),
             Screen::Diagnostics => diagnostics::root(m),
@@ -904,6 +906,8 @@ impl Ui {
                 | Screen::Folders
                 | Screen::Album
                 | Screen::Artist
+                | Screen::Playlists
+                | Screen::Playlist
                 | Screen::Tracks
         )
     }
@@ -1032,6 +1036,14 @@ impl Ui {
                 Item::new("Add to queue", "add_queue"),
                 Item::new("Go to album", "go_album"),
                 Item::new("Go to artist", "go_artist"),
+            ];
+        }
+        if m.screen == Screen::Playlists && key.is_some_and(|key| key.starts_with("playlist:")) {
+            return vec![
+                Item::new("Play", "collection_play"),
+                Item::new("Shuffle", "collection_shuffle"),
+                Item::new("Play Next", "collection_next"),
+                Item::new("Add to Queue", "collection_queue"),
             ];
         }
         if matches!(m.screen, Screen::Album | Screen::Artist) && key == Some("play:collection") {
@@ -1256,6 +1268,9 @@ impl Ui {
                         .and_then(|i| i.parse::<usize>().ok())
                         .and_then(|i| self.radio.stations.get(i))
                         .map(|s| s.name.clone()),
+                    Screen::Playlists => key
+                        .and_then(|k| catalog::playlist_by_key(m, k))
+                        .map(|p| p.name.clone()),
                     _ => None,
                 };
                 return (named.unwrap_or_else(|| "Options".into()), String::new());
@@ -1598,6 +1613,8 @@ impl Ui {
             return effect;
         }
         match m.screen {
+            Screen::Playlists if key.starts_with("playlist:") => Self::go(m, Screen::Playlist, key),
+            Screen::Playlist if key.starts_with("track:") => return self.play_playlist(m, tracks),
             Screen::Artists => Self::go(m, Screen::Artist, key),
             Screen::Genres => Self::go(m, Screen::Albums, key),
             // A genre's albums start with all of its songs.
@@ -1849,8 +1866,19 @@ impl Ui {
         Self::go(m, Screen::NowPlaying, "");
         effect
     }
+    /// Select on a playlist song: the whole playlist, in file order, becomes
+    /// the queue and playback starts at that occurrence of the song.
+    fn play_playlist(&mut self, m: &mut AppModel, tracks: &[Track]) -> Effect {
+        let members = self.filtered_indices(m, tracks);
+        if members.is_empty() {
+            return Effect::None;
+        }
+        let position = m.navigation.focus.min(members.len() - 1);
+        Self::go(m, Screen::NowPlaying, "");
+        Effect::PlayPlaylist { members, position }
+    }
     fn filtered_indices(&self, m: &AppModel, tracks: &[Track]) -> Vec<usize> {
-        if m.screen == Screen::Album {
+        if matches!(m.screen, Screen::Album | Screen::Playlist) {
             // Album order, not library order.
             let mut c = self.catalog.borrow_mut();
             c.ensure(m, tracks);
@@ -2074,6 +2102,33 @@ impl Ui {
             _ => {}
         }
         Self::close_modal(m);
+        if m.screen == Screen::Playlists && menu_key.starts_with("collection_") {
+            let members = catalog::playlist_by_key(m, &source_key)
+                .map(|p| catalog::playlist_members(tracks, p))
+                .unwrap_or_default();
+            let Some(&first) = members.first() else {
+                return Effect::None;
+            };
+            return match menu_key {
+                "collection_play" | "collection_shuffle" => {
+                    Self::go(m, Screen::NowPlaying, "");
+                    if menu_key == "collection_play" {
+                        Effect::PlayPlaylist {
+                            members,
+                            position: 0,
+                        }
+                    } else {
+                        Effect::PlayCollection {
+                            selected: first,
+                            members,
+                            shuffle: true,
+                        }
+                    }
+                }
+                "collection_next" => Effect::PlayNextCollection(members),
+                _ => Effect::AddToQueueCollection(members),
+            };
+        }
         match menu_key {
             "bt_connect" | "bt_output" => self
                 .device(Some(&source_key))
@@ -2234,6 +2289,7 @@ fn route(key: &str) -> Option<Screen> {
         "genres" => Screen::Genres,
         "tracks" => Screen::Tracks,
         "folders" => Screen::Folders,
+        "playlists" => Screen::Playlists,
         "wifi" => Screen::Wifi,
         "bluetooth" => Screen::Bluetooth,
         "pc_transfer" => Screen::PcTransfer,

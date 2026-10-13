@@ -828,6 +828,20 @@ pub(crate) fn empty_copy(m: &AppModel) -> (&'static str, &'static str, Option<&'
             None,
         );
     }
+    if m.screen == Screen::Playlists {
+        return (
+            "No playlists yet",
+            "Copy .m3u or .m3u8 playlists to Internal Storage or the SD card, then scan for music.",
+            Some("Scan for music"),
+        );
+    }
+    if m.screen == Screen::Playlist {
+        return (
+            "No songs found",
+            "None of this playlist's songs are in your library. Copy them to the player, then scan again.",
+            Some("Scan for music"),
+        );
+    }
     if m.library.error.is_some() {
         return (
             "Scan didn't finish",

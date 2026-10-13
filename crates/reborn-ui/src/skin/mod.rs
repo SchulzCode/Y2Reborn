@@ -518,6 +518,8 @@ pub const LAYOUTS: &[&str] = &[
     "album",
     "artist",
     "queue",
+    "playlists",
+    "playlist",
     "song_info",
     "settings",
     "wifi",

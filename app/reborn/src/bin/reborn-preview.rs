@@ -4,7 +4,7 @@
 //! the production platform projection; only the input records are fixtures.
 use reborn_core::{
     platform::{BatteryState, ChargingState, LowBattery},
-    Action, AppModel, AudioOutput, MediaSource, PlaybackState, Screen, Source, Track,
+    Action, AppModel, AudioOutput, MediaSource, PlaybackState, Playlist, Screen, Source, Track,
 };
 use reborn_platform::client;
 use reborn_ui::{BluetoothDeviceView, BluetoothView, NetworkView, Ui, WifiStatus, WifiView};
@@ -63,6 +63,29 @@ fn tracks() -> Vec<Track> {
     out
 }
 
+fn playlists() -> Vec<Playlist> {
+    let list = |id: i64, name: &str, ids: &[i64], unresolved: u32| Playlist {
+        id,
+        source_id: "uuid:CARD".into(),
+        path: format!("/media/sd/Playlists/{name}.m3u8").into(),
+        name: name.into(),
+        track_ids: ids.to_vec(),
+        unresolved,
+        online: true,
+    };
+    vec![
+        list(1, "Evening", &[3, 1, 8, 14, 2, 20, 9], 0),
+        list(2, "Road Trip", &[5, 12, 7, 19, 22, 4, 10, 16, 12], 2),
+        list(3, "Sunday Morning", &[17, 18, 13], 0),
+        list(
+            4,
+            "Train Journey (A Rather Long Playlist Name)",
+            &[21, 23, 24, 6, 11],
+            3,
+        ),
+    ]
+}
+
 fn status() -> Value {
     json!({"schema":"org.y2linux.status/v1",
         "record":{"kernel":"6.18.0-y2linux-preview","boot_id":"preview-boot"},
@@ -100,6 +123,7 @@ fn model() -> AppModel {
     m.replace_queue(tracks()[..6].to_vec(), 0).unwrap();
     m.position_ms = 137_000;
     m.library.tracks = tracks();
+    m.library.playlists = playlists();
     m.settings.volume = 56;
     m.sources = vec![
         Source {
@@ -333,6 +357,35 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             ui.fast_scroll_until =
                 Some(std::time::Instant::now() + std::time::Duration::from_secs(600));
         }
+    );
+    case!("11b-playlists", at(Screen::Playlists, ""), move |ui, m| {
+        ui.accent = teal;
+        m.navigation.focus = 1;
+    });
+    case!(
+        "11c-playlist",
+        at(Screen::Playlist, "playlist:2"),
+        move |ui, m| {
+            ui.accent = orange;
+            m.navigation.focus = 2;
+        }
+    );
+    case!("11d-playlists-empty", at(Screen::Playlists, ""), |_, m| {
+        m.library.playlists.clear();
+    });
+    case!(
+        "11e-playlist-menu",
+        at(Screen::Playlists, ""),
+        move |ui, m| {
+            ui.accent = teal;
+            m.navigation.focus = 1;
+            ui.model_action(m, Action::ContextMenu);
+        }
+    );
+    case!(
+        "11f-playlist-not-found",
+        at(Screen::Playlist, "playlist:3"),
+        |_, m| m.library.playlists[2].track_ids = vec![404, 405]
     );
     case!("12-folders", at(Screen::Folders, ""));
     case!(

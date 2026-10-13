@@ -117,6 +117,7 @@ most specific name first:
 | `list` | every list: library lists, settings pages, pickers, diagnostics |
 | `page` | pages with a heading or facts (About, Storage, Song info, …) |
 | `artists`, `albums`, `genres`, `songs`, `folders`, `album`, `artist`, `queue` | one library screen (else `list`) |
+| `playlists`, `playlist` | the playlists, one playlist (else `list`) |
 | `cover_flow` | Albums in Cover Flow (only this name; else Reborn's) |
 | `music`, `song_info`, `settings`, `wifi`, `bluetooth`, `computer`, `sound`, `playback`, `crossfade`, `screen_off`, `theme`, `library`, `display`, `service`, `battery`, `sleep`, `storage`, `updates`, `about`, `maintenance`, `diagnostics`, `diagnostic`, `value` | one settings or system screen (else `page` or `list`) |
 | `equalizer` | the equalizer (only this name; else Reborn's) |

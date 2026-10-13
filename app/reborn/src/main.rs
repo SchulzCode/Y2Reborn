@@ -83,6 +83,7 @@ struct Runtime {
     headless: bool,
     last_activity: Instant,
     query: Option<Receiver<Result<Vec<Track>, String>>>,
+    playlist_query: Option<Receiver<Result<Vec<reborn_core::Playlist>, String>>>,
     action_depth: usize,
     action_before: Option<AppModel>,
     action_dirty_before: Option<DirtyState>,
@@ -630,7 +631,7 @@ impl Runtime {
         if !selected.online {
             return Err("media source offline".into());
         }
-        let mut queue = members
+        let queue = members
             .into_iter()
             .filter_map(|member| self.model.library.tracks.get(member).cloned())
             .filter(|track| track.online)
@@ -639,10 +640,49 @@ impl Runtime {
             .iter()
             .position(|track| track.id == selected.id && track.path == selected.path)
             .ok_or("selected track is not in the playback collection")?;
+        let seed = selected.id.unsigned_abs().wrapping_add(index as u64 + 1);
+        self.start_queue(queue, selected_position, seed, force_shuffle)
+    }
+
+    /// A playlist: `members` in file order (a song may occur twice), started
+    /// at the occurrence `position`. Songs on removed media are skipped.
+    fn play_ordered(&mut self, members: Vec<usize>, position: usize) -> Result<(), String> {
+        let mut queue = Vec::with_capacity(members.len().min(reborn_core::MAX_QUEUE));
+        let mut start = None;
+        for (at, member) in members.into_iter().enumerate() {
+            let Some(track) = self.model.library.tracks.get(member) else {
+                continue;
+            };
+            if !track.online || queue.len() >= reborn_core::MAX_QUEUE {
+                continue;
+            }
+            if at == position {
+                start = Some(queue.len());
+            }
+            queue.push(track.clone());
+        }
+        let start = start.ok_or("selected track is not in the playback collection")?;
+        let seed = queue[start]
+            .id
+            .unsigned_abs()
+            .wrapping_add(position as u64 + 1);
+        self.start_queue(queue, start, seed, false)
+    }
+
+    /// Replace the queue and load `selected_position`. With shuffle (forced
+    /// or the setting) the selected song plays first and the rest follow in
+    /// a shuffled order.
+    fn start_queue(
+        &mut self,
+        mut queue: Vec<Track>,
+        selected_position: usize,
+        seed: u64,
+        force_shuffle: bool,
+    ) -> Result<(), String> {
         let use_shuffle = force_shuffle || self.model.settings.shuffle;
         if use_shuffle {
             let selected = queue.remove(selected_position);
-            let mut seed = selected.id.unsigned_abs().wrapping_add(index as u64 + 1);
+            let mut seed = seed;
             for i in (1..queue.len()).rev() {
                 seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
                 let j = (seed as usize % (i + 1)).min(i);
@@ -1313,6 +1353,7 @@ impl Runtime {
                 members,
                 shuffle,
             } => self.play_members(selected, members, shuffle)?,
+            Effect::PlayPlaylist { members, position } => self.play_ordered(members, position)?,
             Effect::PlayQueue(index) => {
                 if index >= self.model.queue.len() {
                     return Err("invalid queue entry".into());
@@ -2831,6 +2872,7 @@ fn run() -> Result<(), String> {
     );
     db.sources(model.sources.clone())?;
     let initial_catalog = db.catalog()?;
+    let initial_playlists = db.playlists()?;
     let scanner = Scanner::spawn(db.clone(), log.clone())?;
     scanner.scan(model.sources.clone())?;
     startup_phase(&log, process_started, "library_workers_ready");
@@ -2932,6 +2974,7 @@ fn run() -> Result<(), String> {
         headless,
         last_activity: Instant::now(),
         query: Some(initial_catalog),
+        playlist_query: Some(initial_playlists),
         action_depth: 0,
         action_before: None,
         action_dirty_before: None,
@@ -3407,6 +3450,10 @@ fn run() -> Result<(), String> {
                 Ok(stats) => stats.rescanned != 0 || stats.removed != 0,
                 Err(_) => true,
             };
+            let refresh_playlists = refresh_catalog
+                || result
+                    .as_ref()
+                    .is_ok_and(|stats| stats.playlists_changed != 0);
             match result {
                 Ok(stats) if stats.complete => {
                     rt.model
@@ -3445,7 +3492,28 @@ fn run() -> Result<(), String> {
             if refresh_catalog {
                 rt.query = rt.db.catalog().ok();
             }
+            if refresh_playlists {
+                rt.playlist_query = rt.db.playlists().ok();
+            }
             rt.dirty.mark_render();
+        }
+        if let Some(rx) = &rt.playlist_query {
+            if let Ok(value) = rx.try_recv() {
+                match value {
+                    Ok(playlists) => {
+                        if matches!(rt.model.screen, Screen::Playlists | Screen::Playlist) {
+                            rt.model.navigation.modal = None;
+                            rt.model.navigation.context_target = None;
+                            rt.model.navigation.context_key = None;
+                        }
+                        rt.model.library.playlists = playlists;
+                        rt.ui.invalidate_catalog();
+                    }
+                    Err(e) => rt.fail("database", e),
+                }
+                rt.playlist_query = None;
+                rt.dirty.mark_render();
+            }
         }
         if let Some(rx) = &rt.query {
             if let Ok(value) = rx.try_recv() {
@@ -3457,6 +3525,8 @@ fn run() -> Result<(), String> {
                                 | Screen::Album
                                 | Screen::Artist
                                 | Screen::Folders
+                                | Screen::Playlists
+                                | Screen::Playlist
                                 | Screen::TrackInfo
                         ) {
                             rt.model.navigation.modal = None;
@@ -3924,6 +3994,7 @@ fn run() -> Result<(), String> {
                     // Publish cached metadata with the new online flags now;
                     // scanner completion reloads only actual row changes.
                     rt.query = rt.db.catalog().ok();
+                    rt.playlist_query = rt.db.playlists().ok();
                     rt.model.apply(Event::LibraryScanStarted);
                     if let Err(error) = rt.scanner.scan(rt.model.sources.clone()) {
                         rt.model.apply(Event::LibraryScanFailed(error.clone()));
