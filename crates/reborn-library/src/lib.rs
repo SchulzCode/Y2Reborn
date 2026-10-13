@@ -2,7 +2,8 @@
 pub mod benchmark;
 #[cfg(test)]
 mod platform_tests;
-use reborn_core::{MediaSource, Source, Track};
+pub mod playlists;
+use reborn_core::{MediaSource, Playlist, Source, Track};
 use reborn_media::{Cancel, MediaFile};
 use reborn_observability::{HealthState, Level, Observer};
 use rusqlite::{params, Connection, ErrorCode};
@@ -50,6 +51,12 @@ pub struct ScanMetrics {
     pub ffmpeg_info_runs: u64,
     #[serde(default)]
     pub ffmpeg_io_bytes: u64,
+    /// Playlist files found on the scanned media.
+    #[serde(default)]
+    pub playlists: u64,
+    /// Playlists added, re-read, re-resolved or removed by this scan.
+    #[serde(default)]
+    pub playlists_changed: u64,
 }
 #[derive(Debug, Clone, Default)]
 pub struct Filter {
@@ -73,6 +80,13 @@ enum DbCommand {
     ),
     Batch(Vec<Track>, i64, SyncSender<Result<(), String>>),
     Finish(Source, i64, bool, SyncSender<Result<ScanFinish, String>>),
+    PlaylistProbe(
+        String,
+        Vec<PlaylistStamp>,
+        SyncSender<Result<Vec<bool>, String>>,
+    ),
+    PlaylistSync(PlaylistSync, SyncSender<Result<u64, String>>),
+    Playlists(SyncSender<Result<Vec<Playlist>, String>>),
     Test(SyncSender<Result<serde_json::Value, String>>),
     #[cfg(test)]
     TestSql(String, SyncSender<Result<(), String>>),
@@ -227,6 +241,11 @@ fn open(path: &Path) -> Result<Connection, OpenFailure> {
  COMMIT;")
             .map_err(|error| classify_open_error(error, OpenStage::Migration))?;
     }
+    // Additive like the browse indexes: schema-1 readers ignore the table.
+    // `locations` keeps each entry as written so a library change can
+    // re-resolve without reading the playlist file again.
+    c.execute_batch("CREATE TABLE IF NOT EXISTS playlists(id INTEGER PRIMARY KEY, source_id TEXT NOT NULL REFERENCES sources(id), path TEXT NOT NULL, name TEXT NOT NULL, size INTEGER NOT NULL, mtime INTEGER NOT NULL, locations TEXT NOT NULL, track_ids BLOB NOT NULL, unresolved INTEGER NOT NULL, UNIQUE(source_id,path));")
+        .map_err(|error| classify_open_error(error, OpenStage::Migration))?;
     c.execute_batch("CREATE TEMP TABLE scan_seen(id INTEGER PRIMARY KEY);
         CREATE TEMP TABLE scan_candidates(position INTEGER PRIMARY KEY,path TEXT NOT NULL,size INTEGER NOT NULL,mtime INTEGER NOT NULL);")
         .map_err(|error| classify_open_error(error, OpenStage::Setup))?;
@@ -429,6 +448,234 @@ fn catalog(c: &mut Connection) -> Result<Vec<Track>, String> {
     }
     tx.commit().map_err(err)?;
     Ok(tracks)
+}
+/// A playlist file seen by the scanner: logical path, size and mtime.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PlaylistStamp {
+    path: PathBuf,
+    size: u64,
+    mtime: i64,
+}
+/// A discovered playlist file; `content` is present when it was (re)read.
+#[derive(Debug, Clone)]
+pub(crate) struct PlaylistFile {
+    source_id: String,
+    stamp: PlaylistStamp,
+    content: Option<Vec<u8>>,
+}
+#[derive(Debug, Clone, Default)]
+pub(crate) struct PlaylistSync {
+    files: Vec<PlaylistFile>,
+    /// Sources whose traversal was complete: their vanished playlists go.
+    complete_sources: Vec<String>,
+    /// Tracks were added, changed or removed: re-resolve stored entries.
+    library_changed: bool,
+}
+/// Which stamps differ from the stored playlist (or have none yet).
+fn playlist_probe(
+    c: &Connection,
+    source: &str,
+    stamps: &[PlaylistStamp],
+) -> Result<Vec<bool>, String> {
+    let mut q = c
+        .prepare_cached(
+            "SELECT 1 FROM playlists WHERE source_id=?1 AND path=?2 AND size=?3 AND mtime=?4",
+        )
+        .map_err(err)?;
+    stamps
+        .iter()
+        .map(|s| {
+            q.exists(params![source, s.path.to_string_lossy(), s.size, s.mtime])
+                .map(|unchanged| !unchanged)
+                .map_err(err)
+        })
+        .collect()
+}
+fn library_index(c: &Connection) -> Result<playlists::LibraryIndex, String> {
+    let mut q = c
+        // Only playable tracks: an offline source (for example the same card
+        // under an older source id) holds the same paths again, which made
+        // every entry ambiguous and therefore unresolved.
+        .prepare_cached(
+            "SELECT t.id,t.path FROM tracks t JOIN sources s ON s.id=t.source_id \
+             WHERE t.deleted=0 AND s.online=1",
+        )
+        .map_err(err)?;
+    let rows = q
+        .query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))
+        .map_err(err)?;
+    Ok(playlists::LibraryIndex::new(
+        rows.collect::<rusqlite::Result<Vec<_>>>().map_err(err)?,
+    ))
+}
+/// Store re-read playlists, re-resolve stored ones after library changes
+/// and forget playlists whose files are gone. Returns how many changed.
+fn sync_playlists(c: &mut Connection, sync: PlaylistSync) -> Result<u64, String> {
+    let tx = c.transaction().map_err(err)?;
+    let roots: std::collections::HashMap<String, PathBuf> = {
+        let mut q = tx
+            .prepare_cached("SELECT id,root FROM sources")
+            .map_err(err)?;
+        let rows = q
+            .query_map([], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    PathBuf::from(r.get::<_, String>(1)?),
+                ))
+            })
+            .map_err(err)?;
+        rows.collect::<rusqlite::Result<_>>().map_err(err)?
+    };
+    let stored: i64 = tx
+        .query_row("SELECT count(*) FROM playlists", [], |r| r.get(0))
+        .map_err(err)?;
+    let fresh = sync.files.iter().any(|f| f.content.is_some());
+    // Entries that did not resolve are retried on every sync, so a fix to
+    // the library (a source coming back online, say) heals them without
+    // the playlist file itself changing.
+    let missing: bool = tx
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM playlists WHERE unresolved>0)",
+            [],
+            |r| r.get(0),
+        )
+        .map_err(err)?;
+    let recheck = sync.library_changed || missing;
+    let index = if fresh || (recheck && stored > 0) {
+        Some(library_index(&tx)?)
+    } else {
+        None
+    };
+    let root_of = |source: &str| roots.get(source).cloned().unwrap_or_else(|| "/".into());
+    let mut changed = 0u64;
+    let mut touched = std::collections::HashSet::new();
+    if let Some(index) = &index {
+        let mut upsert = tx.prepare_cached("INSERT INTO playlists(source_id,path,name,size,mtime,locations,track_ids,unresolved) VALUES(?1,?2,?3,?4,?5,?6,?7,?8) ON CONFLICT(source_id,path) DO UPDATE SET name=excluded.name,size=excluded.size,mtime=excluded.mtime,locations=excluded.locations,track_ids=excluded.track_ids,unresolved=excluded.unresolved").map_err(err)?;
+        for file in &sync.files {
+            let Some(content) = &file.content else {
+                continue;
+            };
+            let parsed = playlists::parse(content);
+            let path = &file.stamp.path;
+            let resolved = index.resolve(
+                path,
+                &root_of(&file.source_id),
+                parsed.entries.iter().map(|e| e.location.as_str()),
+            );
+            let locations = parsed
+                .entries
+                .iter()
+                .map(|e| e.location.as_str())
+                .collect::<Vec<_>>()
+                .join("\n");
+            upsert
+                .execute(params![
+                    file.source_id,
+                    path.to_string_lossy(),
+                    playlists::display_name(path, &parsed),
+                    file.stamp.size,
+                    file.stamp.mtime,
+                    locations,
+                    playlists::encode_ids(&resolved.track_ids),
+                    resolved.unresolved
+                ])
+                .map_err(err)?;
+            touched.insert((file.source_id.clone(), path.to_string_lossy().into_owned()));
+            changed += 1;
+        }
+        if recheck {
+            let rows = {
+                let mut q = tx
+                    .prepare_cached(
+                        "SELECT id,source_id,path,locations,track_ids,unresolved FROM playlists",
+                    )
+                    .map_err(err)?;
+                let rows = q
+                    .query_map([], |r| {
+                        Ok((
+                            r.get::<_, i64>(0)?,
+                            r.get::<_, String>(1)?,
+                            r.get::<_, String>(2)?,
+                            r.get::<_, String>(3)?,
+                            r.get::<_, Vec<u8>>(4)?,
+                            r.get::<_, u32>(5)?,
+                        ))
+                    })
+                    .map_err(err)?;
+                rows.collect::<rusqlite::Result<Vec<_>>>().map_err(err)?
+            };
+            let mut update = tx
+                .prepare_cached("UPDATE playlists SET track_ids=?2,unresolved=?3 WHERE id=?1")
+                .map_err(err)?;
+            for (id, source, path, locations, ids, unresolved) in rows {
+                if touched.contains(&(source.clone(), path.clone())) {
+                    continue;
+                }
+                let resolved = index.resolve(
+                    Path::new(&path),
+                    &root_of(&source),
+                    locations.lines().filter(|l| !l.is_empty()),
+                );
+                let encoded = playlists::encode_ids(&resolved.track_ids);
+                if encoded != ids || resolved.unresolved != unresolved {
+                    update
+                        .execute(params![id, encoded, resolved.unresolved])
+                        .map_err(err)?;
+                    changed += 1;
+                }
+            }
+        }
+    }
+    {
+        let mut existing = tx
+            .prepare_cached("SELECT id,path FROM playlists WHERE source_id=?1")
+            .map_err(err)?;
+        let mut delete = tx
+            .prepare_cached("DELETE FROM playlists WHERE id=?1")
+            .map_err(err)?;
+        for source in &sync.complete_sources {
+            let present: std::collections::HashSet<String> = sync
+                .files
+                .iter()
+                .filter(|f| &f.source_id == source)
+                .map(|f| f.stamp.path.to_string_lossy().into_owned())
+                .collect();
+            let rows = existing
+                .query_map([source], |r| {
+                    Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?))
+                })
+                .map_err(err)?
+                .collect::<rusqlite::Result<Vec<_>>>()
+                .map_err(err)?;
+            for (id, path) in rows {
+                if !present.contains(&path) {
+                    delete.execute([id]).map_err(err)?;
+                    changed += 1;
+                }
+            }
+        }
+    }
+    tx.commit().map_err(err)?;
+    Ok(changed)
+}
+fn list_playlists(c: &Connection) -> Result<Vec<Playlist>, String> {
+    let mut q = c
+        .prepare_cached("SELECT p.id,p.source_id,p.path,p.name,p.track_ids,p.unresolved,s.online FROM playlists p JOIN sources s ON s.id=p.source_id ORDER BY p.name COLLATE NOCASE,p.path,p.id")
+        .map_err(err)?;
+    let rows = q
+        .query_map([], |r| {
+            Ok(Playlist {
+                id: r.get(0)?,
+                source_id: r.get(1)?,
+                path: PathBuf::from(r.get::<_, String>(2)?),
+                name: r.get(3)?,
+                track_ids: playlists::decode_ids(&r.get::<_, Vec<u8>>(4)?),
+                unresolved: r.get(5)?,
+                online: r.get(6)?,
+            })
+        })
+        .map_err(err)?;
+    rows.collect::<rusqlite::Result<Vec<_>>>().map_err(err)
 }
 fn batch(c: &mut Connection, tracks: Vec<Track>, seen: i64) -> Result<(), String> {
     batch_tracked(c, tracks, seen, false)
@@ -832,6 +1079,20 @@ impl Database {
                             }
                             r.map(|_| ())
                         }
+                        DbCommand::PlaylistProbe(source, stamps, reply) => {
+                            let r = playlist_probe(&c, &source, &stamps);
+                            let _ = reply.try_send(r.clone());
+                            r.map(|_| ())
+                        }
+                        DbCommand::PlaylistSync(sync, reply) => {
+                            let r = sync_playlists(&mut c, sync);
+                            let _ = reply.try_send(r.clone());
+                            r.map(|_| ())
+                        }
+                        DbCommand::Playlists(reply) => {
+                            let _ = reply.try_send(list_playlists(&c));
+                            Ok(())
+                        }
                         DbCommand::Test(reply) => {
                             let _ = reply.try_send(validate(&c));
                             Ok(())
@@ -899,6 +1160,34 @@ impl Database {
             .try_send(DbCommand::Catalog(tx))
             .map_err(|e| e.to_string())?;
         Ok(rx)
+    }
+    /// Every stored playlist, sorted by name, with its source's online flag.
+    pub fn playlists(&self) -> Result<Receiver<Result<Vec<Playlist>, String>>, String> {
+        let (tx, rx) = sync_channel(1);
+        self.tx
+            .try_send(DbCommand::Playlists(tx))
+            .map_err(|e| e.to_string())?;
+        Ok(rx)
+    }
+    fn playlist_probe(
+        &self,
+        source: String,
+        stamps: Vec<PlaylistStamp>,
+    ) -> Result<Vec<bool>, String> {
+        let (tx, rx) = sync_channel(1);
+        self.tx
+            .send(DbCommand::PlaylistProbe(source, stamps, tx))
+            .map_err(|e| e.to_string())?;
+        rx.recv_timeout(Duration::from_secs(15))
+            .map_err(|e| e.to_string())?
+    }
+    fn sync_playlists(&self, sync: PlaylistSync) -> Result<u64, String> {
+        let (tx, rx) = sync_channel(1);
+        self.tx
+            .send(DbCommand::PlaylistSync(sync, tx))
+            .map_err(|e| e.to_string())?;
+        rx.recv_timeout(Duration::from_secs(30))
+            .map_err(|e| e.to_string())?
     }
     fn begin_scan(&self, source: String) -> Result<i64, String> {
         let (tx, rx) = sync_channel(1);
@@ -1120,6 +1409,17 @@ fn file_mtime(meta: &fs::Metadata) -> Option<i64> {
         .ok()
         .map(|t| t.as_nanos().min(i64::MAX as u128) as i64)
 }
+fn read_playlist(path: &Path) -> std::io::Result<Vec<u8>> {
+    use std::io::Read;
+    let mut bytes = Vec::new();
+    fs::File::open(path)?
+        .take(playlists::MAX_PLAYLIST_BYTES + 1)
+        .read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > playlists::MAX_PLAYLIST_BYTES {
+        return Err(std::io::Error::other("playlist too large"));
+    }
+    Ok(bytes)
+}
 fn same_file(before: &fs::Metadata, after: &fs::Metadata) -> bool {
     before.dev() == after.dev()
         && before.ino() == after.ino()
@@ -1289,6 +1589,7 @@ fn scan_sources_with_identity_and_reuse(
         complete: true,
         ..Default::default()
     };
+    let mut playlist_sync = PlaylistSync::default();
     log.emit(
         Level::Info,
         "scanner",
@@ -1334,6 +1635,8 @@ fn scan_sources_with_identity_and_reuse(
         };
         let mut batch_items = Vec::with_capacity(64);
         let mut complete = true;
+        let mut found_playlists: Vec<(PlaylistStamp, PathBuf)> = Vec::new();
+        let mut playlists_complete = true;
         while let Some((entries, depth)) = directories.last_mut() {
             workload.renew();
             log.heartbeat("scanner", 30);
@@ -1384,6 +1687,31 @@ fn scan_sources_with_identity_and_reuse(
                     Err(_) => {
                         complete = false;
                         stats.failures += 1;
+                    }
+                }
+                continue;
+            }
+            if file_type.is_file() && playlists::is_playlist(&path) {
+                if depth <= playlists::MAX_PLAYLIST_DEPTH {
+                    match entry.metadata() {
+                        Ok(meta) if meta.len() > playlists::MAX_PLAYLIST_BYTES => {}
+                        Ok(meta)
+                            if playlist_sync.files.len() + found_playlists.len()
+                                < playlists::MAX_PLAYLISTS =>
+                        {
+                            match (file_mtime(&meta), path.strip_prefix(&pinned_root)) {
+                                (Some(mtime), Ok(relative)) => found_playlists.push((
+                                    PlaylistStamp {
+                                        path: source.root.join(relative),
+                                        size: meta.len(),
+                                        mtime,
+                                    },
+                                    path.clone(),
+                                )),
+                                _ => playlists_complete = false,
+                            }
+                        }
+                        _ => playlists_complete = false,
                     }
                 }
                 continue;
@@ -1475,6 +1803,57 @@ fn scan_sources_with_identity_and_reuse(
             stats.failures += 1;
         }
         stats.complete &= complete;
+        // Playlists: only files that changed since they were stored are read,
+        // through the pinned root like the music itself.
+        stats.playlists += found_playlists.len() as u64;
+        if !found_playlists.is_empty() && identity_is_current(source) {
+            let stamps = found_playlists.iter().map(|(s, _)| s.clone()).collect();
+            match db.playlist_probe(source.id.clone(), stamps) {
+                Ok(stale) => {
+                    for ((stamp, pinned), stale) in found_playlists.into_iter().zip(stale) {
+                        let content = if stale {
+                            match read_playlist(&pinned) {
+                                Ok(bytes) => Some(bytes),
+                                Err(_) => {
+                                    playlists_complete = false;
+                                    continue;
+                                }
+                            }
+                        } else {
+                            None
+                        };
+                        playlist_sync.files.push(PlaylistFile {
+                            source_id: source.id.clone(),
+                            stamp,
+                            content,
+                        });
+                    }
+                }
+                Err(_) => playlists_complete = false,
+            }
+        } else if !found_playlists.is_empty() {
+            playlists_complete = false;
+        }
+        if complete && playlists_complete {
+            playlist_sync.complete_sources.push(source.id.clone());
+        }
+    }
+    playlist_sync.library_changed = stats.rescanned != 0 || stats.removed != 0;
+    if !playlist_sync.files.is_empty()
+        || !playlist_sync.complete_sources.is_empty()
+        || playlist_sync.library_changed
+    {
+        match db.sync_playlists(playlist_sync) {
+            Ok(changed) => stats.playlists_changed = changed,
+            Err(error) => log.emit(
+                Level::Warn,
+                "scanner",
+                "playlists_failed",
+                &error,
+                Some(id),
+                json!({"recovery":"retain_stored_playlists"}),
+            ),
+        }
     }
     // Each batch and Finish is acknowledged by the single SQLite worker.
     // Integrity diagnostics are explicit; unchanged scans do not repeat quick_check.
@@ -2732,5 +3111,278 @@ mod ingest_regression_tests {
         assert_eq!(file_mtime(&before), file_mtime(&after));
         assert!(!same_file(&before, &after));
         fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod playlist_tests {
+    use super::*;
+
+    fn temp(label: &str) -> PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "reborn-playlist-{label}-{}-{}",
+            std::process::id(),
+            reborn_observability::wall_ms()
+        ));
+        let _ = fs::remove_dir_all(&path);
+        fs::create_dir_all(&path).unwrap();
+        path
+    }
+
+    fn tone(to: &Path) {
+        fs::create_dir_all(to.parent().unwrap()).unwrap();
+        fs::copy(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/fixtures/tone.flac"),
+            to,
+        )
+        .unwrap();
+    }
+
+    fn playlists(db: &Database) -> Vec<Playlist> {
+        db.playlists()
+            .unwrap()
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap()
+            .unwrap()
+    }
+
+    fn id_of(db: &Database, path: &Path) -> i64 {
+        db.list(Filter {
+            limit: 100,
+            ..Default::default()
+        })
+        .unwrap()
+        .recv_timeout(Duration::from_secs(5))
+        .unwrap()
+        .unwrap()
+        .into_iter()
+        .find(|t| t.path == path)
+        .unwrap_or_else(|| panic!("{} not in library", path.display()))
+        .id
+    }
+
+    #[test]
+    fn scan_imports_resolves_refreshes_and_forgets_playlists_without_writing_them() {
+        let root = temp("scan");
+        let media = root.join("media");
+        let one = media.join("Music/Artist/Album/01 Track.flac");
+        let two = media.join("Music/Artist/Album/02 Other.flac");
+        tone(&one);
+        tone(&two);
+        let list = media.join("Playlists/Mix.m3u8");
+        fs::create_dir_all(list.parent().unwrap()).unwrap();
+        let text = "\u{feff}#EXTM3U\r\n#EXTINF:3,Artist - Other\r\n../Music/Artist/Album/02 Other.flac\r\n#EXTINF:3,Artist - Track\r\n..\\Music\\artist\\ALBUM\\01 TRACK.flac\r\n../Music/Artist/Album/03 Later.flac\r\n";
+        fs::write(&list, text).unwrap();
+        // Too deep to be looked for.
+        let deep = media.join("a/b/c/d/e/f/g/h/i/Deep.m3u");
+        fs::create_dir_all(deep.parent().unwrap()).unwrap();
+        fs::write(&deep, "../x.flac\n").unwrap();
+
+        let source = Source {
+            id: "internal".into(),
+            kind: MediaSource::Internal,
+            root: media.clone(),
+            online: true,
+            mount: "fixture".into(),
+            mount_id: None,
+        };
+        let log = Observer::new(&root.join("logs")).unwrap();
+        let db_path = root.join("library.db");
+        let db = Database::spawn(db_path.clone(), log.clone()).unwrap();
+        db.sources(vec![source.clone()]).unwrap();
+        let scan = |db: &Database| {
+            scan_sources_with_identity(
+                db,
+                std::slice::from_ref(&source),
+                &log,
+                &AtomicBool::new(false),
+                |_| true,
+            )
+            .unwrap()
+        };
+
+        let first = scan(&db);
+        assert!(first.complete);
+        assert_eq!(first.playlists, 1);
+        assert_eq!(first.playlists_changed, 1);
+        let (id1, id2) = (id_of(&db, &one), id_of(&db, &two));
+        let stored = playlists(&db);
+        assert_eq!(stored.len(), 1);
+        assert_eq!(stored[0].name, "Mix");
+        assert_eq!(stored[0].path, list);
+        assert_eq!(stored[0].track_ids, [id2, id1]);
+        assert_eq!(stored[0].unresolved, 1);
+        assert!(stored[0].online);
+
+        // Nothing changed: nothing is re-read or rewritten.
+        db.execute_test_sql("CREATE TRIGGER forbid_playlist_write BEFORE UPDATE ON playlists BEGIN SELECT RAISE(FAIL,'playlist rewritten'); END;".into()).unwrap();
+        let again = scan(&db);
+        assert_eq!(again.playlists_changed, 0);
+        db.execute_test_sql("DROP TRIGGER forbid_playlist_write".into())
+            .unwrap();
+
+        // The missing song arrives: stored entries are resolved again.
+        let three = media.join("Music/Artist/Album/03 Later.flac");
+        tone(&three);
+        let added = scan(&db);
+        assert_eq!(added.playlists_changed, 1);
+        let id3 = id_of(&db, &three);
+        let stored = playlists(&db);
+        assert_eq!(stored[0].track_ids, [id2, id1, id3]);
+        assert_eq!(stored[0].unresolved, 0);
+
+        // Survives a restart (database round trip).
+        db.shutdown(Duration::from_secs(5)).unwrap();
+        let db = Database::spawn(db_path.clone(), log.clone()).unwrap();
+        db.sources(vec![source.clone()]).unwrap();
+        assert_eq!(playlists(&db), stored);
+
+        // The file changes: it is read again.
+        std::thread::sleep(Duration::from_millis(20));
+        fs::write(
+            &list,
+            "#EXTM3U\n#PLAYLIST:Road Trip\n../Music/Artist/Album/01 Track.flac\n",
+        )
+        .unwrap();
+        let edited = scan(&db);
+        assert_eq!(edited.playlists_changed, 1);
+        let stored = playlists(&db);
+        assert_eq!(stored[0].name, "Road Trip");
+        assert_eq!(stored[0].track_ids, [id1]);
+        let written = fs::read(&list).unwrap();
+
+        // An SD card going offline keeps the playlist, marked offline.
+        db.sources(vec![Source {
+            online: false,
+            ..source.clone()
+        }])
+        .unwrap();
+        assert!(!playlists(&db)[0].online);
+        db.sources(vec![source.clone()]).unwrap();
+
+        // The file is removed: the playlist goes with it.
+        fs::remove_file(&list).unwrap();
+        let removed = scan(&db);
+        assert_eq!(removed.playlists, 0);
+        assert_eq!(removed.playlists_changed, 1);
+        assert!(playlists(&db).is_empty());
+        assert_eq!(
+            written,
+            b"#EXTM3U\n#PLAYLIST:Road Trip\n../Music/Artist/Album/01 Track.flac\n"
+        );
+        db.stop();
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn sync_keeps_playlists_of_incomplete_sources_and_counts_unresolved() {
+        let p = temp("sync").join("library.db");
+        let mut c = open(&p).unwrap();
+        c.execute("INSERT INTO sources VALUES('sd','/media/sd',1)", [])
+            .unwrap();
+        batch(
+            &mut c,
+            vec![Track {
+                source_id: "sd".into(),
+                path: "/media/sd/Music/A/B/01.flac".into(),
+                ..Default::default()
+            }],
+            1,
+        )
+        .unwrap();
+        let file = |content: Option<&str>| PlaylistFile {
+            source_id: "sd".into(),
+            stamp: PlaylistStamp {
+                path: "/media/sd/Playlists/One.m3u8".into(),
+                size: 10,
+                mtime: 20,
+            },
+            content: content.map(|c| c.as_bytes().to_vec()),
+        };
+        let changed = sync_playlists(
+            &mut c,
+            PlaylistSync {
+                files: vec![file(Some("../Music/A/B/01.flac\nE:\\Gone\\x.flac\n"))],
+                complete_sources: vec!["sd".into()],
+                library_changed: false,
+            },
+        )
+        .unwrap();
+        assert_eq!(changed, 1);
+        let stored = list_playlists(&c).unwrap();
+        assert_eq!(stored[0].track_ids.len(), 1);
+        assert_eq!(stored[0].unresolved, 1);
+        assert_eq!(
+            playlist_probe(&c, "sd", &[file(None).stamp]).unwrap(),
+            [false]
+        );
+        // An incomplete traversal that did not see the file keeps it.
+        sync_playlists(&mut c, PlaylistSync::default()).unwrap();
+        assert_eq!(list_playlists(&c).unwrap().len(), 1);
+        // A complete one forgets it.
+        sync_playlists(
+            &mut c,
+            PlaylistSync {
+                complete_sources: vec!["sd".into()],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(list_playlists(&c).unwrap().is_empty());
+        drop(c);
+        let _ = fs::remove_dir_all(p.parent().unwrap());
+    }
+
+    #[test]
+    fn sync_ignores_tracks_of_an_offline_duplicate_source() {
+        let p = temp("sync-offline").join("library.db");
+        let mut c = open(&p).unwrap();
+        // The same card once recorded under an older id, now offline.
+        c.execute("INSERT INTO sources VALUES('old','/media/sd',0)", [])
+            .unwrap();
+        c.execute("INSERT INTO sources VALUES('sd','/media/sd',1)", [])
+            .unwrap();
+        for source in ["old", "sd"] {
+            batch(
+                &mut c,
+                vec![Track {
+                    source_id: source.into(),
+                    path: "/media/sd/Music/A/B/01.flac".into(),
+                    ..Default::default()
+                }],
+                1,
+            )
+            .unwrap();
+        }
+        sync_playlists(
+            &mut c,
+            PlaylistSync {
+                files: vec![PlaylistFile {
+                    source_id: "sd".into(),
+                    stamp: PlaylistStamp {
+                        path: "/media/sd/Playlists/One.m3u8".into(),
+                        size: 10,
+                        mtime: 20,
+                    },
+                    content: Some(b"../Music/A/B/01.flac\n".to_vec()),
+                }],
+                complete_sources: vec!["sd".into()],
+                library_changed: false,
+            },
+        )
+        .unwrap();
+        let stored = list_playlists(&c).unwrap();
+        assert_eq!(stored[0].track_ids.len(), 1);
+        assert_eq!(stored[0].unresolved, 0);
+        // A stored miss heals on a later sync even though neither the file
+        // nor the scan reported a change.
+        c.execute("UPDATE playlists SET track_ids=x'',unresolved=1", [])
+            .unwrap();
+        sync_playlists(&mut c, PlaylistSync::default()).unwrap();
+        let stored = list_playlists(&c).unwrap();
+        assert_eq!(stored[0].track_ids.len(), 1);
+        assert_eq!(stored[0].unresolved, 0);
+        drop(c);
+        let _ = fs::remove_dir_all(p.parent().unwrap());
     }
 }

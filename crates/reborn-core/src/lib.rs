@@ -561,6 +561,20 @@ pub struct PlatformState {
     pub download: Option<platform::DownloadLive>,
 }
 
+/// A playlist imported read-only from an `.m3u`/`.m3u8` file on a media
+/// source. `track_ids` are library `Track::id`s in file order; entries that
+/// matched no library song are only counted in `unresolved`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct Playlist {
+    pub id: i64,
+    pub source_id: String,
+    pub path: PathBuf,
+    pub name: String,
+    pub track_ids: Vec<i64>,
+    pub unresolved: u32,
+    pub online: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct LibraryState {
     #[serde(skip)]
