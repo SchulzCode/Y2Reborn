@@ -155,6 +155,9 @@ fn layout_keys(m: &AppModel, page: Option<&Page>, empty: bool) -> &'static [&'st
         Screen::Albums if m.settings.album_view == reborn_core::AlbumView::CoverFlow && !empty => {
             &["cover_flow"]
         }
+        Screen::Albums if m.settings.album_view == reborn_core::AlbumView::Wall && !empty => {
+            &["wall"]
+        }
         Screen::Albums => &["albums", "list"],
         Screen::Artists => &["artists", "list"],
         Screen::Genres => &["genres", "list"],
