@@ -1255,6 +1255,7 @@ impl Runtime {
             eq_enabled: self.model.settings.eq_enabled,
             eq_bands: self.model.settings.eq_bands.clone(),
             crossfade_ms: self.model.settings.crossfade_ms,
+            correction: None,
         };
         let request_parts = (
             track,

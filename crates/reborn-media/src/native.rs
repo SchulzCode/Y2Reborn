@@ -4,7 +4,7 @@
 //! stereo PCM stream after an FFmpeg FLTP filter graph and one final
 //! libswresample conversion. Rust owns cancellation, worker scheduling and
 //! observability; it does not decode or apply audio gain itself.
-use reborn_core::{EqBand, PcmFormat, ReplayGainMode};
+use reborn_core::{hpeq, EqBand, PcmFormat, ReplayGainMode};
 use reborn_observability::{Level, Observer};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -77,6 +77,18 @@ struct RawDspConfig {
     eq_count: u32,
     eq: [RawEqBand; 8],
     crossfade_ms: u32,
+    correction_preamp_db: c_double,
+    correction_count: u32,
+    correction: [RawCorrectionFilter; hpeq::MAX_FILTERS],
+}
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct RawCorrectionFilter {
+    frequency_hz: c_double,
+    gain_db: c_double,
+    q: c_double,
+    /// 0 peaking, 1 low shelf, 2 high shelf (media.c `correction_filter`).
+    kind: u32,
 }
 
 type CancelNew = unsafe extern "C" fn() -> *mut c_void;
@@ -461,6 +473,10 @@ pub struct DspConfig {
     pub eq_enabled: bool,
     pub eq_bands: Vec<EqBand>,
     pub crossfade_ms: u32,
+    /// Headphone correction, run before the user's bands whether or not
+    /// the equalizer is on. Its preamp is applied with the gain stage.
+    #[serde(default)]
+    pub correction: Option<hpeq::Correction>,
 }
 impl DspConfig {
     pub fn with_volume(volume: u8) -> Self {
@@ -488,6 +504,31 @@ impl DspConfig {
                 q: src.q as c_double,
             };
         }
+        let mut correction = [RawCorrectionFilter {
+            frequency_hz: 0.0,
+            gain_db: 0.0,
+            q: 1.0,
+            kind: 0,
+        }; hpeq::MAX_FILTERS];
+        let filters = self.correction.as_ref().map_or(&[][..], |c| &c.filters[..]);
+        let correction_count = filters.len().min(hpeq::MAX_FILTERS) as u32;
+        for (dst, src) in correction.iter_mut().zip(filters) {
+            *dst = RawCorrectionFilter {
+                frequency_hz: src.frequency_hz as c_double,
+                gain_db: src.gain_db as c_double,
+                q: src.q as c_double,
+                kind: match src.kind {
+                    hpeq::FilterKind::Peaking => 0,
+                    hpeq::FilterKind::LowShelf => 1,
+                    hpeq::FilterKind::HighShelf => 2,
+                },
+            };
+        }
+        // Never a boost: the preamp only makes room for the correction.
+        let correction_preamp_db = self
+            .correction
+            .as_ref()
+            .map_or(0.0, |c| c.preamp_db.min(0.0) as c_double);
         RawDspConfig {
             replay_gain_mode: match self.replay_gain {
                 ReplayGainMode::Off => 0,
@@ -498,6 +539,9 @@ impl DspConfig {
             eq_count,
             eq,
             crossfade_ms: self.crossfade_ms.min(30_000),
+            correction_preamp_db,
+            correction_count,
+            correction,
         }
     }
 }
@@ -1344,6 +1388,7 @@ mod tests {
                     q: 1.0,
                 }],
                 crossfade_ms: 0,
+                correction: None,
             },
             Cancel::new().unwrap(),
         )
@@ -1361,6 +1406,97 @@ mod tests {
             }
         }
         assert!(peak <= (i32::MAX as f64 * 0.981) as i64);
+    }
+    /// An AutoEq-format profile with generic numbers: both shelf kinds and
+    /// eight peaks.
+    fn example_correction() -> hpeq::Correction {
+        hpeq::Profile::new(
+            "Example",
+            "Preamp: -5.0 dB\n\
+             Filter 1: ON LSC Fc 105 Hz Gain 4.0 dB Q 0.70\n\
+             Filter 2: ON PK Fc 180 Hz Gain -2.0 dB Q 1.20\n\
+             Filter 3: ON PK Fc 950 Hz Gain 1.5 dB Q 1.00\n\
+             Filter 4: ON PK Fc 2800 Hz Gain -3.0 dB Q 2.50\n\
+             Filter 5: ON PK Fc 4500 Hz Gain 3.5 dB Q 3.00\n\
+             Filter 6: ON PK Fc 6200 Hz Gain -4.0 dB Q 4.00\n\
+             Filter 7: ON PK Fc 8000 Hz Gain 2.5 dB Q 2.00\n\
+             Filter 8: ON HSC Fc 10000 Hz Gain -2.0 dB Q 0.70\n\
+             Filter 9: ON PK Fc 60 Hz Gain 1.0 dB Q 2.00\n\
+             Filter 10: ON PK Fc 400 Hz Gain -1.0 dB Q 1.50\n",
+        )
+        .correction
+        .unwrap()
+    }
+    #[test]
+    fn headphone_correction_stacks_ahead_of_the_user_bands() {
+        let example = example_correction();
+        let mut dsp = DspConfig {
+            volume: 100,
+            eq_enabled: true,
+            eq_bands: reborn_core::flat_eq_bands(),
+            correction: Some(example.clone()),
+            ..Default::default()
+        };
+        dsp.eq_bands[0].gain_db = 4.0;
+        let raw = dsp.raw();
+        assert_eq!(raw.eq_count, 5);
+        assert_eq!(raw.correction_count, 10);
+        assert_eq!(raw.correction_preamp_db, f64::from(example.preamp_db));
+        assert!(raw.correction_preamp_db <= -5.0);
+        assert_eq!(raw.correction[0].kind, 1);
+        assert_eq!(raw.correction[0].frequency_hz, 105.0);
+        assert_eq!(raw.correction[7].kind, 2);
+        // The correction stays when the user's equalizer is off.
+        dsp.eq_enabled = false;
+        let raw = dsp.raw();
+        assert_eq!((raw.eq_count, raw.correction_count), (0, 10));
+        // And a positive preamp is never passed on.
+        dsp.correction = Some(hpeq::Correction {
+            preamp_db: 3.0,
+            ..example
+        });
+        assert_eq!(dsp.raw().correction_preamp_db, 0.0);
+        assert_eq!(DspConfig::default().raw().correction_count, 0);
+    }
+    #[test]
+    fn headphone_correction_builds_in_ffmpeg_and_does_not_raise_a_tone() {
+        let decode = |dsp: DspConfig| {
+            let mut decoder = Decoder::open_with(
+                &fixture("tone.wav"),
+                OutputSpec {
+                    rate: 48_000,
+                    format: PcmFormat::S32LE,
+                },
+                dsp,
+                Cancel::new().unwrap(),
+            )
+            .unwrap();
+            let filters = decoder.metadata.filters.clone();
+            let (mut peak, mut frames) = (0u32, 0usize);
+            while let Some(block) = decoder.read().unwrap() {
+                for sample in block.data.as_chunks::<4>().0 {
+                    frames += 1;
+                    // Skip the filters' start-up transient (0.1 s, stereo).
+                    if frames > 9_600 {
+                        peak = peak.max(i32::from_le_bytes(*sample).unsigned_abs());
+                    }
+                }
+            }
+            (filters, peak)
+        };
+        let (plain_filters, plain) = decode(DspConfig::with_volume(100));
+        assert!(!plain_filters.contains("Correction"));
+        let (filters, corrected) = decode(DspConfig {
+            volume: 100,
+            correction: Some(example_correction()),
+            ..Default::default()
+        });
+        // All ten filters (shelves included) made it into the graph.
+        assert!(filters.contains("Correction=10 filters/-5."), "{filters}");
+        assert!(plain > 0);
+        // Preamp plus the loudest point of the response is at most 0 dB,
+        // so a steady tone can only come out the same or quieter.
+        assert!(corrected <= plain, "{corrected} > {plain}");
     }
     #[test]
     fn limiter_only_when_the_graph_can_raise_a_peak() {

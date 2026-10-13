@@ -128,6 +128,17 @@ typedef struct {
     double q;
   } eq[8];
   uint32_t crossfade_ms;
+  /* Headphone correction (AutoEq parametric profile), applied before the
+   * user's equalizer. preamp_db is never positive; kind 0 = peaking,
+   * 1 = low shelf, 2 = high shelf. Zeroed config = no correction. */
+  double correction_preamp_db;
+  uint32_t correction_count;
+  struct {
+    double frequency_hz;
+    double gain_db;
+    double q;
+    uint32_t kind;
+  } correction[12];
 } RbDspConfig;
 
 typedef struct {
@@ -653,6 +664,31 @@ static int make_filter_graph(RbMedia *m) {
   int active_eq = 0;
   for (uint32_t i = 0; i < m->dsp.eq_count && i < 8; i++)
     active_eq |= m->dsp.eq[i].gain_db != 0.0;
+  /* Correction stages that this graph can run: a known kind, a sane Q and a
+   * frequency well below Nyquist for the decoder rate (FFmpeg rejects a
+   * biquad above it), and a shelf filter only if this FFmpeg build has it. */
+  static const char *const correction_filter[3] = {"equalizer", "lowshelf",
+                                                   "highshelf"};
+  int correction_use[12] = {0};
+  uint32_t correction_used = 0;
+  double correction_preamp = m->dsp.correction_preamp_db < 0.0 &&
+                                     m->dsp.correction_preamp_db > -30.0
+                                 ? m->dsp.correction_preamp_db
+                                 : 0.0;
+  for (uint32_t i = 0; i < m->dsp.correction_count && i < 12; i++) {
+    uint32_t kind = m->dsp.correction[i].kind;
+    double f = m->dsp.correction[i].frequency_hz;
+    double q = m->dsp.correction[i].q;
+    double g = m->dsp.correction[i].gain_db;
+    correction_use[i] = kind < 3 && g != 0.0 && g >= -30.0 && g <= 30.0 &&
+                        q > 0.01 && q <= 20.0 && f >= 10.0 &&
+                        f < 0.45 * m->c->sample_rate &&
+                        avfilter_get_by_name(correction_filter[kind]) != NULL;
+    correction_used += (uint32_t)correction_use[i];
+  }
+  if (!correction_used)
+    correction_preamp = 0.0;
+  active_eq |= correction_used != 0;
   m->graph->nb_threads = active_eq ? 2 : 1;
   char args[256];
   snprintf(args, sizeof(args),
@@ -704,15 +740,28 @@ static int make_filter_graph(RbMedia *m) {
   double applied = rg + user + headroom;
   m->applied_gain_db = applied;
   m->headroom_db = headroom;
-  char chain[1024];
+  char chain[2048];
   int used = snprintf(chain, sizeof(chain),
                       "aformat=sample_fmts=fltp:channel_layouts=stereo");
   if (used < 0 || (size_t)used >= sizeof(chain))
     return AVERROR(EINVAL);
-  if (m->dsp.volume != 100 || rg != 0.0 || headroom != 0.0) {
-    double linear = pow(10.0, applied / 20.0);
+  /* The correction's negative preamp joins the same gain stage, so its
+   * boosts start below full scale instead of leaning on the limiter. */
+  if (m->dsp.volume != 100 || rg != 0.0 || headroom != 0.0 ||
+      correction_preamp != 0.0) {
+    double linear = pow(10.0, (applied + correction_preamp) / 20.0);
     used += snprintf(chain + used, sizeof(chain) - (size_t)used,
                      ",volume=volume=%.12f", linear);
+  }
+  /* Headphone correction first, then the listener's own bands on top. */
+  for (uint32_t i = 0; i < m->dsp.correction_count && i < 12; i++) {
+    if (!correction_use[i])
+      continue;
+    used += snprintf(chain + used, sizeof(chain) - (size_t)used,
+                     ",%s=f=%.9g:t=q:w=%.9g:g=%.9g",
+                     correction_filter[m->dsp.correction[i].kind],
+                     m->dsp.correction[i].frequency_hz, m->dsp.correction[i].q,
+                     m->dsp.correction[i].gain_db);
   }
   for (uint32_t i = 0; i < m->dsp.eq_count && i < 8; i++) {
     if (m->dsp.eq[i].gain_db == 0.0)
@@ -740,6 +789,14 @@ static int make_filter_graph(RbMedia *m) {
            "ReplayGain=%s,volume=%u,EQ=%s,%s,acrossfade=%ums",
            rg_name, m->dsp.volume, m->dsp.eq_count ? "configured" : "off",
            limiter ? "alimiter" : "no-limiter", m->dsp.crossfade_ms);
+  if (correction_used) {
+    /* Appended only when active, so the established summary is unchanged
+     * for everyone without a correction. */
+    size_t at = strlen(m->filter_description);
+    snprintf(m->filter_description + at, sizeof(m->filter_description) - at,
+             ",Correction=%u filters/%.1f dB", correction_used,
+             correction_preamp);
+  }
   AVFilterInOut *inputs = NULL, *outputs = NULL;
   r = avfilter_graph_parse2(m->graph, chain, &inputs, &outputs);
   if (r < 0)

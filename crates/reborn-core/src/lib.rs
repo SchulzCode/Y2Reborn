@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 pub mod clock;
 mod countries;
+pub mod hpeq;
 pub mod platform;
 pub mod playlist;
 pub mod sort;
