@@ -123,6 +123,7 @@ most specific name first:
 | `search`, `playlists`, `playlist`, `radio`, `radio_stations`, `radio_categories` | search results, Playlists, one playlist, Radio, a station list, countries or genres (else `list`) |
 | `radio_info` | Station Info: the station as heading, its facts and two actions (else `page`) |
 | `equalizer` | the equalizer (only this name; else Reborn's) |
+| `headphone_correction` | the headphone correction picker (else `page` or `list`) |
 | `sheet` | option sheets and pickers that slide over a screen |
 | `dialog` | questions such as “Reset settings?” (else `sheet`) |
 | `toast` | short messages |

@@ -525,6 +525,34 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         m.settings.eq_bands[0].gain_db = 6.;
         m.settings.eq_bands[1].gain_db = 4.;
     });
+    let profiles = || {
+        let example = "Preamp: -3.1 dB\n\
+                       Filter 1: ON LSC Fc 105 Hz Gain 2.0 dB Q 0.70\n\
+                       Filter 2: ON PK Fc 3200 Hz Gain 2.5 dB Q 2.00\n";
+        vec![
+            reborn_core::hpeq::Profile::new("Example Buds", example),
+            reborn_core::hpeq::Profile::new("Studio Cans", example),
+            reborn_core::hpeq::Profile::new("readme", "Not a profile"),
+        ]
+    };
+    case!(
+        "27b-sound-headphones",
+        at(Screen::SettingsAudio, ""),
+        move |_, m| {
+            m.eq_profiles = profiles();
+            m.settings.headphone_correction = "Example Buds".into();
+            m.navigation.focus = 5;
+        }
+    );
+    case!(
+        "27c-headphone-correction",
+        at(Screen::HeadphoneCorrection, ""),
+        move |_, m| {
+            m.eq_profiles = profiles();
+            m.settings.headphone_correction = "Example Buds".into();
+            m.navigation.focus = 1;
+        }
+    );
     case!("28-equalizer", at(Screen::Equalizer, ""), |_, m| {
         m.settings.eq_enabled = true;
         m.settings.eq_bands = reborn_core::flat_eq_bands();

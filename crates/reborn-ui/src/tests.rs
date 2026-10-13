@@ -740,6 +740,49 @@ fn time_zone_opens_at_the_chosen_zone_and_the_status_bar_shows_its_time() {
 }
 
 #[test]
+fn headphone_correction_is_picked_from_sound_and_drawn_below_output() {
+    let mut ui = radios();
+    let mut m = app(Screen::SettingsAudio);
+    m.eq_profiles = vec![reborn_core::hpeq::Profile::new(
+        "Example Buds",
+        "Preamp: -3.1 dB\n\
+         Filter 1: ON LSC Fc 105 Hz Gain 2.0 dB Q 0.70\n\
+         Filter 2: ON PK Fc 3200 Hz Gain 2.5 dB Q 2.00\n",
+    )];
+    let rows = ui.rows(&m, &m.library.tracks);
+    let row = rows.last().unwrap();
+    assert_eq!(
+        (row.key.as_str(), row.secondary.as_str()),
+        ("hp_correction", "Off")
+    );
+    // Below Output, without a hint line (UI v4): the page scrolls to its own
+    // section when the wheel reaches it.
+    let text = drawn_text(&ui.draw(&m, &m.library.tracks, false));
+    assert!(!text.contains("HEADPHONES"), "{text}");
+    assert!(!text.to_lowercase().contains("below"), "{text}");
+    m.navigation.focus = rows.len() - 1;
+    let text = drawn_text(&ui.draw(&m, &m.library.tracks, false));
+    assert!(text.contains("HEADPHONES"), "{text}");
+    assert!(text.contains("Headphone Correction"), "{text}");
+
+    select_key(&mut ui, &mut m, "hp_correction");
+    assert_eq!(m.screen, Screen::HeadphoneCorrection);
+    assert_eq!(
+        select_key(&mut ui, &mut m, "hp_eq:Example Buds"),
+        Effect::SetHeadphoneCorrection("Example Buds".into())
+    );
+    assert_eq!(
+        select_key(&mut ui, &mut m, "hp_eq:"),
+        Effect::SetHeadphoneCorrection(String::new())
+    );
+    m.settings.headphone_correction = "Example Buds".into();
+    ui.model_action(&mut m, Action::Back);
+    assert_eq!(m.screen, Screen::SettingsAudio);
+    let rows = ui.rows(&m, &m.library.tracks);
+    assert_eq!(rows.last().unwrap().secondary, "Example Buds");
+}
+
+#[test]
 fn sound_pickers_set_exact_values_and_show_the_current_one() {
     let mut ui = radios();
     let mut m = app(Screen::Crossfade);
