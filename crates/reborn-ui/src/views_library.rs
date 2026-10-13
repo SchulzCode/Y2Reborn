@@ -179,6 +179,9 @@ pub fn browse(
         Screen::Albums if m.settings.album_view == reborn_core::AlbumView::CoverFlow => {
             crate::views_coverflow::albums(c, ui, m, tracks, interactive)
         }
+        Screen::Albums if m.settings.album_view == reborn_core::AlbumView::Wall => {
+            crate::views_wall::albums(c, ui, m, tracks, interactive)
+        }
         Screen::Albums => albums_grid(c, ui, m, tracks, interactive),
         Screen::Album => album_page(c, ui, m, tracks, has_art, interactive),
         Screen::Artist => artist_page(c, ui, m, tracks, interactive),

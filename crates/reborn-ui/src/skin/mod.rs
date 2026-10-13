@@ -544,6 +544,7 @@ pub const LAYOUTS: &[&str] = &[
     "artists",
     "albums",
     "cover_flow",
+    "wall",
     "genres",
     "songs",
     "folders",

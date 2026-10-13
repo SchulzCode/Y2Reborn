@@ -118,6 +118,7 @@ most specific name first:
 | `page` | pages with a heading or facts (About, Storage, Song Info, …) |
 | `artists`, `albums`, `genres`, `songs`, `folders`, `album`, `artist`, `queue` | one library screen (else `list`) |
 | `cover_flow` | Albums in Cover Flow (only this name; else Reborn's) |
+| `wall` | Albums as the Wall (only this name; else Reborn's) |
 | `music`, `song_info`, `settings`, `wifi`, `bluetooth`, `computer`, `sound`, `playback`, `crossfade`, `screen_off`, `theme`, `library`, `display`, `service`, `battery`, `sleep`, `storage`, `updates`, `about`, `maintenance`, `diagnostics`, `diagnostic`, `value` | one settings or system screen (else `page` or `list`); `theme` is the Skin picker (Settings → Skin since Beta 7.5; the key keeps its name for existing skins) |
 | `time_zone` | the time zone picker (else `page` or `list`) |
 | `date_time` | Date & Time, the date and time set by hand (else `page` or `list`) |

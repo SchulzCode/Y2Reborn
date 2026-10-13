@@ -539,6 +539,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             m.navigation.focus = 1;
         }
     );
+    case!("08f-albums-wall", at(Screen::Albums, ""), move |ui, m| {
+        ui.accent = orange;
+        m.settings.album_view = reborn_core::AlbumView::Wall;
+        m.navigation.focus = 3;
+    });
     case!("09-album", at(Screen::Album, album), move |ui, m| {
         ui.accent = teal;
         m.navigation.focus = 3;

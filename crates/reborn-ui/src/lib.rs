@@ -36,6 +36,7 @@ mod views_playlists;
 mod views_radio;
 mod views_settings;
 mod views_system;
+mod views_wall;
 
 use reborn_core::{
     platform::{ChargingState, LowBattery, UsbTransfer, WifiProblem},
@@ -2344,10 +2345,7 @@ impl Ui {
             "screen_off_buttons" => {
                 Effect::SetScreenOffButtons(m.settings.screen_off_buttons.next())
             }
-            "album_view" => Effect::SetAlbumView(match m.settings.album_view {
-                reborn_core::AlbumView::CoverFlow => reborn_core::AlbumView::Grid,
-                reborn_core::AlbumView::Grid => reborn_core::AlbumView::CoverFlow,
-            }),
+            "album_view" => Effect::SetAlbumView(m.settings.album_view.next()),
             "crossfade" => Effect::SetCrossfade(match m.settings.crossfade_ms {
                 0 => 3_000,
                 3_000 => 6_000,
