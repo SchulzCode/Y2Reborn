@@ -24,6 +24,13 @@ pub const MAX_PLAYLIST_DEPTH: usize = 8;
 
 /// Whether `path` names an M3U or M3U8 playlist.
 pub fn is_playlist(path: &Path) -> bool {
+    // macOS's AppleDouble companion `._Mix.m3u8` holds Finder metadata.
+    if path
+        .file_name()
+        .is_some_and(|n| n.as_encoded_bytes().starts_with(b"._"))
+    {
+        return false;
+    }
     path.extension().is_some_and(|e| {
         matches!(
             e.to_string_lossy().to_ascii_lowercase().as_str(),
@@ -659,6 +666,7 @@ mod tests {
         assert!(is_playlist(Path::new("/x/Road Trip.m3u8")));
         assert!(is_playlist(Path::new("/x/OLD.M3U")));
         assert!(!is_playlist(Path::new("/x/song.mp3")));
+        assert!(!is_playlist(Path::new("/x/._Road Trip.m3u8")));
         let parsed = parse(b"a.mp3");
         assert_eq!(
             display_name(Path::new("/x/Road Trip.m3u8"), &parsed),
