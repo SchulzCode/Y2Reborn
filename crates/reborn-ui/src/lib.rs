@@ -705,8 +705,12 @@ impl Ui {
         next
     }
 
-    /// A 0..1 phase for spinners, one turn about every 1.6 s.
+    /// A 0..1 phase for spinners, one turn about every 1.6 s. A frame that
+    /// draws one marks live motion (as the playing wave), so a ring in view
+    /// turns at the panel's rate; work with no spinner in view keeps the
+    /// calm rate.
     pub fn spin_phase(&self) -> f32 {
+        self.mark_live();
         if let Some(fixed) = self.spin_fixed {
             return fixed;
         }
