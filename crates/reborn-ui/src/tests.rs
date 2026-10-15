@@ -1551,6 +1551,51 @@ fn wifi_off_absent_and_failed_states_offer_one_useful_action() {
 }
 
 #[test]
+fn output_offers_a_headphone_measurement_only_when_the_codec_does() {
+    use reborn_core::platform::HeadphoneLoad;
+    let mut ui = radios();
+    let mut m = app(Screen::Output);
+    let keys = |ui: &Ui, m: &AppModel| -> Vec<String> {
+        ui.rows(m, &m.library.tracks)
+            .into_iter()
+            .map(|r| r.key)
+            .collect()
+    };
+    assert!(!keys(&ui, &m).contains(&"hp_measure".to_owned()));
+    // The last row of the Headphone Jack group, under the level and filter.
+    m.platform.headphones = HeadphoneLoad::Unmeasured;
+    assert_eq!(
+        keys(&ui, &m),
+        [
+            "output_set:wired",
+            "output_set:/bt/a",
+            "hp_level",
+            "dac_filter",
+            "hp_measure"
+        ]
+    );
+    assert_eq!(
+        select_key(&mut ui, &mut m, "hp_measure"),
+        Effect::MeasureHeadphones
+    );
+    m.platform.headphones = HeadphoneLoad::Measuring;
+    let text = drawn_text(&ui.draw(&m, &m.library.tracks, false));
+    assert!(
+        text.contains("HEADPHONE JACK") && text.contains("Measure Headphones"),
+        "{text}"
+    );
+    assert!(text.contains("Measuring"), "{text}");
+    // The load per channel; the level stays the one chosen above.
+    m.platform.headphones = HeadphoneLoad::Measured { ohms: (19, 18) };
+    let rows = ui.rows(&m, &m.library.tracks);
+    assert_eq!(rows.last().unwrap().secondary, "19/18 ohms");
+    m.platform.headphones = HeadphoneLoad::Measured { ohms: (32, 32) };
+    let rows = ui.rows(&m, &m.library.tracks);
+    assert_eq!(rows.last().unwrap().secondary, "32 ohms");
+    assert_eq!(rows[2].secondary, "Low");
+}
+
+#[test]
 fn bluetooth_codec_row_only_appears_with_a_real_choice() {
     let mut ui = radios();
     let mut m = app(Screen::Bluetooth);

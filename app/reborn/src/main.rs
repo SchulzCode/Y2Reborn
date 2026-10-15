@@ -271,6 +271,8 @@ struct Runtime {
     sink_release_started: bool,
     transition_generation: Option<u64>,
     active_transport_generation: Option<u64>,
+    /// The running headphone load measurement (it blocks for about a second).
+    headphone_measure: Option<Receiver<Result<reborn_core::platform::HeadphoneLoad, String>>>,
     input_resume: bool,
     sleep_prepared: bool,
     sleep_prepared_since: Option<Instant>,
@@ -2437,6 +2439,30 @@ impl Runtime {
                 self.model.settings.replay_gain = mode;
                 self.reload_dsp()?;
             }
+            Effect::MeasureHeadphones => {
+                if self.headphone_measure.is_some() {
+                    return Ok(());
+                }
+                // The codec refuses while a stream is open, a held pause
+                // included: that one gives its stream back first.
+                if matches!(
+                    self.model.playback,
+                    PlaybackState::Playing | PlaybackState::Buffering
+                ) {
+                    self.ui.flash("Pause music, then measure again.");
+                    return Ok(());
+                }
+                self.release_hold_with(true);
+                let (tx, rx) = std::sync::mpsc::sync_channel(1);
+                thread::Builder::new()
+                    .name("headphones".into())
+                    .spawn(move || {
+                        let _ = tx.send(reborn_platform::headphones::measure());
+                    })
+                    .map_err(|e| e.to_string())?;
+                self.headphone_measure = Some(rx);
+                self.model.platform.headphones = reborn_core::platform::HeadphoneLoad::Measuring;
+            }
             Effect::SetEqEnabled(enabled) => {
                 if self.model.settings.eq_bands.is_empty() {
                     self.model.settings.eq_bands = reborn_core::flat_eq_bands();
@@ -3946,6 +3972,7 @@ fn run() -> Result<(), String> {
         // A previous instance may have ended on the dark shutdown frame.
         let _ = power::blank(false);
         model.platform.brightness_available = power::brightness_available();
+        model.platform.headphones = reborn_platform::headphones::state();
         if model.platform.brightness_available {
             let _ = power::set_brightness(model.settings.brightness);
         }
@@ -4188,6 +4215,7 @@ fn run() -> Result<(), String> {
         sink_release_started: false,
         transition_generation: None,
         active_transport_generation: None,
+        headphone_measure: None,
         input_resume: false,
         sleep_prepared: false,
         sleep_prepared_since: None,
@@ -4630,6 +4658,21 @@ fn run() -> Result<(), String> {
                 rt.model.platform.report = live;
                 rt.dirty.mark_render();
             }
+        }
+        if let Some(result) = rt
+            .headphone_measure
+            .as_ref()
+            .and_then(|rx| rx.try_recv().ok())
+        {
+            rt.headphone_measure = None;
+            rt.model.platform.headphones = match result {
+                Ok(load) => load,
+                Err(refusal) => {
+                    rt.ui.flash(refusal);
+                    reborn_platform::headphones::state()
+                }
+            };
+            rt.dirty.mark_render();
         }
         if let Some(player) = &player {
             for request in player.actions.try_iter().take(8) {

@@ -517,12 +517,17 @@ fn sound(c: &mut Canvas, ui: &Ui, m: &AppModel, page: &Page, focus: usize, inter
 }
 
 /// The Output page: the outputs (current one checked), then the headphone
-/// jack's level and DAC filter. With many Bluetooth outputs the jack group
-/// does not fit under them: once the focus reaches it the outputs scroll
-/// away, as on Display.
+/// jack's level, DAC filter and (when the codec offers it) Measure
+/// Headphones. With many Bluetooth outputs the jack group does not fit under
+/// them: once the focus reaches it the outputs scroll away, as on Display.
 fn output(c: &mut Canvas, ui: &Ui, page: &Page, focus: usize, interactive: bool) {
-    let jack = page.rows.len().saturating_sub(2);
-    let fits = 38. + jack as f32 * 50. + 4. + 34. + 104. <= HEIGHT - 4.;
+    let jack = page
+        .rows
+        .iter()
+        .position(|row| !row.key.starts_with("output_set:"))
+        .unwrap_or(page.rows.len());
+    let jack_rows = (page.rows.len() - jack) as f32;
+    let fits = 38. + jack as f32 * 50. + 4. + 34. + jack_rows * 50. + 4. <= HEIGHT - 4.;
     let top = if fits || focus < jack {
         group(c, ui, &page.rows[..jack], 0, focus, interactive, 38.) + 10.
     } else {
