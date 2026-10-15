@@ -52,6 +52,29 @@ pub struct Parsed {
     /// A `#PLAYLIST:` name, when the file carries one.
     pub name: Option<String>,
     pub entries: Vec<Entry>,
+    /// Network addresses (`http://…`) left out of `entries`: a library
+    /// playlist cannot play them.
+    pub streams: usize,
+}
+
+impl Parsed {
+    /// Only network addresses: an internet radio station list (Reborn's
+    /// Radio reads those from a `Radio` folder), not a playlist of songs.
+    pub fn is_station_list(&self) -> bool {
+        self.entries.is_empty() && self.streams > 0
+    }
+}
+
+/// `scheme://…` other than `file://`: a stream or web address, never a file
+/// on the player.
+fn is_network_address(location: &str) -> bool {
+    location.split_once("://").is_some_and(|(scheme, _)| {
+        scheme.len() > 1
+            && !scheme.eq_ignore_ascii_case("file")
+            && scheme
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'))
+    })
 }
 
 fn strip_prefix_ci<'a>(line: &'a str, prefix: &str) -> Option<&'a str> {
@@ -88,6 +111,11 @@ pub fn parse(bytes: &[u8]) -> Parsed {
                     parsed.name = Some(name.to_owned());
                 }
             }
+            continue;
+        }
+        if is_network_address(line) {
+            parsed.streams += 1;
+            title = None;
             continue;
         }
         if parsed.entries.len() >= MAX_PLAYLIST_ENTRIES {
@@ -480,6 +508,22 @@ mod tests {
             Some("Émilie - Lumière, Part 2")
         );
         assert_eq!(parsed.entries[1].title, None);
+    }
+
+    #[test]
+    fn network_addresses_are_not_songs_and_a_list_of_only_them_is_a_station_list() {
+        let mixed = parse(
+            b"#EXTM3U\n#EXTINF:-1,Jazz FM\nhttp://jazz.example/live\nMusic/One.mp3\nC:\\Music\\Two.mp3\n",
+        );
+        assert_eq!(locations(&mixed), ["Music/One.mp3", "C:\\Music\\Two.mp3"]);
+        assert_eq!(mixed.entries[0].title, None);
+        assert_eq!(mixed.streams, 1);
+        assert!(!mixed.is_station_list());
+        let stations = parse(
+            b"#EXTM3U\n#EXTINF:-1,News\nhttps://news.example/aac\nHTTP://two.example:8000/\n",
+        );
+        assert!(stations.entries.is_empty() && stations.is_station_list());
+        assert!(!parse(b"# nothing yet\n").is_station_list());
     }
 
     #[test]

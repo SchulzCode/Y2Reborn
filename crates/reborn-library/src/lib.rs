@@ -557,6 +557,18 @@ fn sync_playlists(c: &mut Connection, sync: PlaylistSync) -> Result<u64, String>
             };
             let parsed = playlists::parse(content);
             let path = &file.stamp.path;
+            if parsed.is_station_list() {
+                // Radio's station lists share the extension; they are not
+                // playlists of songs (an earlier row for the file goes).
+                let removed = tx
+                    .execute(
+                        "DELETE FROM playlists WHERE source_id=?1 AND path=?2",
+                        params![file.source_id, path.to_string_lossy()],
+                    )
+                    .map_err(err)?;
+                changed += removed as u64;
+                continue;
+            }
             let resolved = index.resolve(
                 path,
                 &root_of(&file.source_id),
@@ -3159,6 +3171,52 @@ mod playlist_tests {
         .find(|t| t.path == path)
         .unwrap_or_else(|| panic!("{} not in library", path.display()))
         .id
+    }
+
+    #[test]
+    fn radio_station_lists_on_the_media_are_not_playlists() {
+        let root = temp("stations");
+        let media = root.join("media");
+        let song = media.join("Music/Artist/Album/01 Track.flac");
+        tone(&song);
+        fs::create_dir_all(media.join("Radio")).unwrap();
+        fs::write(
+            media.join("Radio/Jazz.m3u"),
+            "#EXTM3U\n#EXTINF:-1,Jazz FM\nhttp://jazz.example/live\n",
+        )
+        .unwrap();
+        fs::create_dir_all(media.join("Playlists")).unwrap();
+        fs::write(
+            media.join("Playlists/Mix.m3u8"),
+            "../Music/Artist/Album/01 Track.flac\nhttp://jazz.example/live\n",
+        )
+        .unwrap();
+        let source = Source {
+            id: "internal".into(),
+            kind: MediaSource::Internal,
+            root: media.clone(),
+            online: true,
+            mount: "fixture".into(),
+            mount_id: None,
+        };
+        let log = Observer::new(&root.join("logs")).unwrap();
+        let db = Database::spawn(root.join("library.db"), log.clone()).unwrap();
+        db.sources(vec![source.clone()]).unwrap();
+        let scanned = scan_sources_with_identity(
+            &db,
+            std::slice::from_ref(&source),
+            &log,
+            &AtomicBool::new(false),
+            |_| true,
+        )
+        .unwrap();
+        assert!(scanned.complete);
+        let stored = playlists(&db);
+        // Only the song playlist; its stream line is neither a song nor missing.
+        assert_eq!(stored.len(), 1);
+        assert_eq!(stored[0].name, "Mix");
+        assert_eq!(stored[0].track_ids, [id_of(&db, &song)]);
+        assert_eq!(stored[0].unresolved, 0);
     }
 
     #[test]
