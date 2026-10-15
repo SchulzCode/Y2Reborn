@@ -152,7 +152,7 @@ pub fn page(ui: &Ui, m: &AppModel, tracks: &[Track]) -> Page {
         Screen::RadioInfo => radio_info(ui),
         Screen::Bluetooth => radio_firmware(m, "Bluetooth").unwrap_or_else(|| bluetooth(ui, m)),
         Screen::PcTransfer => pc_transfer(m),
-        Screen::SettingsAudio => sound(ui, m),
+        Screen::SettingsAudio => headphones(sound(ui, m), m),
         Screen::Equalizer => equalizer(m),
         Screen::Crossfade => crossfade(m),
         Screen::ScreenTimeout => screen_timeout(m),
@@ -308,6 +308,33 @@ fn sound(ui: &Ui, m: &AppModel) -> Page {
         .with_kind(RowKind::Chevron),
         row("Output", "output", output_name(ui, m)).with_kind(RowKind::Chevron),
     ])
+}
+
+/// Sound's rows below Output: the headphone load measurement, when the codec
+/// offers it.
+fn headphones(mut page: Page, m: &AppModel) -> Page {
+    use reborn_core::platform::{HeadphoneLevel, HeadphoneLoad};
+    let detail = match m.platform.headphones {
+        HeadphoneLoad::Unavailable => return page,
+        HeadphoneLoad::Unmeasured => String::new(),
+        HeadphoneLoad::Measuring => "Measuring…".into(),
+        HeadphoneLoad::Measured { ohms, level } => {
+            let load = if ohms.0 == ohms.1 {
+                format!("{} ohms", ohms.0)
+            } else {
+                format!("{}/{} ohms", ohms.0, ohms.1)
+            };
+            match level {
+                Some(HeadphoneLevel::Low) => format!("{load} · Low level"),
+                Some(HeadphoneLevel::Mid) => format!("{load} · Mid level"),
+                Some(HeadphoneLevel::High) => format!("{load} · High level"),
+                None => load,
+            }
+        }
+    };
+    page.rows
+        .push(row("Measure Headphones", "hp_measure", detail));
+    page
 }
 
 fn crossfade(m: &AppModel) -> Page {

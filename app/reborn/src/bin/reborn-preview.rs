@@ -535,6 +535,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     case!("29-crossfade", at(Screen::Crossfade, ""), |_, m| {
         m.navigation.focus = 2;
     });
+    case!(
+        "27d-sound-measure-headphones",
+        at(Screen::SettingsAudio, ""),
+        |_, m| {
+            m.platform.headphones = reborn_core::platform::HeadphoneLoad::Unmeasured;
+        }
+    );
+    case!(
+        "27e-headphones-measured",
+        at(Screen::SettingsAudio, ""),
+        |_, m| {
+            m.platform.headphones = reborn_core::platform::HeadphoneLoad::Measured {
+                ohms: (32, 32),
+                level: Some(reborn_core::platform::HeadphoneLevel::Low),
+            };
+            m.navigation.focus = 5;
+        }
+    );
     case!("30-display", at(Screen::SettingsDisplay, ""));
     case!("30b-time-zone", at(Screen::TimeZone, ""), |ui, m| {
         m.settings.time_zone = "Europe/Berlin".into();

@@ -692,6 +692,8 @@ pub struct PlatformState {
     pub shutting_down: Option<platform::ShutdownIntent>,
     /// Live progress of a running update download.
     pub download: Option<platform::DownloadLive>,
+    /// The wired headphone load measurement, when the codec offers it.
+    pub headphones: platform::HeadphoneLoad,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -926,6 +928,8 @@ pub enum Effect {
     ScreenSleep,
     ScreenWake,
     SetReplayGain(ReplayGainMode),
+    /// Measure the load in the headphone jack (the codec picks its level).
+    MeasureHeadphones,
     SetEqEnabled(bool),
     SetEqBandGain {
         index: usize,
