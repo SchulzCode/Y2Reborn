@@ -410,6 +410,20 @@ fn radio_menu(ui: &Ui) -> Page {
     if let Some(now) = &r.now {
         rows.push(row(&now.name, "radio_now", "On Air"));
     }
+    // FM needs no internet: the player's own tuner, wired headphones as aerial.
+    let fm = match r.fm {
+        crate::FmView::Hidden => None,
+        crate::FmView::NeedsFirmware => Some("Needs the tuner firmware".to_owned()),
+        crate::FmView::NotScanned => Some("Search for stations".to_owned()),
+        crate::FmView::Scanning { progress } => Some(format!("Searching… {progress}%")),
+        crate::FmView::Ready { stations: 0 } => Some("No stations found".to_owned()),
+        crate::FmView::Ready { stations } => {
+            Some(crate::components::count(stations, "station", "stations"))
+        }
+    };
+    if let Some(detail) = fm {
+        rows.push(row("FM Radio", "radio_fm", detail));
+    }
     if !r.online {
         rows.push(row(
             "Connect to Wi-Fi",
@@ -488,8 +502,60 @@ fn radio_back() -> Vec<Item> {
     vec![row("Back to Radio", "radio_back", "")]
 }
 
+/// FM: the tuner's stations by frequency, the search and its pages.
+fn fm_stations(ui: &Ui) -> Page {
+    let r = &ui.radio;
+    match r.fm {
+        crate::FmView::NeedsFirmware => {
+            return Page::hero(
+                "FM Needs the Tuner Firmware",
+                "Copy system.img from the Innioasis Y2 firmware package into a folder named Firmware on Internal Storage or the SD card. The player takes the tuner's two small files from it.",
+            )
+            .with_rows(radio_back())
+        }
+        crate::FmView::Scanning { progress } => {
+            return Page::hero(
+                format!("Searching for Stations… {progress}%"),
+                "Wired headphones are the antenna: keep them plugged in.",
+            )
+            .with_rows(vec![row("Stop", "radio_fm_cancel", "")])
+        }
+        _ => {}
+    }
+    if r.stations.is_empty() {
+        let searched = r.fm == crate::FmView::Ready { stations: 0 };
+        return Page::hero(
+            if searched { "No FM Stations Found" } else { "No FM Stations Yet" },
+            if searched {
+                "Plug in wired headphones – their cable is the antenna – stretch the cable out, then search again."
+            } else {
+                "Plug in wired headphones – their cable is the antenna – then search."
+            },
+        )
+        .with_rows(vec![row(
+            if searched { "Search Again" } else { "Search for Stations" },
+            "radio_fm_scan",
+            "",
+        )]);
+    }
+    let mut rows: Vec<Item> = r
+        .stations
+        .iter()
+        .enumerate()
+        .map(|(i, s)| {
+            let detail = if r.is_favorite(s) { "Favorite" } else { "" };
+            row(&s.name, &format!("station:{i}"), detail)
+        })
+        .collect();
+    rows.push(row("Search Again", "radio_fm_scan", "Find stations here"));
+    Page::rows(rows)
+}
+
 fn radio_stations(ui: &Ui) -> Page {
     let r = &ui.radio;
+    if r.last_request == Some(reborn_core::RadioRequest::Fm) {
+        return fm_stations(ui);
+    }
     if r.loading {
         return Page::hero("Loading Stations…", "Asking the station directory.")
             .with_rows(radio_back());

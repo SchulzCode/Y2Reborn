@@ -110,6 +110,8 @@ impl LogoFetcher {
 enum RadioReply {
     Stations(u64, Result<Vec<reborn_core::RadioStation>, String>),
     Categories(u64, Result<Vec<reborn_platform::radio::Category>, String>),
+    /// An FM search finished: stations in kHz, or why it did not.
+    FmScan(Result<Vec<u32>, String>),
 }
 
 struct Runtime {
@@ -158,6 +160,15 @@ struct Runtime {
     radio_live: Option<String>,
     /// The list a station was started from, for Previous/Next between stations.
     radio_list: Vec<reborn_core::RadioStation>,
+    /// FM: the tuner's interface, its saved stations, a search running and
+    /// when the signal line was last read.
+    fm: reborn_platform::fm::Paths,
+    fm_saved: reborn_platform::fm::Saved,
+    fm_scanning: bool,
+    /// A search ran in this session: FM stays visible even when it found
+    /// nothing, so the listener can plug in headphones and search again.
+    fm_searched_now: bool,
+    fm_checked: Option<Instant>,
     /// Station logos: downloads (once per logo) and the logo shown as Now
     /// Playing's picture.
     radio_logos: Option<LogoFetcher>,
@@ -536,6 +547,17 @@ impl Runtime {
             }
             RadioRequest::PlayStation(station) => self.play_radio(*station)?,
             RadioRequest::ToggleFavoriteStation(station) => self.toggle_favorite(*station)?,
+            RadioRequest::Fm => {
+                self.ui.radio.fm = self.fm_view();
+                let stations = self.fm_stations();
+                self.ui.radio.set_stations_in_order(stations);
+                self.ui.radio.loading = false;
+                self.ui.radio.error = None;
+            }
+            RadioRequest::FmScan => self.fm_scan()?,
+            RadioRequest::FmCancel => {
+                let _ = self.fm.cancel_scan();
+            }
             network => {
                 self.radio_sequence += 1;
                 let sequence = self.radio_sequence;
@@ -614,6 +636,10 @@ impl Runtime {
                     Err(e) => (sequence, Some(e)),
                 }
             }
+            RadioReply::FmScan(result) => {
+                self.fm_scan_done(result);
+                return;
+            }
             _ => return,
         };
         let _ = sequence;
@@ -621,8 +647,125 @@ impl Runtime {
         self.ui.radio.error = error;
         self.dirty.mark_render();
     }
+    /// FM as the Radio menu shows it, from the tuner and the saved search.
+    fn fm_view(&self) -> reborn_ui::FmView {
+        use reborn_platform::fm::Availability;
+        use reborn_ui::FmView;
+        if self.fm_scanning {
+            return FmView::Scanning {
+                progress: self.fm.progress().unwrap_or(0),
+            };
+        }
+        match self.fm.availability() {
+            Availability::NoTuner => FmView::Hidden,
+            Availability::NeedsFirmware => FmView::NeedsFirmware,
+            Availability::Ready if !self.fm_saved.scanned => FmView::NotScanned,
+            // A completed search found nothing: no reception on this player
+            // (hidden from the next start; this session may search again).
+            Availability::Ready if self.fm_saved.stations.is_empty() && !self.fm_searched_now => {
+                FmView::Hidden
+            }
+            Availability::Ready => FmView::Ready {
+                stations: self.fm_saved.stations.len(),
+            },
+        }
+    }
+    fn fm_stations(&self) -> Vec<reborn_core::RadioStation> {
+        self.fm_saved
+            .stations
+            .iter()
+            .map(|&k| reborn_platform::fm::station(k))
+            .collect()
+    }
+    /// Search the band in a worker. FM playing stops first: the search
+    /// turns the tuner's sound off while it runs.
+    fn fm_scan(&mut self) -> Result<(), String> {
+        if self.fm_scanning {
+            return Ok(());
+        }
+        if self.fm.availability() != reborn_platform::fm::Availability::Ready {
+            self.ui.radio.fm = self.fm_view();
+            return Err("FM needs the tuner firmware".into());
+        }
+        if self
+            .model
+            .current()
+            .is_some_and(|t| t.is_radio() && reborn_platform::fm::is_fm(&t.path.to_string_lossy()))
+        {
+            self.pause();
+            self.model.playback = PlaybackState::Stopped;
+        }
+        self.fm_scanning = true;
+        self.ui.radio.fm = self.fm_view();
+        let reply = self.radio_replies.0.clone();
+        let fm = self.fm.clone();
+        std::thread::Builder::new()
+            .name("fm-scan".into())
+            .spawn(move || {
+                let result = fm.scan().map_err(|e| match e.raw_os_error() {
+                    Some(125) => "Search stopped".to_owned(), // ECANCELED
+                    _ => format!("FM search failed: {e}"),
+                });
+                let _ = reply.send(RadioReply::FmScan(result));
+            })
+            .map_err(|e| e.to_string())?;
+        self.log.emit(
+            Level::Info,
+            "fm",
+            "scan_started",
+            "FM search started",
+            None,
+            json!({}),
+        );
+        Ok(())
+    }
+    fn fm_scan_done(&mut self, result: Result<Vec<u32>, String>) {
+        self.fm_scanning = false;
+        self.fm_searched_now = true;
+        match result {
+            Ok(stations) => {
+                self.log.emit(
+                    Level::Info,
+                    "fm",
+                    "scan_done",
+                    "FM search finished",
+                    None,
+                    json!({"stations": stations.len()}),
+                );
+                self.fm_saved = reborn_platform::fm::Saved {
+                    scanned: true,
+                    stations,
+                };
+                if let Err(e) =
+                    reborn_platform::fm::save(&self.root.join("state/fm.json"), &self.fm_saved)
+                {
+                    self.ui.flash(format!("Couldn't save FM stations: {e}"));
+                }
+                if self.fm_saved.stations.is_empty() {
+                    self.ui.flash("No FM stations found here");
+                }
+            }
+            Err(error) => {
+                self.log.emit(
+                    Level::Warn,
+                    "fm",
+                    "scan_failed",
+                    "FM search failed",
+                    None,
+                    json!({"error": error}),
+                );
+                self.ui.flash(error);
+            }
+        }
+        self.ui.radio.fm = self.fm_view();
+        if self.ui.radio.last_request == Some(reborn_core::RadioRequest::Fm) {
+            let stations = self.fm_stations();
+            self.ui.radio.set_stations_in_order(stations);
+        }
+        self.dirty.mark_render();
+    }
     fn play_radio(&mut self, station: reborn_core::RadioStation) -> Result<(), String> {
-        if self.ui.wifi.status == WifiStatus::Disconnected {
+        if !station.is_fm() && self.ui.wifi.status == WifiStatus::Disconnected {
             return Err("Connect to Wi-Fi to listen to radio".into());
         }
         self.model.replace_queue(vec![Track::radio(&station)], 0)?;
@@ -662,8 +805,9 @@ impl Runtime {
                     let _ = directory.play_url(&uuid);
                 });
         }
-        self.log.emit(Level::Info, "radio", "station_started", "Internet radio station started", None,
-            json!({"codec":station.codec,"bitrate":station.bitrate,"directory":!station.uuid.is_empty()}));
+        self.log.emit(Level::Info, "radio", "station_started", "Radio station started", None,
+            json!({"codec":station.codec,"bitrate":station.bitrate,"directory":!station.uuid.is_empty(),
+                   "fm":station.is_fm()}));
         self.radio_current = Some(station);
         Ok(())
     }
@@ -741,6 +885,46 @@ impl Runtime {
     /// The live line under a playing station: its announced song, or how the
     /// connection is doing.
     fn radio_tick(&mut self) {
+        // FM: scan progress and the menu row follow the tuner (cheap reads,
+        // at most every two seconds; the signal line is a chip command).
+        let due = self
+            .fm_checked
+            .is_none_or(|at| at.elapsed() >= Duration::from_secs(2));
+        if due {
+            self.fm_checked = Some(Instant::now());
+            let view = self.fm_view();
+            if view != self.ui.radio.fm {
+                self.ui.radio.fm = view;
+                self.dirty.mark_render();
+            }
+        }
+        let fm_khz = self
+            .model
+            .current()
+            .filter(|t| t.is_radio())
+            .and_then(|t| reborn_platform::fm::station_khz(&t.path.to_string_lossy()));
+        if let Some(khz) = fm_khz {
+            if self.ui.radio.now.is_none() {
+                self.ui.radio.now = Some(reborn_platform::fm::station(khz));
+            }
+            if !due && self.radio_live.is_some() {
+                return;
+            }
+            let line = match (self.model.playback, self.fm.signal()) {
+                (PlaybackState::Playing, Some((_, true))) => "Stereo".to_owned(),
+                (PlaybackState::Playing, Some((_, false))) => "Mono".to_owned(),
+                _ => "FM".to_owned(),
+            };
+            if self.radio_live.as_deref() != Some(line.as_str()) {
+                let position = self.model.queue_position;
+                if let Some(track) = self.model.queue.get_mut(position) {
+                    track.artist = line.clone();
+                }
+                self.radio_live = Some(line);
+                self.dirty.mark_render();
+            }
+            return;
+        }
         let radio = self.model.current().is_some_and(Track::is_radio);
         if !radio {
             if self.ui.radio.now.take().is_some() {
@@ -3458,6 +3642,11 @@ fn run() -> Result<(), String> {
         radio_directory: Arc::new(Mutex::new(None)),
         radio_live: None,
         radio_list: vec![],
+        fm: reborn_platform::fm::Paths::default(),
+        fm_saved: reborn_platform::fm::load(&root.join("state/fm.json")),
+        fm_scanning: false,
+        fm_searched_now: false,
+        fm_checked: None,
         radio_logos: if headless {
             None
         } else {
@@ -3492,6 +3681,7 @@ fn run() -> Result<(), String> {
         .iter()
         .map(|s| s.key().to_owned())
         .collect();
+    rt.ui.radio.fm = rt.fm_view();
     if !rt.model.settings.theme.is_empty() {
         let id = rt.model.settings.theme.clone();
         // A skin on a missing SD card or a refused skin falls back to Reborn's

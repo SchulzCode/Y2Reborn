@@ -24,6 +24,8 @@ enum Source {
     File(Box<reborn_platform::storage::PinnedTrack>),
     /// Held only so dropping the decoder also stops the transfer.
     Radio(#[allow(dead_code)] reborn_platform::radio::Stream),
+    /// Held only so dropping the decoder also stops the FM capture.
+    Fm(#[allow(dead_code)] reborn_platform::fm::Stream),
 }
 struct BoundDecoder {
     decoder: Decoder,
@@ -37,6 +39,18 @@ impl BoundDecoder {
         dsp: DspConfig,
         cancel: Cancel,
     ) -> Result<Self, String> {
+        if track.is_radio() && reborn_platform::fm::is_fm(&track.path.to_string_lossy()) {
+            // The tuner's sound as a WAV stream through the same decoder.
+            let url = track.path.to_string_lossy();
+            let stream = reborn_platform::fm::Stream::start(&url)
+                .map_err(|e| format!("FM could not start: {e}"))?;
+            let decoder = Decoder::open_stream(stream.reader(), spec, dsp, cancel)
+                .map_err(|e| format!("FM could not be played: {e}"))?;
+            return Ok(Self {
+                decoder,
+                _source: Source::Fm(stream),
+            });
+        }
         if track.is_radio() {
             let url = track.path.to_string_lossy();
             let stream = reborn_platform::radio::Stream::start(&url)

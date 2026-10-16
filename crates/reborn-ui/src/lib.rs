@@ -217,6 +217,24 @@ pub struct BluetoothView {
     pub problem: Option<String>,
 }
 
+/// FM radio as the Radio menu shows it. Hidden without a tuner and on a
+/// player whose search found no station (owner decision 2026-10-15).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum FmView {
+    #[default]
+    Hidden,
+    /// The tuner's two files from the owner's system.img are missing.
+    NeedsFirmware,
+    /// Tuner ready, no search yet.
+    NotScanned,
+    Scanning {
+        progress: u8,
+    },
+    Ready {
+        stations: usize,
+    },
+}
+
 /// Internet radio lists as the player last received them.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct RadioView {
@@ -243,6 +261,7 @@ pub struct RadioView {
     /// The list starts with this many stations ranked by popularity (the
     /// directory's order); the rest follow A to Z.
     pub ranked: usize,
+    pub fm: FmView,
 }
 impl RadioView {
     pub fn is_favorite(&self, station: &reborn_core::RadioStation) -> bool {
@@ -251,6 +270,11 @@ impl RadioView {
     /// A station list, A to Z by name (case, accents and "The" aside).
     pub fn set_stations(&mut self, mut stations: Vec<reborn_core::RadioStation>) {
         sort_stations(&mut stations);
+        self.stations = stations;
+        self.ranked = 0;
+    }
+    /// A list kept in the given order (FM stations by frequency).
+    pub fn set_stations_in_order(&mut self, stations: Vec<reborn_core::RadioStation>) {
         self.stations = stations;
         self.ranked = 0;
     }
@@ -1961,6 +1985,16 @@ impl Ui {
                 Self::go(m, Screen::Wifi, "");
                 Effect::None
             }
+            "radio_fm" => list(m, self, "FM Radio", RadioRequest::Fm),
+            "radio_fm_scan" => {
+                self.radio.fm = FmView::Scanning { progress: 0 };
+                self.radio.last_request = Some(RadioRequest::Fm);
+                if m.screen != Screen::RadioStations {
+                    Self::go(m, Screen::RadioStations, "FM Radio");
+                }
+                Effect::Radio(RadioRequest::FmScan)
+            }
+            "radio_fm_cancel" => Effect::Radio(RadioRequest::FmCancel),
             "radio_now" => {
                 Self::go(m, Screen::NowPlaying, "");
                 Effect::None

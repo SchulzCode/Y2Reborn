@@ -910,6 +910,28 @@ pub fn initials_tile(c: &mut Canvas, name: &str, x: f32, y: f32, size: f32) {
         size * 0.6,
         alpha(tint, 0x60),
     );
+    // An FM station's tile shows its frequency ("98.1").
+    let frequency = name
+        .strip_prefix("FM ")
+        .and_then(|rest| rest.split_whitespace().next())
+        .filter(|f| f.contains('.') && f.chars().all(|c| c.is_ascii_digit() || c == '.'));
+    if let Some(frequency) = frequency {
+        let face = if size >= 120. {
+            Face::S25
+        } else if size >= 60. {
+            Face::S17
+        } else {
+            Face::S13
+        };
+        c.text_mid_center(
+            x + size / 2.,
+            y + size / 2.,
+            frequency,
+            face,
+            fade(color::TEXT, 0.92),
+        );
+        return;
+    }
     let initials: String = name
         .split(|c: char| !c.is_alphanumeric())
         .filter(|w| !w.is_empty() && !["the", "radio"].contains(&w.to_lowercase().as_str()))

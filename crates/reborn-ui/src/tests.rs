@@ -2350,6 +2350,130 @@ fn radio_menu_lists_own_and_directory_sources_and_explains_wifi() {
     assert_eq!(page.hero.map(|h| h.title), Some("Loading Stations…".into()));
 }
 
+fn fm(khz: u32) -> reborn_core::RadioStation {
+    reborn_core::RadioStation {
+        name: format!("FM {}.{} MHz", khz / 1000, khz % 1000 / 100),
+        url: format!("fm:{khz}"),
+        ..Default::default()
+    }
+}
+
+#[test]
+fn fm_row_follows_the_tuner_and_hides_where_nothing_was_found() {
+    use crate::FmView;
+    let mut ui = radios();
+    ui.radio.online = true;
+    let mut m = app(Screen::Radio);
+    let keys = |ui: &Ui, m: &AppModel| -> Vec<String> {
+        ui.rows(m, &m.library.tracks)
+            .into_iter()
+            .map(|r| r.key)
+            .collect()
+    };
+    // No tuner, and a finished search with no station (owner decision): hidden.
+    assert!(!keys(&ui, &m).contains(&"radio_fm".to_owned()));
+    for (view, detail) in [
+        (FmView::NeedsFirmware, "Needs the tuner firmware"),
+        (FmView::NotScanned, "Search for stations"),
+        (FmView::Scanning { progress: 40 }, "Searching… 40%"),
+        (FmView::Ready { stations: 3 }, "3 stations"),
+        (FmView::Ready { stations: 0 }, "No stations found"),
+    ] {
+        ui.radio.fm = view;
+        let rows = ui.rows(&m, &m.library.tracks);
+        let row = rows.iter().find(|r| r.key == "radio_fm").expect("FM row");
+        assert_eq!(row.label, "FM Radio");
+        assert_eq!(row.secondary, detail);
+        // FM needs no internet: it comes before every directory source.
+        assert_eq!(rows[0].key, "radio_fm");
+    }
+    // Offline the FM row stays first, Wi-Fi follows.
+    ui.radio.online = false;
+    assert_eq!(keys(&ui, &m)[..2], ["radio_fm", "radio_wifi"]);
+    m.screen = Screen::Radio;
+}
+
+#[test]
+fn fm_list_search_and_empty_pages() {
+    use crate::FmView;
+    use reborn_core::RadioRequest;
+    let mut ui = radios();
+    ui.radio.online = true;
+    ui.radio.fm = FmView::NotScanned;
+    let mut m = app(Screen::Radio);
+    assert_eq!(
+        select_key(&mut ui, &mut m, "radio_fm"),
+        Effect::Radio(RadioRequest::Fm)
+    );
+    assert_eq!(
+        (m.screen, m.navigation.filter.as_str()),
+        (Screen::RadioStations, "FM Radio")
+    );
+    // The app answers with no stations yet: one action, the antenna hint.
+    ui.radio.set_stations_in_order(vec![]);
+    ui.radio.loading = false;
+    let page = crate::pages::page(&ui, &m, &m.library.tracks.clone());
+    let hero = page.hero.expect("empty page");
+    assert_eq!(hero.title, "No FM Stations Yet");
+    assert!(hero.body.contains("antenna"));
+    assert_eq!(
+        page.rows.iter().map(|r| r.key.as_str()).collect::<Vec<_>>(),
+        ["radio_fm_scan"]
+    );
+    assert_eq!(
+        select_key(&mut ui, &mut m, "radio_fm_scan"),
+        Effect::Radio(RadioRequest::FmScan)
+    );
+    assert_eq!(ui.radio.fm, FmView::Scanning { progress: 0 });
+    let page = crate::pages::page(&ui, &m, &m.library.tracks.clone());
+    assert!(page
+        .hero
+        .expect("searching")
+        .title
+        .starts_with("Searching for Stations"));
+    assert_eq!(page.rows[0].key, "radio_fm_cancel");
+    assert_eq!(
+        select_key(&mut ui, &mut m, "radio_fm_cancel"),
+        Effect::Radio(RadioRequest::FmCancel)
+    );
+    // A search in this session that found nothing: say so, offer it again.
+    ui.radio.fm = FmView::Ready { stations: 0 };
+    let page = crate::pages::page(&ui, &m, &m.library.tracks.clone());
+    assert_eq!(page.hero.expect("none found").title, "No FM Stations Found");
+    assert_eq!(page.rows[0].label, "Search Again");
+    // Stations found: kept in frequency order, then Search Again.
+    ui.radio.fm = FmView::Ready { stations: 3 };
+    ui.radio
+        .set_stations_in_order(vec![fm(87_600), fm(98_100), fm(104_000)]);
+    let page = crate::pages::page(&ui, &m, &m.library.tracks.clone());
+    assert!(page.hero.is_none());
+    let labels: Vec<_> = page.rows.iter().map(|r| r.label.as_str()).collect();
+    assert_eq!(
+        labels,
+        ["FM 87.6 MHz", "FM 98.1 MHz", "FM 104.0 MHz", "Search Again"]
+    );
+    assert_eq!(page.rows[1].secondary, "");
+    ui.radio.favorites = vec![fm(98_100).key().to_owned()];
+    let page = crate::pages::page(&ui, &m, &m.library.tracks.clone());
+    assert_eq!(page.rows[1].secondary, "Favorite");
+    // Choosing a station plays it like any radio station.
+    m.navigation.focus = 1;
+    assert_eq!(
+        select_key(&mut ui, &mut m, "station:1"),
+        Effect::Radio(RadioRequest::Play(1))
+    );
+    assert_eq!(m.screen, Screen::NowPlaying);
+    // Without the tuner files: what to copy, no station rows.
+    ui.radio.fm = FmView::NeedsFirmware;
+    m.screen = Screen::RadioStations;
+    let page = crate::pages::page(&ui, &m, &m.library.tracks.clone());
+    assert_eq!(
+        page.hero.expect("firmware").title,
+        "FM Needs the Tuner Firmware"
+    );
+    assert!(fm(98_100).is_fm() && !station("x", "1").is_fm());
+}
+
 #[test]
 fn radio_lists_sort_a_to_z_and_the_song_splits_into_title_and_artist() {
     let mut ui = radios();

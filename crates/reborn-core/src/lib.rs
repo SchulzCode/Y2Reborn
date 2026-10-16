@@ -321,6 +321,10 @@ pub struct RadioStation {
     pub clicks: u32,
 }
 impl RadioStation {
+    /// An FM station of the player's own tuner (`fm:<kHz>`), not a stream.
+    pub fn is_fm(&self) -> bool {
+        self.url.starts_with("fm:")
+    }
     /// The station's genres from its tags, capitalised, at most `n`.
     pub fn genres(&self, n: usize) -> Vec<String> {
         let mut out: Vec<String> = vec![];
@@ -466,6 +470,10 @@ pub enum RadioRequest {
     /// Play, or add or remove, the station Station Info shows.
     PlayStation(Box<RadioStation>),
     ToggleFavoriteStation(Box<RadioStation>),
+    /// FM: the stations the tuner found, a new search, and stopping it.
+    Fm,
+    FmScan,
+    FmCancel,
 }
 
 /* A queue occurrence is a playback identity, not a library identity. Two

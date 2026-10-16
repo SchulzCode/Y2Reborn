@@ -39,6 +39,8 @@ fn entry_style(key: &str) -> (u32, Icon) {
         "radio_search" => (0x6EA0FFFF, Icon::Search),
         "radio_own" => (0x5CCB7AFF, Icon::Folder),
         "radio_wifi" => (color::WARNING, Icon::Wifi),
+        "radio_fm" => (0xFF9F43FF, Icon::Broadcast),
+        "radio_fm_scan" => (0x6EA0FFFF, Icon::Search),
         _ => (color::MUTED, Icon::Broadcast),
     }
 }
@@ -165,6 +167,9 @@ fn stations(c: &mut Canvas, ui: &Ui, m: &AppModel, rows: &[Item], interactive: b
             .and_then(|i| i.parse::<usize>().ok())
             .and_then(|i| ui.radio.stations.get(i));
         let Some(station) = station else {
+            // An action below the stations (FM: Search Again).
+            let (tint, icon) = entry_style(&row.key);
+            components::menu_entry(c, row, y, STATION_H, tint, icon, selected);
             continue;
         };
         if selected {
@@ -195,22 +200,23 @@ fn stations(c: &mut Canvas, ui: &Ui, m: &AppModel, rows: &[Item], interactive: b
             right -= w + 8.;
         }
         let room = right - 72.;
+        let detail = station_detail(station);
+        // FM stations have no detail line: the name sits in the middle.
         c.text_mid(
             72.,
-            y + 18.,
+            if detail.is_empty() {
+                y + STATION_H / 2.
+            } else {
+                y + 18.
+            },
             room,
             &station.name,
             if selected { Face::S15 } else { Face::R15 },
             if playing { accent } else { color::TEXT },
         );
-        c.text_mid(
-            72.,
-            y + 36.,
-            room,
-            &station_detail(station),
-            Face::R11,
-            color::MUTED,
-        );
+        if !detail.is_empty() {
+            c.text_mid(72., y + 36., room, &detail, Face::R11, color::MUTED);
+        }
     }
     c.mark_moving(Moving::List {
         start: rows_start,

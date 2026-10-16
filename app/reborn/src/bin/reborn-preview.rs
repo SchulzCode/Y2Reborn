@@ -898,6 +898,78 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             m.playback = reborn_core::PlaybackState::Playing;
         }
     );
+    // FM radio (Beta 8): the player's own tuner.
+    let fm = |khz: u32| reborn_platform::fm::station(khz);
+    let fm_list = move || {
+        vec![
+            fm(87_600),
+            fm(91_400),
+            fm(94_800),
+            fm(98_100),
+            fm(102_300),
+            fm(104_000),
+        ]
+    };
+    case!("90-fm-radio-menu", at(Screen::Radio, ""), |ui, m| {
+        ui.radio.online = true;
+        ui.radio.fm = reborn_ui::FmView::Ready { stations: 6 };
+        m.navigation.focus = 0;
+    });
+    case!(
+        "91-fm-stations",
+        at(Screen::RadioStations, "FM Radio"),
+        move |ui, m| {
+            ui.radio.fm = reborn_ui::FmView::Ready { stations: 6 };
+            ui.radio.last_request = Some(reborn_core::RadioRequest::Fm);
+            ui.radio.set_stations_in_order(fm_list());
+            ui.radio.favorites = vec![fm(98_100).key().to_owned()];
+            ui.radio.now = Some(fm(98_100));
+            m.navigation.focus = 3;
+        }
+    );
+    case!(
+        "91b-fm-search-again",
+        at(Screen::RadioStations, "FM Radio"),
+        move |ui, m| {
+            ui.radio.fm = reborn_ui::FmView::Ready { stations: 6 };
+            ui.radio.last_request = Some(reborn_core::RadioRequest::Fm);
+            ui.radio.set_stations_in_order(fm_list());
+            m.navigation.focus = 6;
+        }
+    );
+    case!(
+        "92-fm-no-stations-yet",
+        at(Screen::RadioStations, "FM Radio"),
+        |ui, _| {
+            ui.radio.fm = reborn_ui::FmView::NotScanned;
+            ui.radio.last_request = Some(reborn_core::RadioRequest::Fm);
+        }
+    );
+    case!(
+        "93-fm-searching",
+        at(Screen::RadioStations, "FM Radio"),
+        |ui, _| {
+            ui.radio.fm = reborn_ui::FmView::Scanning { progress: 40 };
+            ui.radio.last_request = Some(reborn_core::RadioRequest::Fm);
+        }
+    );
+    case!(
+        "94-fm-needs-firmware",
+        at(Screen::RadioStations, "FM Radio"),
+        |ui, _| {
+            ui.radio.fm = reborn_ui::FmView::NeedsFirmware;
+            ui.radio.last_request = Some(reborn_core::RadioRequest::Fm);
+        }
+    );
+    case!("95-fm-playing", at(Screen::NowPlaying, ""), move |ui, m| {
+        let station = fm(98_100);
+        m.replace_queue(vec![reborn_core::Track::radio(&station)], 0)
+            .unwrap();
+        m.queue[0].artist = "Stereo".into();
+        ui.radio.now = Some(station);
+        m.position_ms = 125_000;
+        m.playback = reborn_core::PlaybackState::Playing;
+    });
     case!(
         "65b-radio-tuning-in",
         at(Screen::NowPlaying, ""),

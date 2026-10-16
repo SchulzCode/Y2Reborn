@@ -4,6 +4,7 @@ pub mod bluetooth;
 pub mod client;
 pub mod codecs;
 pub mod contract;
+pub mod fm;
 pub mod geo;
 pub mod input;
 pub mod kernel_events;
