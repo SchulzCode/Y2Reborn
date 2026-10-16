@@ -772,12 +772,23 @@ pub enum AlbumView {
     #[default]
     CoverFlow,
     Grid,
+    /// Every cover edge to edge, six across.
+    Wall,
 }
 impl AlbumView {
     pub fn label(self) -> &'static str {
         match self {
             Self::CoverFlow => "Cover Flow",
             Self::Grid => "Grid",
+            Self::Wall => "Wall",
+        }
+    }
+    /// The view the Display row switches to next.
+    pub fn next(self) -> Self {
+        match self {
+            Self::CoverFlow => Self::Grid,
+            Self::Grid => Self::Wall,
+            Self::Wall => Self::CoverFlow,
         }
     }
 }
