@@ -2061,6 +2061,7 @@ impl Ui {
             "screen_off" => Effect::ScreenSleep,
             "eq_enabled" => Effect::SetEqEnabled(!m.settings.eq_enabled),
             "eq_reset" => Effect::ResetEq,
+            "hp_measure" => Effect::MeasureHeadphones,
             "replay_gain" => Effect::SetReplayGain(match m.settings.replay_gain {
                 reborn_core::ReplayGainMode::Off => reborn_core::ReplayGainMode::Track,
                 _ => reborn_core::ReplayGainMode::Off,

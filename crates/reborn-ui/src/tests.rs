@@ -979,6 +979,47 @@ fn wifi_off_absent_and_failed_states_offer_one_useful_action() {
 }
 
 #[test]
+fn sound_offers_a_headphone_measurement_only_when_the_codec_does() {
+    use reborn_core::platform::{HeadphoneLevel, HeadphoneLoad};
+    let mut ui = radios();
+    let mut m = app(Screen::SettingsAudio);
+    let keys = |ui: &Ui, m: &AppModel| -> Vec<String> {
+        ui.rows(m, &m.library.tracks)
+            .into_iter()
+            .map(|r| r.key)
+            .collect()
+    };
+    assert!(!keys(&ui, &m).contains(&"hp_measure".to_owned()));
+    m.platform.headphones = HeadphoneLoad::Unmeasured;
+    assert_eq!(keys(&ui, &m).last().unwrap(), "hp_measure");
+    // Below Output, without a hint line (UI v4): the page scrolls to it.
+    assert!(!drawn_text(&ui.draw(&m, &m.library.tracks, false)).contains("HEADPHONES"));
+    assert_eq!(
+        select_key(&mut ui, &mut m, "hp_measure"),
+        Effect::MeasureHeadphones
+    );
+    m.platform.headphones = HeadphoneLoad::Measuring;
+    let text = drawn_text(&ui.draw(&m, &m.library.tracks, false));
+    assert!(
+        text.contains("HEADPHONES") && text.contains("Measuring"),
+        "{text}"
+    );
+    // The load per channel and the level the codec chose for it.
+    m.platform.headphones = HeadphoneLoad::Measured {
+        ohms: (19, 18),
+        level: Some(HeadphoneLevel::Low),
+    };
+    let rows = ui.rows(&m, &m.library.tracks);
+    assert_eq!(rows.last().unwrap().secondary, "19/18 ohms · Low level");
+    m.platform.headphones = HeadphoneLoad::Measured {
+        ohms: (32, 32),
+        level: None,
+    };
+    let rows = ui.rows(&m, &m.library.tracks);
+    assert_eq!(rows.last().unwrap().secondary, "32 ohms");
+}
+
+#[test]
 fn bluetooth_codec_row_only_appears_with_a_real_choice() {
     let mut ui = radios();
     let mut m = app(Screen::Bluetooth);

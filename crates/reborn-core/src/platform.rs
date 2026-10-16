@@ -468,6 +468,31 @@ pub struct OperationResult {
     pub facts: Vec<Fact>,
 }
 
+/// The wired output level the CS43131 uses for the load in the jack.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HeadphoneLevel {
+    Low,
+    Mid,
+    High,
+}
+
+/// The wired headphone load measurement (cs43130 `y2_hp`, Y2Linux #38).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum HeadphoneLoad {
+    /// The kernel does not offer it.
+    #[default]
+    Unavailable,
+    /// Offered, no result yet.
+    Unmeasured,
+    Measuring,
+    /// DC load per channel in ohms (the board's series resistance already
+    /// removed by the driver) and the level the codec chose for it.
+    Measured {
+        ohms: (u16, u16),
+        level: Option<HeadphoneLevel>,
+    },
+}
+
 pub fn human_bytes(bytes: u64) -> String {
     const GB: f64 = 1_000_000_000.;
     const MB: f64 = 1_000_000.;
