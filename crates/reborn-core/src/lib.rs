@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 pub mod clock;
 mod countries;
+pub mod hpeq;
 pub mod platform;
 pub mod playlist;
 pub mod sort;
@@ -558,6 +559,8 @@ pub enum Screen {
     PcTransfer,
     SettingsAudio,
     Equalizer,
+    /// Headphone correction picker (Settings > Sound).
+    HeadphoneCorrection,
     SettingsPlayback,
     /// Crossfade length picker.
     Crossfade,
@@ -756,6 +759,10 @@ pub struct Settings {
     /// is Now Playing, Music, Playlists, Radio, Search and Settings.
     #[serde(default)]
     pub home_pins: Vec<String>,
+    /// The headphone correction in use: a profile name from the SD card's
+    /// `EQ` folder (`hpeq`); empty is off.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub headphone_correction: String,
 }
 
 /// The Music lists that can be pinned to Home, in Home's order: (key, label).
@@ -821,6 +828,7 @@ impl Default for Settings {
             time_zone: default_time_zone(),
             time_zone_auto: None,
             home_pins: Vec::new(),
+            headphone_correction: String::new(),
         }
     }
 }
@@ -876,6 +884,9 @@ pub struct AppModel {
     pub navigation: NavigationState,
     #[serde(skip)]
     pub platform: PlatformState,
+    /// Headphone correction profiles found in the SD card's `EQ` folder.
+    #[serde(skip)]
+    pub eq_profiles: Vec<hpeq::Profile>,
 }
 
 /// Effects are requests to the application/service boundary. They carry no
@@ -934,6 +945,8 @@ pub enum Effect {
     ResetEq,
     /// Gains in dB for the five equalizer bands; all zero turns the equalizer off.
     SetEqPreset([i8; 5]),
+    /// Choose a headphone correction by profile name (empty = off).
+    SetHeadphoneCorrection(String),
     SetBrightness(u8),
     SetCrossfade(u32),
     SetGapless(bool),

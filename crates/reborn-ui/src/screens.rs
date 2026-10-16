@@ -70,6 +70,7 @@ pub fn draw(ui: &Ui, m: &AppModel, tracks: &[Track], has_art: bool) -> Vec<Quad>
         | Screen::Bluetooth
         | Screen::SettingsAudio
         | Screen::Equalizer
+        | Screen::HeadphoneCorrection
         | Screen::Crossfade
         | Screen::ScreenTimeout
         | Screen::Theme
@@ -120,6 +121,7 @@ fn native_screen(
         | Screen::SettingsAudio
         | Screen::Equalizer
         | Screen::Crossfade
+        | Screen::HeadphoneCorrection
         | Screen::ScreenTimeout
         | Screen::Theme
         | Screen::TimeZone
@@ -183,6 +185,7 @@ fn layout_keys(m: &AppModel, page: Option<&Page>, empty: bool) -> &'static [&'st
         Screen::SettingsAudio => keys!("sound"),
         Screen::SettingsPlayback => keys!("playback"),
         Screen::Crossfade => keys!("crossfade"),
+        Screen::HeadphoneCorrection => keys!("headphone_correction"),
         Screen::ScreenTimeout => keys!("screen_off"),
         Screen::Theme => keys!("theme"),
         Screen::TimeZone => keys!("time_zone"),
@@ -674,6 +677,7 @@ pub fn screen_title(m: &AppModel) -> String {
         Screen::PcTransfer => "Computer".into(),
         Screen::SettingsAudio => "Sound".into(),
         Screen::Equalizer => "Equalizer".into(),
+        Screen::HeadphoneCorrection => "Headphone Correction".into(),
         Screen::SettingsPlayback => "Playback".into(),
         Screen::Crossfade => "Crossfade".into(),
         Screen::ScreenTimeout => "Screen Off After".into(),

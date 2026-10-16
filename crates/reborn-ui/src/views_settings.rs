@@ -391,16 +391,33 @@ fn radio(
 // -------------------------------------------------------------- sound etc.
 
 fn sound(c: &mut Canvas, ui: &Ui, m: &AppModel, page: &Page, focus: usize, interactive: bool) {
-    let bottom = group(
-        c,
-        ui,
-        &page.rows[..4.min(page.rows.len())],
-        0,
-        focus,
-        interactive,
-        38.,
-    );
+    // Two views of one list: the playback card and Output, or (scrolled past
+    // Output) Output and the Headphones rows below it.
+    let headphones = page.rows.len() > 5 && focus >= 5;
+    let bottom = if headphones {
+        14.
+    } else {
+        group(
+            c,
+            ui,
+            &page.rows[..4.min(page.rows.len())],
+            0,
+            focus,
+            interactive,
+            38.,
+        )
+    };
     components::section_label(c, 28., bottom + 24., "Output");
+    if page.rows.len() > 5 {
+        let top = bottom + 38. + 56. + 38.;
+        if headphones {
+            components::section_label(c, 28., top - 14., "Headphones");
+            group(c, ui, &page.rows[5..], 5, focus, interactive, top);
+        }
+        // Two positions, as Display: with the playback card, or scrolled to
+        // the Headphones rows.
+        components::scroll_rail(c, 44., 286., usize::from(headphones), 3, 2, ui.accent());
+    }
     if let Some(row) = page.rows.get(4) {
         let y = bottom + 38.;
         if interactive && focus == 4 {

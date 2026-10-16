@@ -154,6 +154,10 @@ pub fn page(ui: &Ui, m: &AppModel, tracks: &[Track]) -> Page {
         Screen::PcTransfer => pc_transfer(m),
         Screen::SettingsAudio => sound(ui, m),
         Screen::Equalizer => equalizer(m),
+        Screen::HeadphoneCorrection => Page {
+            status: crate::hpeq::status(m),
+            ..Page::rows(crate::hpeq::rows(m))
+        },
         Screen::Crossfade => crossfade(m),
         Screen::ScreenTimeout => screen_timeout(m),
         Screen::Theme => theme(ui, m),
@@ -307,6 +311,12 @@ fn sound(ui: &Ui, m: &AppModel) -> Page {
         )
         .with_kind(RowKind::Chevron),
         row("Output", "output", output_name(ui, m)).with_kind(RowKind::Chevron),
+        row(
+            "Headphone Correction",
+            "hp_correction",
+            crate::hpeq::summary(m),
+        )
+        .with_kind(RowKind::Chevron),
     ])
 }
 

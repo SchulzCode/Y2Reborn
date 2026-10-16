@@ -559,6 +559,7 @@ pub const LAYOUTS: &[&str] = &[
     "equalizer",
     "playback",
     "crossfade",
+    "headphone_correction",
     "screen_off",
     "theme",
     "time_zone",

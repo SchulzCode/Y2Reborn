@@ -187,6 +187,8 @@ struct Runtime {
     input_resume: bool,
     sleep_prepared: bool,
     sleep_prepared_since: Option<Instant>,
+    /// When the SD card's `EQ` folder was last read.
+    eq_scanned: Instant,
     /// When the screen last went dark, for the idle radio policy.
     dark_since: Option<Instant>,
     /// Last request or active work; bounds retries and the pause-to-sleep delay.
@@ -1255,6 +1257,10 @@ impl Runtime {
             eq_enabled: self.model.settings.eq_enabled,
             eq_bands: self.model.settings.eq_bands.clone(),
             crossfade_ms: self.model.settings.crossfade_ms,
+            correction: reborn_core::hpeq::correction(
+                &self.model.settings.headphone_correction,
+                &self.model.eq_profiles,
+            ),
         };
         let request_parts = (
             track,
@@ -2132,6 +2138,10 @@ impl Runtime {
                 self.model.settings.eq_bands = reborn_core::flat_eq_bands();
                 self.reload_dsp()?;
             }
+            Effect::SetHeadphoneCorrection(name) => {
+                self.model.settings.headphone_correction = name;
+                self.reload_dsp()?;
+            }
             Effect::SetBrightness(percent) => {
                 self.model.settings.brightness = percent.clamp(10, 100);
                 if !self.headless {
@@ -2355,6 +2365,26 @@ impl Runtime {
         };
         Ok(())
     }
+    /// Read the headphone corrections in the SD card's `EQ` folder. When the
+    /// one in use changed (edited, removed), playback picks it up.
+    fn load_eq_profiles(&mut self) {
+        self.eq_scanned = Instant::now();
+        let found = reborn_core::hpeq::read_profiles(&self.model.sources);
+        if found == self.model.eq_profiles {
+            return;
+        }
+        let name = &self.model.settings.headphone_correction;
+        let before = reborn_core::hpeq::correction(name, &self.model.eq_profiles);
+        let after = reborn_core::hpeq::correction(name, &found);
+        self.model.eq_profiles = found;
+        self.dirty.mark_render();
+        if after != before {
+            if let Err(e) = self.reload_dsp() {
+                self.fail("audio", e);
+            }
+        }
+    }
+
     /// Apply typed replies from the platform client.
     fn reload_dsp(&mut self) -> Result<(), String> {
         if matches!(
@@ -3482,6 +3512,7 @@ fn run() -> Result<(), String> {
         input_resume: false,
         sleep_prepared: false,
         sleep_prepared_since: None,
+        eq_scanned: Instant::now(),
         dark_since: None,
         sleep_attempt: None,
         wifi_idle_off: false,
@@ -3507,6 +3538,7 @@ fn run() -> Result<(), String> {
             );
         }
     }
+    rt.load_eq_profiles();
     startup_phase(&log, process_started, "runtime_ready");
     let last_snapshot = Arc::new(Mutex::new(json!({"starting":true})));
     let watcher = last_snapshot.clone();
@@ -3917,6 +3949,13 @@ fn run() -> Result<(), String> {
             }
         }
         rt.wifi_idle_tick();
+        // Files copied over USB appear without a media change: look again
+        // now and then while the correction picker is open.
+        if rt.model.screen == Screen::HeadphoneCorrection
+            && rt.eq_scanned.elapsed() >= Duration::from_secs(3)
+        {
+            rt.load_eq_profiles();
+        }
         log.heartbeat("ui", 10);
         if rt.ui.observe(&rt.model) | rt.ui.expire_notice() | rt.ui.animating() {
             rt.dirty.mark_render();
@@ -4639,6 +4678,7 @@ fn run() -> Result<(), String> {
                     }
                     let g = rt.model.generation;
                     rt.model.apply(Event::SourceChanged(sources.clone()));
+                    rt.load_eq_profiles();
                     rt.ui.invalidate_catalog();
                     if let Some(worker) = &mut rt.thumbs {
                         worker.forget_failures();

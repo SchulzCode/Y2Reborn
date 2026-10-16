@@ -9,6 +9,7 @@ mod components;
 pub mod diagnostics;
 mod flow;
 mod fontdata;
+mod hpeq;
 pub mod keyboard;
 mod maskdata;
 mod motion;
@@ -2081,6 +2082,13 @@ impl Ui {
                 let pinned = m.settings.home_pins.iter().any(|p| p == key);
                 Effect::SetHomePin(key.into(), !pinned)
             }
+            k if k.starts_with("hp_eq:") => {
+                let name = &k["hp_eq:".len()..];
+                if !name.is_empty() {
+                    reborn_core::hpeq::correction(name, &m.eq_profiles)?;
+                }
+                Effect::SetHeadphoneCorrection(name.to_owned())
+            }
             k if k.starts_with("eq_preset:") => {
                 let name = &k["eq_preset:".len()..];
                 let (_, _, gains) = pages::EQ_PRESETS.iter().find(|(_, key, _)| *key == name)?;
@@ -2805,6 +2813,7 @@ fn route(key: &str) -> Option<Screen> {
         "pc_transfer" => Screen::PcTransfer,
         "audio" => Screen::SettingsAudio,
         "equalizer" => Screen::Equalizer,
+        "hp_correction" => Screen::HeadphoneCorrection,
         "playback" => Screen::SettingsPlayback,
         "crossfade" => Screen::Crossfade,
         "screen_timeout" => Screen::ScreenTimeout,
