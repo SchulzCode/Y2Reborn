@@ -8,6 +8,7 @@ use crate::{
     screens::screen_title,
     text::{self, Face},
     theme::{alpha, color, mix, HEIGHT, WIDTH},
+    views_library::letter_bubble,
     Ui,
 };
 use reborn_core::{AppModel, Track};
@@ -165,6 +166,8 @@ pub fn albums(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interacti
             color::DIM,
         );
     }
+    // A fast spin names the letter it is passing, over the centre cover.
+    letter_bubble(c, ui, m, tracks, focus, flow::CENTRE_Y);
     // Once the row rests, ask for the centre cover at full resolution.
     if let Some((at, t)) = ui
         .row_at(m, tracks, focus)
