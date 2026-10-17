@@ -2,10 +2,14 @@
 """Build the shipped example skins in skins/ (one folder per skin; Classic has its own script).
 
 Each skin is written as skin.json, small generated pictures and Latin subsets
-of open-licence fonts (Open Sans / Noto / Pixelify Sans, SIL OFL 1.1). The skins share one set
+of open-licence fonts (Open Sans / Noto / Pixelify Sans / DM Sans / Syne, SIL OFL 1.1;
+IBM Plex Mono is copied whole). The skins share one set
 of layout builders and differ in palette, fonts, pictures and a few screens.
 Deterministic: rerun after editing a style. Needs Pillow and fontTools
-(pyftsubset), the Noto/Open Sans TTFs of the build host and assets/fonts/pixelify.
+(pyftsubset), the Noto/Open Sans TTFs of the build host and the fonts in
+assets/fonts (pixelify, dmsans, syne, plexmono).
+
+Usage: build_skins.py [skin id ...]   (no id: every skin)
 """
 
 from __future__ import annotations
@@ -14,6 +18,7 @@ import json
 import math
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFilter
@@ -36,12 +41,29 @@ FONTS = {
     "NotoSerif-Italic": "/usr/share/fonts/noto/NotoSerif-Italic.ttf",
     **{f"PixelifySans-{w}": str(ROOT / f"assets/fonts/pixelify/PixelifySans-{w}.ttf")
        for w in ("Regular", "Medium", "SemiBold", "Bold")},
+    "DMSans-Medium": str(ROOT / "assets/fonts/dmsans/DMSans[opsz,wght].ttf"),
+    "DMSans-Bold": str(ROOT / "assets/fonts/dmsans/DMSans[opsz,wght].ttf"),
+    "Syne-ExtraBold": str(ROOT / "assets/fonts/syne/Syne[wght].ttf"),
+    "IBMPlexMono-Medium": str(ROOT / "assets/fonts/plexmono/IBMPlexMono-Medium.ttf"),
+}
+# Variable fonts are cut to a static instance at these axes before subsetting.
+INSTANCES = {
+    "DMSans-Medium": {"opsz": 14, "wght": 500},
+    "DMSans-Bold": {"opsz": 14, "wght": 700},
+    "Syne-ExtraBold": {"wght": 800},
 }
 LICENCES = {
     "OpenSans": ROOT / "assets/fonts/OpenSans-OFL.txt",
     "Noto": Path("/usr/share/licenses/noto-fonts/LICENSE"),
     "PixelifySans": ROOT / "assets/fonts/pixelify/PixelifySans-OFL.txt",
+    "DMSans": ROOT / "assets/fonts/dmsans/DMSans-OFL.txt",
+    "Syne": ROOT / "assets/fonts/syne/Syne-OFL.txt",
+    "IBMPlexMono": ROOT / "assets/fonts/plexmono/IBMPlexMono-OFL.txt",
 }
+FAMILIES = ("OpenSans", "PixelifySans", "DMSans", "Syne", "IBMPlexMono", "Noto")
+# IBM Plex has the Reserved Font Name "Plex": a subset would be a Modified
+# Version that may not carry the name, so the published file is copied as is.
+UNMODIFIED = {"IBMPlexMono"}
 # The characters a skin font carries (reborn-ui skin::atlas::charset).
 UNICODES = "U+0020-007E,U+00A0-017F,U+2009,U+2013,U+2014,U+2018,U+2019,U+201C,U+201D,U+2022,U+2026,U+20AC,U+2122,U+2190,U+2192,U+25B6,U+FFFD"
 
@@ -406,11 +428,17 @@ class Skin:
         fonts = {}
         for role, (src, size, charset) in sorted(self.fonts.items()):
             path = f"fonts/{src}.ttf"
-            if not (self.dir / path).exists():
-                subprocess.run(["pyftsubset", FONTS[src], f"--unicodes={UNICODES}",
+            family = next(f for f in FAMILIES if src.startswith(f) or f == "Noto")
+            if not (self.dir / path).exists() and family in UNMODIFIED:
+                shutil.copyfile(FONTS[src], self.dir / path)
+            elif not (self.dir / path).exists():
+                source = font_input(src, self.dir / path)
+                subprocess.run(["pyftsubset", source, f"--unicodes={UNICODES}",
                                 f"--output-file={self.dir / path}", "--layout-features=kern",
                                 "--name-IDs=*", "--name-legacy", "--notdef-outline"], check=True)
-            families.add(next(f for f in ("OpenSans", "PixelifySans", "Noto") if src.startswith(f) or f == "Noto"))
+                if source != FONTS[src]:
+                    Path(source).unlink()
+            families.add(family)
             fonts[role] = {"file": path, "size": size} | ({"charset": charset} if charset else {})
         for fam in sorted(families):
             shutil.copy(LICENCES[fam], self.dir / f"fonts/{fam}-OFL.txt")
@@ -425,6 +453,20 @@ class Skin:
             add_keyboard(self.id, doc)
             add_heart(self.id, doc)
         (self.dir / "skin.json").write_text(json.dumps(doc, indent=1, ensure_ascii=False) + "\n")
+
+
+def font_input(src, out):
+    """The file pyftsubset reads: the font, or a static instance of a variable font."""
+    if src not in INSTANCES:
+        return FONTS[src]
+    from fontTools.ttLib import TTFont
+    from fontTools.varLib import instancer
+
+    font = TTFont(FONTS[src], recalcTimestamp=False)
+    instancer.instantiateVariableFont(font, INSTANCES[src], inplace=True)
+    tmp = out.with_suffix(".instance.ttf")
+    font.save(tmp)
+    return str(tmp)
 
 
 def standard(skin: Skin, st: Style, now_playing, home=None):
@@ -1319,10 +1361,235 @@ def bunny_bow():
 
 
 
-def main():
+# ------------------------------------------------------------------ Gallery
+# Covers first: every screen is washed from the top in the colour of the cover
+# playing ("accent": "cover"); titles in Syne, lists in DM Sans, small capitals
+# in IBM Plex Mono; rounded glass cards and a pill around the focused row.
+
+def gallery_row(st, w, focused):
+    """A row of width `w`: covers inset so they sit inside the focus pill."""
+    h = st.row_h
+    r = (h - 2) // 2
+    out = [R(0, 1, w, h - 2, "accent/26", radius=r), R(0, 1, w, h - 2, "accent", radius=r, stroke=2)] if focused else []
+    a = h - 14
+    fg = "text"
+    out.append({"type": "group", "if": "row_art", "elements": [
+        {"type": "art", "x": 10, "y": 7, "size": a, "source": "row"},
+        T(a + 22, 0, w - a - 58, h, "{label}", "menu", fg, **{"if": "!has_detail"}),
+        T(a + 22, 3, w - a - 58, 22, "{label}", "title2", fg, **{"if": "has_detail"}),
+        T(a + 22, 23, w - a - 58, 18, "{detail}", "small", "muted", **{"if": "has_detail"}),
+    ]})
+    dw = 170 if w >= 400 else 70
+    plain = [
+        T(st.pad, 0, w - st.pad - dw - 44, h, "{label}", "menu", fg, **{"if": "has_detail & !disabled"}),
+        T(st.pad, 0, w - st.pad - 50, h, "{label}", "menu", fg, **{"if": "!has_detail & !disabled"}),
+        T(st.pad, 0, w - st.pad - 50, h, "{label}", "menu", "dim", **{"if": "disabled"}),
+        T(w - dw - 36, 0, dw, h, "{detail}", "detail", "muted", "right", **{"if": "!current"}),
+        T(w - dw - 44, 0, dw, h, "{detail}", "detail", "muted", "right", **{"if": "current"}),
+        # A switch for On/Off rows.
+        R(w - 56, (h - 20) // 2, 36, 20, "accent", radius=10, **{"if": "toggle & on & !has_detail"}),
+        R(w - 38, (h - 16) // 2, 16, 16, "text", radius=8, **{"if": "toggle & on & !has_detail"}),
+        R(w - 56, (h - 20) // 2, 36, 20, "glass/18", radius=10, **{"if": "toggle & !on & !has_detail"}),
+        R(w - 54, (h - 16) // 2, 16, 16, "muted", radius=8, **{"if": "toggle & !on & !has_detail"}),
+    ]
+    out.append({"type": "group", "if": "!row_art", "elements": plain})
+    out += [
+        {"type": "icon", "if": "checked", "x": w - 34, "y": (h - 18) // 2, "size": 18, "icon": "check",
+         "color": "text" if focused else "accent"},
+        {"type": "icon", "if": "chevron & !checked", "x": w - 28, "y": (h - 12) // 2, "size": 12,
+         "icon": "chevron", "color": "text" if focused else "dim"},
+        {"type": "icon", "if": "current", "x": w - 34, "y": (h - 18) // 2, "size": 18, "icon": "speaker",
+         "color": "text" if focused else "accent"},
+    ]
+    return out
+
+
+def gallery():
+    s = Skin("gallery", "Gallery",
+             "Covers first: dark glass tinted by the album playing, large display type.")
+    s.palette = {"bg": "#0B0C10", "text": "#F4F5F8", "muted": "#A9AEBD", "dim": "#848A9C", "accent": "cover",
+                 "glass": "#FFFFFF", "scrim": "#000000", "sheet": "#17181F", "track": "#2A2C36",
+                 "danger": "#FF7A66", "success": "#3CC878", "warning": "#FFBE3C"}
+    s.colors = {"ink": "#0B0C10", "deep": "#060609", "pane": "#FFFFFF12", "edge": "#FFFFFF24",
+                "toast": "#24262F", "panel": "#15161D", "heart": HEART}
+    s.fonts = {"display": ("Syne-ExtraBold", 30, "ascii"), "hero": ("Syne-ExtraBold", 22, "ascii"),
+               "menu": ("DMSans-Medium", 17, None), "title2": ("DMSans-Bold", 15, None),
+               "detail": ("DMSans-Medium", 14, None), "small": ("DMSans-Medium", 12, None),
+               "mono": ("IBMPlexMono-Medium", 11, None), "time": ("IBMPlexMono-Medium", 13, None)}
+    s.images = {"bloom": glow(64, "#FFFFFF")}
+    st = Style(row_h=44, top=76, pad=18)
+    s.parts["back"] = [
+        R(0, 0, 480, 360, "bg"),
+        I(-160, -230, 560, 470, "bloom", tint="accent/60"),
+        {"type": "gradient", "x": 0, "y": 0, "w": 480, "h": 360, "top": "accent/26", "bottom": "bg"},
+    ]
+    # The time on the left; radios, charge and battery on the right.
+    s.parts["titlebar"] = [
+        T(18, 6, 90, 24, "{clock}", "mono", "muted", tracking=1, **{"if": "has_clock"}),
+        {"type": "icon", "if": "wifi_connected", "x": 336, "y": 10, "size": 16, "icon": "wifi", "color": "muted"},
+        {"type": "icon", "if": "bluetooth_connected", "x": 358, "y": 10, "size": 16, "icon": "bluetooth",
+         "color": "muted"},
+        {"type": "icon", "if": "charging", "x": 378, "y": 10, "size": 16, "icon": "bolt", "color": "success"},
+        T(392, 6, 42, 24, "{battery}%", "mono", "muted", "right"),
+        R(440, 12, 22, 12, "muted", radius=3, stroke=1),
+        R(463, 16, 2, 4, "muted"),
+        {"type": "bar", "if": "!battery_low", "x": 442, "y": 14, "w": 18, "h": 8, "value": "battery",
+         "track": "#00000000", "fill": "text", "radius": 1},
+        {"type": "bar", "if": "battery_low", "x": 442, "y": 14, "w": 18, "h": 8, "value": "battery",
+         "track": "#00000000", "fill": "danger", "radius": 1},
+    ]
+    s.parts["title"] = [T(18, 26, 444, 46, "{screen}", "display")]
+    s.parts["mini"] = [
+        R(16, 302, 448, 50, "panel", radius=16), R(16, 302, 448, 50, "edge", radius=16, stroke=1),
+        {"type": "art", "x": 25, "y": 309, "size": 36},
+        T(72, 306, 330, 22, "{title}", "title2"),
+        T(72, 326, 330, 18, "{artist}", "small", "muted"),
+        R(414, 309, 36, 36, "accent", radius=18),
+        {"type": "icon", "x": 423, "y": 318, "size": 18, "icon": "play_pause", "color": "ink"},
+        {"type": "bar", "x": 32, "y": 349, "w": 368, "h": 2, "value": "progress", "track": "glass/10",
+         "fill": "accent", "radius": 1},
+    ]
+    for w in (448, 264, 344):
+        s.parts[f"row{w}"] = gallery_row(st, w, False)
+        s.parts[f"row{w}_focused"] = gallery_row(st, w, True)
+
+    def rows(y, n, cond, w=448, x=16):
+        e = rows_list(st, y, n, w=w, x=x, cond=cond)
+        e["scrollbar"] = {"x": w + 6, "w": 3, "track": "glass/8", "thumb": "glass/40"}
+        return e
+
+    status = [R(18, 302, 444, 1, "glass/15", **{"if": "has_status"}),
+              T(18, 306, 444, 50, "{status}", "small", "muted", lines=2, line_height=17, **{"if": "has_status"})]
+    s.screens["list"] = [
+        P("back"), P("titlebar"), P("title"),
+        rows(76, 5, "has_track & !has_status & !empty"),
+        rows(76, 6, "!has_track & !has_status & !empty"),
+        rows(76, 5, "has_status & !empty"),
+        *status,
+        T(40, 112, 400, 36, "{empty_title}", "hero", "text", "center", **{"if": "empty"}),
+        T(60, 152, 360, 60, "{empty_body}", "detail", "muted", "center", lines=3, line_height=20,
+          **{"if": "empty"}),
+        R(150, 228, 180, 40, "accent", radius=20, **{"if": "empty & has_action"}),
+        T(150, 228, 180, 40, "{empty_action}", "title2", "ink", "center", **{"if": "empty & has_action"}),
+        P("mini", **{"if": "has_track & !has_status"}),
+    ]
+    s.screens["home"] = [
+        P("back"), P("titlebar"), T(18, 26, 264, 46, "Reborn", "display"),
+        rows(76, 6, None, w=264),
+        R(296, 78, 168, 266, "pane", radius=20), R(296, 78, 168, 266, "edge", radius=20, stroke=1),
+        {"type": "art", "if": "has_art", "x": 310, "y": 92, "size": 140},
+        R(310, 92, 140, 140, "glass/8", radius=12, **{"if": "!has_art"}),
+        {"type": "icon", "if": "!has_art", "x": 352, "y": 134, "size": 56, "icon": "note", "color": "dim"},
+        T(310, 238, 140, 16, "Now Playing", "mono", "muted", case="upper", tracking=1, **{"if": "has_track & !live"}),
+        T(310, 238, 140, 16, "On Air", "mono", "accent", case="upper", tracking=1, **{"if": "live"}),
+        T(310, 254, 140, 22, "{title}", "title2", **{"if": "has_track"}),
+        T(310, 275, 140, 18, "{artist}", "small", "muted", **{"if": "has_track"}),
+        {"type": "bar", "if": "has_track", "x": 310, "y": 304, "w": 140, "h": 3, "value": "progress",
+         "track": "glass/18", "fill": "accent", "radius": 1},
+        T(310, 312, 70, 18, "{elapsed}", "mono", "muted", **{"if": "has_track"}),
+        T(380, 312, 70, 18, "{remaining}", "mono", "muted", "right", **{"if": "has_track"}),
+        T(310, 246, 140, 60, "Nothing playing", "title2", "muted", "center", **{"if": "!has_track"}),
+    ]
+
+    def fact_row(h):
+        return [R(0, 0, 444, 1, "glass/12", **{"if": "!first"}),
+                T(0, 0, 190, h, "{label}", "mono", "muted", case="upper", tracking=1),
+                T(190, 0, 254, h, "{detail}", "detail", "text", "right")]
+
+    def actions(y, cond):
+        # As many rows as fit above the status line, or down to the foot.
+        return [rows(y, max(1, (300 - y) // st.row_h), f"{cond} & has_status"),
+                rows(y, max(1, (356 - y) // st.row_h), f"{cond} & !has_status")]
+
+    s.screens["page"] = [
+        P("back"), P("titlebar"), T(18, 26, 444, 46, "{page_title}", "display"),
+        T(18, 76, 444, 0, "{page_body}", "detail", "muted", lines=2, line_height=19, **{"if": "has_body"}),
+        {"type": "list", "if": "has_body", "x": 18, "y": 120, "w": 444, "rows": 4, "row_height": 24,
+         "source": "facts", "row": fact_row(24)},
+        {"type": "list", "if": "!has_body", "x": 18, "y": 80, "w": 444, "rows": 6, "row_height": 26,
+         "source": "facts", "row": fact_row(26)},
+        *actions(222, "has_facts & has_body"),
+        *actions(244, "has_facts & !has_body"),
+        *actions(122, "!has_facts & has_body"),
+        *actions(80, "!has_facts & !has_body"),
+        *status,
+    ]
+    s.screens["now_playing"] = [
+        P("back"), P("titlebar"),
+        T(130, 6, 220, 24, "{queue_index} of {queue_length}", "mono", "muted", "center", case="upper",
+          tracking=2, **{"if": "!live"}),
+        T(130, 6, 220, 24, "On Air", "mono", "accent", "center", case="upper", tracking=2, **{"if": "live"}),
+        {"type": "art", "x": 20, "y": 40, "size": 176},
+        T(214, 42, 248, 16, "Playing from", "mono", "muted", case="upper", tracking=2, **{"if": "!live"}),
+        T(214, 42, 248, 16, "Live radio", "mono", "muted", case="upper", tracking=2, **{"if": "live"}),
+        T(214, 58, 248, 22, "{album}", "detail"),
+        T(214, 84, 248, 62, "{title}", "hero", lines=2, line_height=29),
+        T(214, 148, 248, 24, "{artist}", "menu", "muted"),
+        T(214, 178, 222, 18, "{quality}", "mono", "dim", case="upper", tracking=1),
+        {"type": "icon", "if": "favorite", "x": 444, "y": 179, "size": 16, "icon": "heart", "color": "heart"},
+        {"type": "bar", "x": 22, "y": 228, "w": 436, "h": 4, "value": "progress", "track": "glass/18",
+         "fill": "text", "radius": 2, "knob": "text", "knob_radius": 6},
+        T(20, 238, 100, 18, "{elapsed}", "time", "muted"),
+        T(360, 238, 100, 18, "{remaining}", "time", "muted", "right"),
+        {"type": "icon", "if": "shuffle", "x": 36, "y": 274, "size": 18, "icon": "shuffle", "color": "accent"},
+        {"type": "icon", "if": "!shuffle", "x": 36, "y": 274, "size": 18, "icon": "shuffle", "color": "dim"},
+        {"type": "icon", "x": 156, "y": 271, "size": 24, "icon": "prev_large", "color": "text"},
+        R(212, 257, 56, 56, "accent", radius=28),
+        {"type": "icon", "x": 226, "y": 271, "size": 28, "icon": "play_pause_large", "color": "ink"},
+        {"type": "icon", "x": 300, "y": 271, "size": 24, "icon": "next_large", "color": "text"},
+        {"type": "icon", "if": "repeat", "x": 426, "y": 274, "size": 18, "icon": "repeat_mode", "color": "accent"},
+        {"type": "icon", "if": "!repeat", "x": 426, "y": 274, "size": 18, "icon": "repeat", "color": "dim"},
+        R(16, 322, 448, 32, "pane", radius=16),
+        {"type": "icon", "x": 30, "y": 330, "size": 16, "icon": "headphones", "color": "muted"},
+        T(56, 322, 330, 32, "{output}", "small", "muted"),
+        T(390, 322, 60, 32, "{volume}", "time", "text", "right"),
+    ]
+    s.screens["sheet"] = [
+        R(0, 0, 480, 360, "scrim/72"),
+        R(56, 34, 368, 292, "panel", radius=20), R(56, 34, 368, 292, "edge", radius=20, stroke=1),
+        T(76, 46, 328, 34, "{sheet_title}", "hero", **{"if": "!danger"}),
+        T(76, 46, 328, 34, "{sheet_title}", "hero", "danger", **{"if": "danger"}),
+        T(76, 80, 328, 38, "{sheet_body}", "small", "muted", lines=2, line_height=18),
+        {"type": "list", "x": 68, "y": 122, "w": 344, "rows": 4, "row_height": 44, "source": "sheet",
+         "row": [P("row344")], "focused": [P("row344_focused")]},
+    ]
+    # Questions have longer headings: two lines of display type.
+    s.screens["dialog"] = [
+        R(0, 0, 480, 360, "scrim/72"),
+        R(56, 46, 368, 268, "panel", radius=20), R(56, 46, 368, 268, "edge", radius=20, stroke=1),
+        T(76, 56, 328, 56, "{sheet_title}", "hero", lines=2, line_height=26, **{"if": "!danger"}),
+        T(76, 56, 328, 56, "{sheet_title}", "hero", "danger", lines=2, line_height=26, **{"if": "danger"}),
+        T(76, 114, 328, 38, "{sheet_body}", "small", "muted", lines=2, line_height=18),
+        {"type": "list", "x": 68, "y": 158, "w": 344, "rows": 3, "row_height": 44, "source": "sheet",
+         "row": [P("row344")], "focused": [P("row344_focused")]},
+    ]
+    # Toasts take the place of the mini player, the volume line that of the foot pill.
+    s.screens["toast"] = [
+        R(16, 302, 448, 50, "toast", radius=18, **{"if": "!error"}),
+        R(16, 302, 448, 50, "danger", radius=18, **{"if": "error"}),
+        R(16, 302, 448, 50, "edge", radius=18, stroke=1),
+        T(36, 302, 408, 50, "{message}", "title2", "text", "center", lines=2, line_height=18, **{"if": "!error"}),
+        T(36, 302, 408, 50, "{message}", "title2", "ink", "center", lines=2, line_height=18, **{"if": "error"}),
+    ]
+    s.screens["volume"] = [
+        R(16, 318, 448, 38, "panel", radius=19), R(16, 318, 448, 38, "edge", radius=19, stroke=1),
+        {"type": "icon", "x": 30, "y": 329, "size": 16, "icon": "speaker", "color": "muted"},
+        {"type": "bar", "x": 58, "y": 335, "w": 340, "h": 4, "value": "volume", "track": "glass/18",
+         "fill": "accent", "radius": 2},
+        T(404, 318, 46, 38, "{volume}", "time", "text", "right"),
+    ]
+    s.screens["keyboard"] = [
+        {"type": "native", "part": "screen", "recolor": False}, P("titlebar"),
+        T(120, 6, 210, 24, "{sheet_title}", "title2", "text", "center"),
+    ]
+    prune(s)
+    return s
+
+
+def main(ids):
     OUT.mkdir(exist_ok=True)
     skins = [nano_glass(), walkman(), terminal(), winamp(), paper(), big_type(), cassette(), neon(), zune(),
-             bunny_bow()]
+             bunny_bow(), gallery()]
     for colour_id, name, bt, bb, ht, hb, acc in [
         ("silver", "Silver", "#D5D9DF", "#9AA0A8", "#B9C0C9", "#7D858F", "#5E6670"),
         ("pink", "Pink", "#F7C6D9", "#D9799E", "#F29BBE", "#D9558A", "#C2386F"),
@@ -1332,9 +1599,11 @@ def main():
     ]:
         skins.append(mini(colour_id, name, bt, bb, ht, hb, acc))
     for skin in skins:
+        if ids and skin.id not in ids:
+            continue
         skin.write()
         print("wrote", skin.dir.relative_to(ROOT))
 
 
 if __name__ == "__main__":
-    main()
+    main(sys.argv[1:])
