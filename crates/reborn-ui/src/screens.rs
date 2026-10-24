@@ -50,51 +50,56 @@ pub fn draw(ui: &Ui, m: &AppModel, tracks: &[Track], has_art: bool) -> Vec<Quad>
         crate::motion::apply(ui, m, &mut c);
         return c.finish();
     }
-    match m.screen {
-        Screen::NowPlaying if m.current().is_some() => {
-            views_playing::now_playing(&mut c, ui, m, tracks, has_art, interactive)
+    // The keyboard covers the whole screen: the screen under it is not drawn.
+    if ui.keyboard.is_none() {
+        match m.screen {
+            Screen::NowPlaying if m.current().is_some() => {
+                views_playing::now_playing(&mut c, ui, m, tracks, has_art, interactive)
+            }
+            Screen::Home => views_library::home(&mut c, ui, m, tracks, has_art, interactive),
+            Screen::Music => views_library::music(&mut c, ui, m, tracks, interactive),
+            Screen::Albums
+            | Screen::Artists
+            | Screen::Genres
+            | Screen::Tracks
+            | Screen::Folders
+            | Screen::Album
+            | Screen::Artist
+            | Screen::Queue
+            | Screen::Audiobooks => {
+                views_library::browse(&mut c, ui, m, tracks, has_art, interactive)
+            }
+            Screen::Search => crate::views_search::page(&mut c, ui, m, tracks, interactive),
+            Screen::Book => crate::views_books::book_page(&mut c, ui, m, tracks, interactive),
+            Screen::Settings
+            | Screen::Wifi
+            | Screen::Bluetooth
+            | Screen::SettingsAudio
+            | Screen::Equalizer
+            | Screen::Crossfade
+            | Screen::Balance
+            | Screen::ScreenTimeout
+            | Screen::Output
+            | Screen::HeadphoneLevel
+            | Screen::DacFilter
+            | Screen::Theme
+            | Screen::TimeZone
+            | Screen::DateTime
+            | Screen::HomeMenu
+            | Screen::SettingsDisplay
+            | Screen::Customize
+            | Screen::Storage
+            | Screen::LastFm
+            | Screen::ErrorReports
+            | Screen::Update => views_settings::screen(&mut c, ui, m, tracks, interactive),
+            Screen::Playlists | Screen::Playlist => {
+                crate::views_playlists::screen(&mut c, ui, m, tracks, has_art, interactive)
+            }
+            Screen::Radio | Screen::RadioStations | Screen::RadioCategories | Screen::RadioInfo => {
+                crate::views_radio::screen(&mut c, ui, m, tracks, interactive)
+            }
+            _ => views_system::page(&mut c, ui, m, tracks, interactive),
         }
-        Screen::Home => views_library::home(&mut c, ui, m, tracks, has_art, interactive),
-        Screen::Music => views_library::music(&mut c, ui, m, tracks, interactive),
-        Screen::Albums
-        | Screen::Artists
-        | Screen::Genres
-        | Screen::Tracks
-        | Screen::Folders
-        | Screen::Album
-        | Screen::Artist
-        | Screen::Queue
-        | Screen::Audiobooks => views_library::browse(&mut c, ui, m, tracks, has_art, interactive),
-        Screen::Search => crate::views_search::page(&mut c, ui, m, tracks, interactive),
-        Screen::Book => crate::views_books::book_page(&mut c, ui, m, tracks, interactive),
-        Screen::Settings
-        | Screen::Wifi
-        | Screen::Bluetooth
-        | Screen::SettingsAudio
-        | Screen::Equalizer
-        | Screen::Crossfade
-        | Screen::Balance
-        | Screen::ScreenTimeout
-        | Screen::Output
-        | Screen::HeadphoneLevel
-        | Screen::DacFilter
-        | Screen::Theme
-        | Screen::TimeZone
-        | Screen::DateTime
-        | Screen::HomeMenu
-        | Screen::SettingsDisplay
-        | Screen::Customize
-        | Screen::Storage
-        | Screen::LastFm
-        | Screen::ErrorReports
-        | Screen::Update => views_settings::screen(&mut c, ui, m, tracks, interactive),
-        Screen::Playlists | Screen::Playlist => {
-            crate::views_playlists::screen(&mut c, ui, m, tracks, has_art, interactive)
-        }
-        Screen::Radio | Screen::RadioStations | Screen::RadioCategories | Screen::RadioInfo => {
-            crate::views_radio::screen(&mut c, ui, m, tracks, interactive)
-        }
-        _ => views_system::page(&mut c, ui, m, tracks, interactive),
     }
     overlays(&mut c, ui, m, tracks);
     crate::motion::apply(ui, m, &mut c);

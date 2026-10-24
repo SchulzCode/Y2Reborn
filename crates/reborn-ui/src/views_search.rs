@@ -103,7 +103,8 @@ pub fn page(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interactive
                         keyboard::FIELD_H,
                     ),
                     &m.navigation.filter,
-                    if m.navigation.filter.trim().is_empty() {
+                    // Nothing found: the page says so below.
+                    if m.navigation.filter.trim().is_empty() || found == 0 {
                         ""
                     } else {
                         &summary

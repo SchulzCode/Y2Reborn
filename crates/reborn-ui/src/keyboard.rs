@@ -476,9 +476,11 @@ fn draw_with(
     } else {
         String::new()
     };
+    // The search's field is the search page's, which leaves the rail room.
+    let field_w = if live { WIDTH - 24. } else { 10. * UNIT };
     field(
         c,
-        (LEFT, at.field_y, 10. * UNIT, at.field_h),
+        (LEFT, at.field_y, field_w, at.field_h),
         &shown,
         &k.note,
         &placeholder,
@@ -502,12 +504,19 @@ fn draw_with(
     draw_keys(c, k, at, dy, true, accent);
 }
 
-/// The keys of `k` folding away (`p` 0 to 1) over the page under them.
+/// The keys of `k` folding away (`p` 0 to 1) over the page under them, on
+/// a panel of their own: the page's text never shows through the keys.
 pub(crate) fn draw_folding(c: &mut Canvas, ui: &crate::Ui, k: &Keyboard, p: f32) {
     let at = if k.live() { &COMPACT } else { &ROOMY };
-    let start = c.draw.len();
-    draw_keys(c, k, at, p * KEYS_TRAVEL, false, ui.accent());
-    crate::motion::fade_all(&mut c.draw[start..], 1. - p);
+    let dy = p * KEYS_TRAVEL;
+    c.rect(
+        0.,
+        at.key_top - 6. + dy,
+        WIDTH,
+        crate::theme::HEIGHT,
+        color::BG,
+    );
+    draw_keys(c, k, at, dy, false, ui.accent());
 }
 
 fn draw_keys(c: &mut Canvas, k: &Keyboard, at: &Layout, dy: f32, focus: bool, accent: u32) {
