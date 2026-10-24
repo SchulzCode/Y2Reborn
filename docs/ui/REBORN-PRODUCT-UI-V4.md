@@ -353,3 +353,43 @@ text out of the field, round artist covers showed grey square corners while the 
   keys are up; its buttons stay arrow keys.
 * **Skins** draw the page with their list layout: headings as dim rows, the field as "Edit
   Search". Previews `70`–`71e`.
+
+## Queue and Up Next (Beta 8.33, owner request 2026-10-24)
+
+Assessment before the change: every queue edit while playing reloaded the song (`load()`
+restarted the decoder from the last reported position, ≈0.3 s of audio dropped) only so the
+gapless pre-open learned the new next song; Add to Queue appended after up to 5 000 songs of
+All Songs; Next on the last song with Repeat All and Previous on the first song stopped
+playback; Shuffle changed only what started later; two Play Next ran backwards; Up Next opened
+on played songs (Y2Linux #60); moving was one menu trip per place (Y2Reborn #32); no
+multi-select (#26); queue actions missing on albums/artists/genres/folders/search (#31); the
+session saved ≈820 bytes per queued song on every song change.
+
+* **Model** (`reborn_core::queue`): one list in play order. Entries you queue
+  (`queue_queued`) stay one block right after the song playing (`anchor_queued` after
+  Previous/jumps); the source keeps its own order (`queue_order`, Shuffle off restores it) and
+  name (`queue_source`, from `Effect::PlayCollection::source`). Play Next = top of your queue
+  (newest first), Add to Queue = end of your queue. Repeat All starts over without your played
+  songs (also gapless: `upcoming` wraps, `TrackBoundary` may land near the start). History: last
+  50 played (`note_played`, source+path), kept in the session.
+* **Engine:** `Playback::set_upcoming` hands the running decoder the next `UPCOMING` (32)
+  entries; it re-opens the next song only if it changed. Every edit, Shuffle, Repeat and each
+  song boundary refresh it — no edit restarts the song (test
+  `a_new_upcoming_list_changes_the_next_song_without_a_restart`).
+* **Session schema 3:** library songs stored as `{"ref":[source, path, id]}` (≈¼ size), filled
+  from the library when it loads (`rehydrate_queue`); stations whole; older sessions read.
+* **Up Next screen** (`up_next`, `views_queue`): opens on the song playing; HISTORY above
+  (a scroll up, played songs dim), QUEUE, NEXT FROM <source>, headings with counts that are
+  not stops. Select plays (a history song plays now, before what was playing). Hold Select:
+  Play Next, Move, Remove from Queue, Select Songs…, Add to Playlist…, Go to Album, Clear
+  Queue / Clear Upcoming. **Move**: the row lifts (accent outline, title "Moving"), each wheel
+  detent moves it one place, crossing into or out of your queue; Select/Back puts it down.
+* **Select Songs** (Up Next, Songs, an album, search): Select ticks rows, the title counts
+  them ("2 Selected"), hold Select acts on them in list order (Play Next, Add to Queue or
+  Remove from Queue, Add to Playlist…, Done), Back ends it. Skins see ticked rows as
+  `RowKind::Check`.
+* **Queue actions everywhere:** hold Select on an album, artist, genre or folder row, or the
+  search's Play All: Play, Shuffle, Play Next, Add to Queue, Add to Playlist… (`group_*`).
+  Toasts confirm ("Plays next", "12 songs added to queue", "2 songs removed").
+* **Now Playing:** a NEXT line under the status icons; its menu's Up Next row names the next
+  song. Previews `17`–`17f`, `18c`, `10b`.

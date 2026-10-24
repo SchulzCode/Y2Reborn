@@ -143,6 +143,22 @@ struct Job {
     id: u64,
     cancel: Cancel,
 }
+/// What follows the song playing, sent while it plays (a queue edit, the
+/// next song reached): the decoder takes it at its next block instead of the
+/// song starting over (Beta 8.33; every edit used to reload the song).
+struct Upcoming {
+    generation: u64,
+    tracks: Vec<Track>,
+    entry_ids: Vec<QueueEntryId>,
+}
+fn take_upcoming(slot: &Mutex<Option<Upcoming>>, generation: u64) -> Option<Upcoming> {
+    let mut slot = slot.lock().unwrap_or_else(|e| e.into_inner());
+    if slot.as_ref().is_some_and(|u| u.generation == generation) {
+        slot.take()
+    } else {
+        None
+    }
+}
 struct PendingStart {
     opened: Receiver<Result<(), String>>,
     job: Box<Job>,
@@ -202,6 +218,7 @@ pub struct Playback {
     /// Paused in place: the audio thread stops writing and pauses the open
     /// device; the decoder waits on the full queue. Resume is instant.
     hold: Arc<AtomicBool>,
+    upcoming: Arc<Mutex<Option<Upcoming>>>,
     cancel: Option<Cancel>,
     pending_start: Option<PendingStart>,
     sink_released: bool,
@@ -861,6 +878,8 @@ impl Playback {
         let sink_balance = balance.clone();
         let hold = Arc::new(AtomicBool::new(false));
         let sink_hold = hold.clone();
+        let upcoming = Arc::new(Mutex::new(None::<Upcoming>));
+        let decode_upcoming = upcoming.clone();
         let state = Arc::new(Mutex::new(json!({
             "state":"stopped",
             "canonical_sample_format":"fltp",
@@ -909,6 +928,8 @@ impl Playback {
                     let mut tracks = Vec::with_capacity(1 + job.queue.len());
                     tracks.push(job.track.clone());
                     tracks.extend(job.queue.clone());
+                    // The song decoding now, as an index into `tracks`.
+                    let mut current_index = 0usize;
                     let mut entry_ids = Vec::with_capacity(1 + job.queue_entry_ids.len());
                     entry_ids.push(job.entry_id);
                     entry_ids.extend(job.queue_entry_ids.iter().copied());
@@ -981,7 +1002,7 @@ impl Playback {
                     let mut next_decoder = None;
                     let mut next_pending = VecDeque::new();
                     let mut packet_count = 0u64;
-                    let open_next = |start: usize| -> Option<(usize, BoundDecoder)> {
+                    let open_next = |tracks: &[Track], start: usize| -> Option<(usize, BoundDecoder)> {
                         for (candidate, track) in tracks.iter().enumerate().skip(start) {
                             match BoundDecoder::open(
                                 track,
@@ -1013,7 +1034,7 @@ impl Playback {
                     };
                     let mut preopened_index = None;
                     if job.gapless_enabled || crossfade_enabled {
-                        if let Some((candidate, next)) = open_next(1) {
+                        if let Some((candidate, next)) = open_next(&tracks, 1) {
                             preopened_index = Some(candidate);
                             next_decoder = Some(next);
                         }
@@ -1022,6 +1043,28 @@ impl Playback {
                         dl.heartbeat("playback", heartbeat_s);
                         if de.load(Ordering::Acquire) != job.generation {
                             return Ok(());
+                        }
+                        if let Some(next) = take_upcoming(&decode_upcoming, job.generation) {
+                            let kept = preopened_index.and_then(|p| entry_ids.get(p).copied());
+                            tracks.truncate(current_index + 1);
+                            entry_ids.truncate(current_index + 1);
+                            tracks.extend(next.tracks);
+                            entry_ids.extend(next.entry_ids);
+                            let first = current_index + 1;
+                            if kept.is_some() && entry_ids.get(first).copied() == kept {
+                                preopened_index = Some(first);
+                            } else {
+                                // Another song comes next: open that one.
+                                next_decoder = None;
+                                next_pending.clear();
+                                preopened_index = None;
+                                if job.gapless_enabled || crossfade_enabled {
+                                    if let Some((candidate, next)) = open_next(&tracks, first) {
+                                        preopened_index = Some(candidate);
+                                        next_decoder = Some(next);
+                                    }
+                                }
+                            }
                         }
                         if let Some(block) =
                             read_pending_or_decoder(&mut decoder, &mut decoder_pending)?
@@ -1306,7 +1349,7 @@ impl Playback {
                                 &dl,
                             )?;
                         }
-                        if let Some((candidate, following)) = open_next(next_index + 1) {
+                        if let Some((candidate, following)) = open_next(&tracks, next_index + 1) {
                             preopened_index = Some(candidate);
                             next_decoder = Some(following);
                         }
@@ -1324,6 +1367,7 @@ impl Playback {
                         }
                         dl.add("ffmpeg_corrupt_packets", next.metadata.corrupt_packets as f64);
                         decoder = next;
+                        current_index = next_index;
                         packet_count = 0;
                         decoder_pending = std::mem::take(&mut next_pending);
                         next_pending = VecDeque::new();
@@ -1800,12 +1844,22 @@ impl Playback {
             volume,
             balance,
             hold,
+            upcoming,
             cancel: None,
             pending_start: None,
             sink_released: true,
             state,
             observer: state_observer,
         })
+    }
+    /// What follows the song playing changed (a queue edit, the next song
+    /// reached): the decoder of `generation` takes it without a restart.
+    pub fn set_upcoming(&self, generation: u64, tracks: Vec<Track>, entry_ids: Vec<QueueEntryId>) {
+        *self.upcoming.lock().unwrap_or_else(|e| e.into_inner()) = Some(Upcoming {
+            generation,
+            tracks,
+            entry_ids,
+        });
     }
     #[cfg(test)]
     #[allow(clippy::too_many_arguments)]
@@ -2792,6 +2846,7 @@ mod tests {
             volume: Arc::new(AtomicU8::new(100)),
             balance: Arc::new(AtomicI8::new(0)),
             hold: Arc::new(AtomicBool::new(false)),
+            upcoming: Arc::new(Mutex::new(None)),
             cancel: None,
             pending_start: None,
             sink_released: false,
@@ -2826,6 +2881,7 @@ mod tests {
             volume: Arc::new(AtomicU8::new(100)),
             balance: Arc::new(AtomicI8::new(0)),
             hold: Arc::new(AtomicBool::new(false)),
+            upcoming: Arc::new(Mutex::new(None)),
             cancel: None,
             pending_start: None,
             sink_released: false,
@@ -3420,6 +3476,77 @@ mod tests {
         assert!(previous_step > 0);
         assert!((boundary_step - previous_step).abs() <= 2);
         p.shutdown(22).unwrap();
+    }
+    /// A queue edit while a song plays (Beta 8.33): the song after it
+    /// changes without the song starting over.
+    #[test]
+    fn a_new_upcoming_list_changes_the_next_song_without_a_restart() {
+        let frames = Arc::new(AtomicU64::new(0));
+        let count = frames.clone();
+        let root = std::env::temp_dir().join(format!("reborn-upcoming-{}", std::process::id()));
+        let log = Observer::new(&root).unwrap();
+        let mut p = Playback::with_sink(
+            log,
+            root,
+            Box::new(move |requested, _, _| {
+                Ok(Box::new(Sink {
+                    frames: count.clone(),
+                    fail: false,
+                    rate: requested.rate,
+                    samples: None,
+                }))
+            }),
+        )
+        .unwrap();
+        // Waiting for job 31 before it starts: taken at its first block.
+        p.set_upcoming(
+            31,
+            vec![gapless_track("gapless-a.flac", 3)],
+            vec![QueueEntryId(7)],
+        );
+        p.load(
+            gapless_track("gapless-a.flac", 1),
+            vec![gapless_track("gapless-b.flac", 2)],
+            0,
+            spec(AudioOutput::Wired, 44100),
+            31,
+            DspConfig::with_volume(100),
+            31,
+        )
+        .unwrap();
+        let until = Instant::now() + Duration::from_secs(5);
+        let mut boundaries = vec![];
+        loop {
+            if let Ok(PlaybackEvent::Core(event)) =
+                p.events.recv_timeout(Duration::from_millis(100))
+            {
+                match event {
+                    Event::TrackBoundary {
+                        generation: 31,
+                        next_entry_id,
+                        next_track_id,
+                        ..
+                    } => boundaries.push((next_entry_id, next_track_id)),
+                    Event::TrackEnded { generation: 31 } => break,
+                    Event::PlaybackError { message, .. } => panic!("{message}"),
+                    _ => {}
+                }
+            }
+            assert!(Instant::now() < until, "upcoming drain deadline");
+        }
+        assert_eq!(
+            boundaries,
+            [(Some(QueueEntryId(7)), Some(3))],
+            "the new next song, not the one the job started with"
+        );
+        assert_eq!(
+            frames.load(Ordering::Relaxed),
+            8192,
+            "both songs whole, once"
+        );
+        // Another job's list is never taken.
+        p.set_upcoming(99, vec![], vec![]);
+        p.shutdown(32).unwrap();
     }
     #[test]
     fn failed_next_track_is_skipped_to_the_following_decodable_track() {

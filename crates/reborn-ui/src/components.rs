@@ -246,6 +246,16 @@ pub fn round_cover(c: &mut Canvas, x: f32, y: f32, size: f32, selected: bool) {
     });
 }
 
+/// A row's place in Select Songs: a ring, filled with a check once chosen.
+pub fn select_mark(c: &mut Canvas, cx: f32, cy: f32, on: bool, accent: u32) {
+    if on {
+        c.disc(cx, cy, 11., accent);
+        c.icon(Icon::Check, cx, cy, 16., color::TEXT);
+    } else {
+        c.ring(cx, cy, 11., 1.5, color::DIM);
+    }
+}
+
 /// The focus row's fill, and the opaque colour it gives over `BG` (for
 /// masking the corners of round artwork drawn on it).
 pub const FOCUS_FILL: u32 = color::GLASS;

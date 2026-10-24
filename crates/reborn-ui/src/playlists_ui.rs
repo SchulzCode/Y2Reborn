@@ -371,6 +371,7 @@ impl Ui {
             return Effect::None;
         };
         let members = self.playable(tracks, &p);
+        let source = crate::source_label(m);
         match key {
             "pl_play" | "pl_shuffle" if !members.is_empty() => {
                 Self::go(m, Screen::NowPlaying, "");
@@ -378,6 +379,7 @@ impl Ui {
                     selected: members[0],
                     members,
                     shuffle: key == "pl_shuffle",
+                    source,
                 }
             }
             k => {
@@ -394,6 +396,7 @@ impl Ui {
                             selected: t,
                             members,
                             shuffle: false,
+                            source,
                         }
                     }
                     Some(_) => {

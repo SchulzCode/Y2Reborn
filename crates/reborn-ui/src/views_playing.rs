@@ -147,6 +147,35 @@ pub fn now_playing(
         }
     }
     status_icons(c, m, 222., info_cy + 33., accent);
+    // What plays next (Beta 8.33): your queue first, then the source.
+    let next = m
+        .queue
+        .get(m.queue_position + 1)
+        .filter(|_| !radio && book.is_none() && m.settings.repeat != RepeatMode::Track);
+    if let Some(next) = next {
+        let cy = (info_cy + 66.).min(238.);
+        c.text_tracked(
+            222.,
+            cy + Face::S10.mid_offset(),
+            "NEXT",
+            Face::S10,
+            color::MUTED,
+            1.4,
+        );
+        let x = 222. + text::width(Face::S10, "NEXT") + 16.;
+        c.text_mid(
+            x,
+            cy,
+            458. - x,
+            &format!(
+                "{}  ·  {}",
+                crate::track_title(next),
+                crate::display_or_unknown(&next.artist)
+            ),
+            Face::R13,
+            color::MUTED,
+        );
+    }
     if shown < 1. {
         crate::motion::fade_all(&mut c.draw[song_from..], shown);
     }

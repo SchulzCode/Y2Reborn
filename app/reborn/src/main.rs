@@ -112,19 +112,10 @@ fn shuffle_seed() -> u64 {
     reborn_platform::random_u64()
 }
 
-/// Fisher-Yates over `items[from..]`, driven by splitmix64.
-fn shuffle_from<T>(items: &mut [T], from: usize, mut seed: u64) {
-    for i in (from + 1..items.len()).rev() {
-        seed = seed.wrapping_add(0x9e37_79b9_7f4a_7c15);
-        let mut z = seed;
-        z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
-        z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
-        z ^= z >> 31;
-        let span = (i - from + 1) as u128;
-        let j = from + ((u128::from(z) * span) >> 64) as usize;
-        items.swap(i, j);
-    }
-}
+use reborn_core::queue::shuffle_from;
+/// Songs the decoder knows ahead of the one playing (`Playback::set_upcoming`
+/// keeps it filled as songs play and the queue changes).
+const UPCOMING: usize = 32;
 
 /// Stations kept on top of a country's, a genre's or the popular list.
 const TOP_STATIONS: usize = 10;
@@ -268,6 +259,10 @@ struct Runtime {
     kernel_events: Arc<Mutex<Vec<String>>>,
     background: background::Gate,
     art: bool,
+    /// The song last seen playing (entry, library id) and its record: a
+    /// change puts it in the history.
+    history_seen: Option<(Option<QueueEntryId>, i64)>,
+    history_track: Option<Track>,
     dirty: DirtyState,
     root: PathBuf,
     /// Internet radio: saved favorites, the station playing, directory replies.
@@ -790,7 +785,7 @@ impl Runtime {
         let members = (0..tracks.len())
             .filter(|&i| i == index || tracks[i].is_music())
             .collect();
-        self.play_members(index, members, force_shuffle)
+        self.play_members(index, members, force_shuffle, "Songs".into())
     }
 
     /// Internet radio requests from the Radio screens and Now Playing.
@@ -925,6 +920,7 @@ impl Runtime {
         }
         self.save_book();
         self.model.replace_queue(vec![Track::radio(&station)], 0)?;
+        self.model.set_source("Radio", None);
         self.radio_live = None;
         // Previous/Next move through the list the station was chosen from.
         if self
@@ -1185,6 +1181,7 @@ impl Runtime {
         index: usize,
         members: Vec<usize>,
         force_shuffle: bool,
+        source: String,
     ) -> Result<(), String> {
         let online = self
             .model
@@ -1208,6 +1205,12 @@ impl Runtime {
             .position(|&member| member == index)
             .ok_or("selected track is not in the playback collection")?;
         let use_shuffle = force_shuffle || self.model.settings.shuffle;
+        // The source's own order, for Shuffle off later.
+        let rank: std::collections::HashMap<usize, usize> = members
+            .iter()
+            .enumerate()
+            .map(|(rank, &member)| (member, rank))
+            .collect();
         let (window, start) = if use_shuffle {
             if force_shuffle {
                 // A Shuffle row: any song may come first.
@@ -1225,13 +1228,76 @@ impl Runtime {
             let start = selected_position - window.start;
             (window, start)
         };
-        let queue = members[window]
+        let chosen = &members[window];
+        let queue = chosen
             .iter()
             .filter_map(|&member| tracks.get(member).cloned())
             .collect::<Vec<_>>();
+        let mut natural: Vec<usize> = (0..chosen.len()).collect();
+        natural.sort_by_key(|&i| rank.get(&chosen[i]).copied().unwrap_or(usize::MAX));
         self.save_book();
         self.model.replace_queue(queue, start)?;
+        self.model.set_source(source, Some(&natural));
         self.load()
+    }
+
+    /// A new song plays: the one before goes into the history.
+    fn note_history(&mut self) {
+        let now = self
+            .model
+            .current()
+            .map(|t| (self.model.current_entry_id(), t.id));
+        if now == self.history_seen {
+            return;
+        }
+        if let Some(previous) = self.history_track.take() {
+            self.model.note_played(&previous);
+            self.dirty.mark_persistence();
+        }
+        self.history_seen = now;
+        self.history_track = self.model.current().cloned();
+    }
+
+    /// The queue changed after the song playing: the decoder learns the
+    /// songs to come without the song starting over.
+    fn upcoming_changed(&mut self) {
+        let (tracks, ids) = self.model.upcoming(UPCOMING);
+        self.playback
+            .set_upcoming(self.model.generation, tracks, ids);
+    }
+
+    /// Play Next (`next`) or Add to Queue. An empty queue becomes the songs;
+    /// Play Next then starts them.
+    fn queue_songs(&mut self, members: Vec<usize>, next: bool) -> Result<(), String> {
+        let tracks = members
+            .into_iter()
+            .filter_map(|index| self.model.library.tracks.get(index).cloned())
+            .filter(|track| track.online)
+            .collect::<Vec<_>>();
+        let count = tracks.len();
+        if count == 0 {
+            return Err("media source offline".into());
+        }
+        let fresh = if next {
+            self.model.queue_next(tracks)?
+        } else {
+            self.model.queue_last(tracks)?
+        };
+        if fresh && next {
+            self.load()?;
+        } else if fresh {
+            self.model.playback = PlaybackState::Paused;
+        } else {
+            self.upcoming_changed();
+        }
+        self.ui.flash(match (next, count) {
+            (true, 1) => "Plays next".to_owned(),
+            (true, n) => format!("{n} songs play next"),
+            (false, 1) => "Added to queue".to_owned(),
+            (false, n) => format!("{n} songs added to queue"),
+        });
+        self.checkpoint();
+        Ok(())
     }
 
     fn fail(&mut self, sub: &str, error: String) {
@@ -1679,24 +1745,8 @@ impl Runtime {
             .unwrap_or(QueueEntryId(self.model.queue_position as u64 + 1));
         // A station is never pre-opened for gapless playback: that would start
         // a second network transfer.
-        let (queue, queue_entry_ids) = if radio || self.model.settings.repeat == RepeatMode::Track {
-            (Vec::new(), Vec::new())
-        } else {
-            (
-                self.model
-                    .queue
-                    .iter()
-                    .skip(self.model.queue_position + 1)
-                    .cloned()
-                    .collect(),
-                self.model
-                    .queue_entry_ids
-                    .iter()
-                    .skip(self.model.queue_position + 1)
-                    .copied()
-                    .collect(),
-            )
-        };
+        // (`upcoming` leaves stations and Repeat One without a next song.)
+        let (queue, queue_entry_ids) = self.model.upcoming(UPCOMING);
         let eq = self.model.settings.active_eq();
         let loaded = (self.model.settings.replay_gain, eq.clone());
         let fade_in = dsp_rise_fades(self.loaded_dsp.as_ref(), &loaded);
@@ -1998,9 +2048,8 @@ impl Runtime {
                 if self.model.queue_position + 1 < self.model.queue.len() {
                     self.model.step(1);
                 } else {
-                    self.model.queue_position = 0;
-                    self.model.position_ms = 0;
-                    self.model.invalidate();
+                    // Your queued songs that played leave; the start follows.
+                    self.model.wrap();
                 }
                 self.load()
             }
@@ -2281,16 +2330,15 @@ impl Runtime {
                 selected,
                 members,
                 shuffle,
-            } => self.play_members(selected, members, shuffle)?,
+                source,
+            } => self.play_members(selected, members, shuffle, source)?,
             Effect::PlayQueue(index) => {
-                if index >= self.model.queue.len() {
+                if !self.model.jump_to(index) {
                     return Err("invalid queue entry".into());
                 }
-                self.model.queue_position = index;
-                self.model.position_ms = 0;
                 self.load()?;
             }
-            Effect::PlayNext(index) => {
+            Effect::PlayNow(index) => {
                 let track = self
                     .model
                     .library
@@ -2301,114 +2349,16 @@ impl Runtime {
                 if !track.online {
                     return Err("media source offline".into());
                 }
-                if self.model.queue.len() >= reborn_core::MAX_QUEUE {
-                    return Err("queue is full".into());
+                if !self.model.queue_next(vec![track])? {
+                    self.model.jump_to(self.model.queue_position + 1);
                 }
-                let was_empty = self.model.queue.is_empty();
-                let insert_at = if was_empty {
-                    0
-                } else {
-                    (self.model.queue_position + 1).min(self.model.queue.len())
-                };
-                self.model.insert_queue_entry(insert_at, track)?;
-                if was_empty {
-                    self.model.queue_position = 0;
-                    self.load()?;
-                } else if matches!(
-                    self.model.playback,
-                    PlaybackState::Playing | PlaybackState::Buffering
-                ) {
-                    self.load()?;
-                }
+                self.load()?;
                 self.checkpoint();
             }
-            Effect::PlayNextCollection(members) => {
-                let tracks = members
-                    .into_iter()
-                    .filter_map(|index| self.model.library.tracks.get(index).cloned())
-                    .filter(|track| track.online)
-                    .collect::<Vec<_>>();
-                if tracks.is_empty() {
-                    return Err("collection has no online tracks".into());
-                }
-                let was_empty = self.model.queue.is_empty();
-                if self.model.queue.len().saturating_add(tracks.len()) > reborn_core::MAX_QUEUE {
-                    return Err("queue is full".into());
-                }
-                let start = if was_empty {
-                    0
-                } else {
-                    (self.model.queue_position + 1).min(self.model.queue.len())
-                };
-                for (insert_at, track) in (start..).zip(tracks) {
-                    self.model.insert_queue_entry(insert_at, track)?;
-                }
-                self.model.queue_position = if was_empty {
-                    0
-                } else {
-                    self.model.queue_position
-                };
-                if was_empty
-                    || matches!(
-                        self.model.playback,
-                        PlaybackState::Playing | PlaybackState::Buffering
-                    )
-                {
-                    self.load()?;
-                }
-                self.checkpoint();
-            }
-            Effect::AddToQueue(index) => {
-                let track = self
-                    .model
-                    .library
-                    .tracks
-                    .get(index)
-                    .cloned()
-                    .ok_or("invalid selection")?;
-                if self.model.queue.len() >= reborn_core::MAX_QUEUE {
-                    return Err("queue is full".into());
-                }
-                let was_empty = self.model.queue.is_empty();
-                let insert_at = self.model.queue.len();
-                self.model.insert_queue_entry(insert_at, track)?;
-                if was_empty {
-                    self.model.queue_position = 0;
-                } else if matches!(
-                    self.model.playback,
-                    PlaybackState::Playing | PlaybackState::Buffering
-                ) {
-                    self.load()?;
-                }
-                self.checkpoint();
-            }
-            Effect::AddToQueueCollection(members) => {
-                let tracks = members
-                    .into_iter()
-                    .filter_map(|index| self.model.library.tracks.get(index).cloned())
-                    .filter(|track| track.online)
-                    .collect::<Vec<_>>();
-                if tracks.is_empty() {
-                    return Err("collection has no online tracks".into());
-                }
-                if self.model.queue.len().saturating_add(tracks.len()) > reborn_core::MAX_QUEUE {
-                    return Err("queue is full".into());
-                }
-                let was_empty = self.model.queue.is_empty();
-                let start = self.model.queue.len();
-                for (insert_at, track) in (start..).zip(tracks) {
-                    self.model.insert_queue_entry(insert_at, track)?;
-                }
-                if was_empty {
-                    self.model.queue_position = 0;
-                } else if matches!(
-                    self.model.playback,
-                    PlaybackState::Playing | PlaybackState::Buffering
-                ) {
-                    self.load()?;
-                }
-                self.checkpoint();
-            }
+            Effect::PlayNext(index) => self.queue_songs(vec![index], true)?,
+            Effect::PlayNextCollection(members) => self.queue_songs(members, true)?,
+            Effect::AddToQueue(index) => self.queue_songs(vec![index], false)?,
+            Effect::AddToQueueCollection(members) => self.queue_songs(members, false)?,
             Effect::TogglePlayback => self.toggle()?,
             Effect::NextTrack | Effect::PreviousTrack => {
                 let delta = if matches!(e, Effect::NextTrack) {
@@ -2426,10 +2376,18 @@ impl Runtime {
                 // second press goes back a song (Y2Reborn #21).
                 } else if delta < 0
                     && self.model.current().is_some()
-                    && self.model.position_ms > RESTART_SONG_AFTER_MS
+                    && (self.model.position_ms > RESTART_SONG_AFTER_MS
+                        || self.model.queue_position == 0)
                 {
+                    // The first song has nothing before it: it starts over.
                     self.seek_by(-(self.model.position_ms as i64));
-                } else if self.model.step(delta) {
+                // Next on the last song: Repeat All starts over.
+                } else if (delta > 0
+                    && self.model.queue_position + 1 >= self.model.queue.len()
+                    && self.model.settings.repeat == RepeatMode::All
+                    && self.model.wrap())
+                    || self.model.step(delta)
+                {
                     self.load()?
                 } else {
                     self.model.invalidate();
@@ -2892,16 +2850,25 @@ impl Runtime {
             }
             Effect::SetShuffle(enabled) => {
                 self.model.settings.shuffle = enabled;
+                // What plays now follows at once: its songs to come shuffle,
+                // or go back to their own order (your queue stays as it is).
+                let music = self.model.book.is_none()
+                    && self.model.current().is_some_and(|t| !t.is_radio());
+                if music {
+                    let changed = if enabled {
+                        self.model.shuffle_source(shuffle_seed())
+                    } else {
+                        self.model.unshuffle_source()
+                    };
+                    if changed {
+                        self.upcoming_changed();
+                    }
+                }
                 self.checkpoint();
             }
             Effect::SetRepeat(mode) => {
                 self.model.settings.repeat = mode;
-                if matches!(
-                    self.model.playback,
-                    PlaybackState::Playing | PlaybackState::Buffering
-                ) {
-                    self.load()?;
-                }
+                self.upcoming_changed();
                 self.checkpoint();
             }
             Effect::SetScreenTimeout(seconds) => {
@@ -2926,45 +2893,55 @@ impl Runtime {
             Effect::QueueRemove(index) => {
                 if index == self.model.queue_position {
                     self.ui.flash("The current track stays in the queue");
-                } else if index < self.model.queue.len()
-                    && self.model.remove_queue_entry(index).is_some()
-                {
-                    let active = matches!(
-                        self.model.playback,
-                        PlaybackState::Playing | PlaybackState::Buffering
-                    );
-                    if active {
-                        self.load()?;
+                } else if let Some(&id) = self.model.queue_entry_ids.get(index) {
+                    if self.model.remove_entries(&[id]) > 0 {
+                        self.upcoming_changed();
+                        self.checkpoint();
                     }
-                    self.checkpoint();
                 }
             }
             Effect::QueueMove { index, delta } => {
-                let Some(next) = index.checked_add_signed(delta as isize) else {
+                let Some(&id) = self.model.queue_entry_ids.get(index) else {
                     return Ok(());
                 };
-                if index > self.model.queue_position
-                    && next > self.model.queue_position
-                    && next < self.model.queue.len()
-                {
-                    self.model.move_queue_entry(index, next);
-                    if matches!(
-                        self.model.playback,
-                        PlaybackState::Playing | PlaybackState::Buffering
-                    ) {
-                        self.load()?;
-                    }
+                if self.model.move_entry(id, delta < 0) {
+                    self.upcoming_changed();
+                    self.checkpoint();
+                }
+            }
+            Effect::QueueRemoveEntries(ids) => {
+                let removed = self.model.remove_entries(&ids);
+                if removed > 0 {
+                    self.upcoming_changed();
+                    self.checkpoint();
+                    self.ui.flash(if removed == 1 {
+                        "1 song removed".to_owned()
+                    } else {
+                        format!("{removed} songs removed")
+                    });
+                }
+            }
+            Effect::QueueEntriesNext(ids) => {
+                let moved = self.model.entries_next(&ids);
+                if moved > 0 {
+                    self.upcoming_changed();
+                    self.checkpoint();
+                    self.ui.flash(if moved == 1 {
+                        "Plays next".to_owned()
+                    } else {
+                        format!("{moved} songs play next")
+                    });
+                }
+            }
+            Effect::ClearQueued => {
+                if self.model.clear_queued() {
+                    self.upcoming_changed();
                     self.checkpoint();
                 }
             }
             Effect::ClearQueue => {
                 if self.model.clear_future_queue() {
-                    if matches!(
-                        self.model.playback,
-                        PlaybackState::Playing | PlaybackState::Buffering
-                    ) {
-                        self.load()?;
-                    }
+                    self.upcoming_changed();
                     self.checkpoint();
                 }
             }
@@ -4397,6 +4374,8 @@ fn run() -> Result<(), String> {
         kernel_events: Arc::new(Mutex::new(Vec::new())),
         background,
         art: false,
+        history_seen: None,
+        history_track: None,
         dirty: DirtyState {
             render: true,
             persistence: false,
@@ -5084,7 +5063,15 @@ fn run() -> Result<(), String> {
                             rt.model.navigation.context_key = None;
                         }
                     }
+                    let boundary = matches!(
+                        &event,
+                        Event::TrackBoundary { generation, .. } if *generation == rt.model.generation
+                    );
                     rt.model.apply(event);
+                    if boundary {
+                        // The decoder knows `UPCOMING` songs ahead: top it up.
+                        rt.upcoming_changed();
+                    }
                     rt.dirty.mark_render();
                     if persists {
                         rt.dirty.mark_persistence();
@@ -5174,6 +5161,8 @@ fn run() -> Result<(), String> {
                             }
                         }
                         rt.model.library.tracks = t;
+                        // A restored queue names its songs: their details now.
+                        rt.model.rehydrate_queue();
                         // Playlists are read again with the library (files
                         // copied over USB, the heart's Favorites), but not
                         // while a scan walks the same storage: its own
@@ -5229,6 +5218,7 @@ fn run() -> Result<(), String> {
         }
         rt.radio_tick();
         rt.scrobble_tick();
+        rt.note_history();
         rt.lastfm_tick();
         let mut bt_lost = false;
         if let Some(service) = &rt.bluetooth {

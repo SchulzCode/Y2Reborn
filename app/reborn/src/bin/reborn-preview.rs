@@ -599,10 +599,113 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ui.accent = orange;
         ui.volume_until = Some(std::time::Instant::now() + std::time::Duration::from_secs(600));
     });
+    // Up Next (Beta 8.33): history above the song playing, your queue,
+    // then the rest of the album.
+    fn up_next(ui: &mut reborn_ui::Ui, m: &mut AppModel, focus_key: Option<&str>) {
+        let lib = m.library.tracks.clone();
+        m.step(1);
+        m.step(1);
+        m.position_ms = 137_000;
+        m.playback = PlaybackState::Playing;
+        for i in [12, 7, 0, 1] {
+            m.note_played(&lib[i]);
+        }
+        m.queue_source = "Night Drive".into();
+        m.queue_last(vec![lib[9].clone(), lib[13].clone()]).unwrap();
+        let rows = ui.rows(m, &lib);
+        let now = format!("queue:{}", m.current_entry_id().unwrap().0);
+        let key = focus_key.unwrap_or(&now);
+        m.navigation.focus = rows
+            .iter()
+            .position(|r| r.key == key || (key == "first_source" && r.key == "heading:source"))
+            .map(|i| if key == "first_source" { i + 1 } else { i })
+            .unwrap();
+        m.navigation.scroll = if focus_key.is_some() {
+            m.navigation.focus.saturating_sub(2)
+        } else {
+            m.navigation.focus
+        };
+    }
     case!("17-up-next", at(Screen::Queue, ""), move |ui, m| {
         ui.accent = orange;
-        m.navigation.focus = 2;
+        up_next(ui, m, None);
     });
+    case!(
+        "17b-up-next-history",
+        at(Screen::Queue, ""),
+        move |ui, m| {
+            ui.accent = orange;
+            up_next(ui, m, Some("hist:7"));
+            m.navigation.scroll = 0;
+        }
+    );
+    case!("17c-up-next-moving", at(Screen::Queue, ""), move |ui, m| {
+        ui.accent = orange;
+        up_next(ui, m, Some("first_source"));
+        // Move (the first of the menu on a song of the album is Play Next).
+        ui.model_action(m, Action::ContextMenu);
+        m.navigation.modal_focus = 1;
+        ui.model_action(m, Action::Select);
+        // One detent up: into your queue.
+        let id = m.queue_entry_ids[m.source_start()];
+        ui.model_action(m, Action::WheelCounterClockwise(1));
+        m.move_entry(id, true);
+        let lib = m.library.tracks.clone();
+        ui.normalize(m, &lib);
+    });
+    case!(
+        "17d-up-next-selecting",
+        at(Screen::Queue, ""),
+        move |ui, m| {
+            ui.accent = orange;
+            up_next(ui, m, Some("first_source"));
+            // Select Songs…, then the next song too.
+            ui.model_action(m, Action::ContextMenu);
+            m.navigation.modal_focus = 3;
+            ui.model_action(m, Action::Select);
+            ui.model_action(m, Action::WheelClockwise(1));
+            ui.model_action(m, Action::Select);
+        }
+    );
+    case!("17e-up-next-menu", at(Screen::Queue, ""), move |ui, m| {
+        ui.accent = orange;
+        up_next(ui, m, Some("first_source"));
+        ui.model_action(m, Action::ContextMenu);
+    });
+    case!(
+        "17f-up-next-selection-menu",
+        at(Screen::Queue, ""),
+        move |ui, m| {
+            ui.accent = orange;
+            up_next(ui, m, Some("first_source"));
+            ui.model_action(m, Action::ContextMenu);
+            m.navigation.modal_focus = 3;
+            ui.model_action(m, Action::Select);
+            ui.model_action(m, Action::WheelClockwise(1));
+            ui.model_action(m, Action::Select);
+            ui.model_action(m, Action::ContextMenu);
+        }
+    );
+    case!("18c-album-menu", at(Screen::Albums, ""), move |ui, m| {
+        ui.accent = teal;
+        m.settings.album_view = reborn_core::AlbumView::Grid;
+        m.navigation.focus = 1;
+        ui.model_action(m, Action::ContextMenu);
+    });
+    case!(
+        "10b-songs-selecting",
+        at(Screen::Tracks, ""),
+        move |ui, m| {
+            ui.accent = teal;
+            m.navigation.focus = 2;
+            ui.model_action(m, Action::ContextMenu);
+            m.navigation.modal_focus = 3;
+            ui.model_action(m, Action::Select);
+            ui.model_action(m, Action::WheelClockwise(1));
+            ui.model_action(m, Action::WheelClockwise(1));
+            ui.model_action(m, Action::Select);
+        }
+    );
     case!("18-song-menu", at(Screen::Tracks, ""), move |ui, m| {
         ui.accent = teal;
         m.navigation.focus = 2;

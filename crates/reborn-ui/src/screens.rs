@@ -65,11 +65,11 @@ pub fn draw(ui: &Ui, m: &AppModel, tracks: &[Track], has_art: bool) -> Vec<Quad>
             | Screen::Folders
             | Screen::Album
             | Screen::Artist
-            | Screen::Queue
             | Screen::Audiobooks => {
                 views_library::browse(&mut c, ui, m, tracks, has_art, interactive)
             }
             Screen::Search => crate::views_search::page(&mut c, ui, m, tracks, interactive),
+            Screen::Queue => crate::views_queue::page(&mut c, ui, m, tracks, interactive),
             Screen::Book => crate::views_books::book_page(&mut c, ui, m, tracks, interactive),
             Screen::Settings
             | Screen::Wifi
@@ -127,8 +127,8 @@ fn native_screen(
         | Screen::Folders
         | Screen::Album
         | Screen::Artist
-        | Screen::Queue
         | Screen::Audiobooks => views_library::browse(c, ui, m, tracks, has_art, interactive),
+        Screen::Queue => crate::views_queue::page(c, ui, m, tracks, interactive),
         Screen::Search => crate::views_search::page(c, ui, m, tracks, interactive),
         Screen::Book => crate::views_books::book_page(c, ui, m, tracks, interactive),
         Screen::Settings
@@ -660,6 +660,20 @@ pub(crate) fn context_song(ui: &Ui, m: &AppModel, tracks: &[Track]) -> (Option<S
     if m.screen == Screen::NowPlaying {
         if let Some((book, _)) = m.book_part() {
             return (Some(book.title.clone()), book.author.clone());
+        }
+    }
+    // Up Next's entries and history, groups, the songs chosen.
+    if m.screen != Screen::NowPlaying {
+        let key = m.navigation.context_key.clone().or_else(|| {
+            m.navigation
+                .context_target
+                .and_then(|i| ui.row_at(m, tracks, i).map(|r| r.key))
+        });
+        if let Some((title, line)) = key
+            .filter(|k| !k.starts_with("track:"))
+            .and_then(|k| ui.menu_subject(m, tracks, &k))
+        {
+            return (Some(title), line);
         }
     }
     let song = if m.screen == Screen::NowPlaying {

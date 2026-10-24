@@ -130,6 +130,7 @@ impl Runtime {
         };
         let queue: Vec<Track> = parts.iter().map(|t| (*t).clone()).collect();
         self.model.replace_queue(queue, part)?;
+        self.model.set_source(book.title.clone(), None);
         self.model.position_ms = position;
         self.model.book = Some(listening);
         self.paused_at = None;

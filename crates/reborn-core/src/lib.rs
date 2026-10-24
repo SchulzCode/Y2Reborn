@@ -5,6 +5,7 @@ mod countries;
 pub mod eq;
 pub mod platform;
 pub mod playlist;
+pub mod queue;
 pub mod scrobble;
 pub mod sort;
 mod zones;
@@ -75,7 +76,9 @@ pub fn queue_window(len: usize, selected: usize, cap: usize) -> std::ops::Range<
     let start = selected.saturating_sub(cap / 10).min(len - cap);
     start..start + cap
 }
-pub const SESSION_SCHEMA_VERSION: u32 = 2;
+/// 3 (Beta 8.33): the queue names library songs by reference; your queued
+/// songs, the source's order and name, and the history.
+pub const SESSION_SCHEMA_VERSION: u32 = 3;
 pub const SESSION_MAX_BYTES: usize = 8 * 1024 * 1024;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(tag = "state", rename_all = "snake_case")]
@@ -1269,10 +1272,23 @@ pub const CODEC_REVISION: u8 = 1;
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AppModel {
     pub playback: PlaybackState,
+    #[serde(with = "queue::stored")]
     pub queue: Vec<Track>,
     #[serde(default)]
     pub queue_entry_ids: Vec<QueueEntryId>,
     pub queue_position: usize,
+    /// Entries you queued (Play Next, Add to Queue); see `queue`.
+    #[serde(default)]
+    pub queue_queued: Vec<QueueEntryId>,
+    /// The source's entries in its own order (Shuffle off restores it).
+    #[serde(default)]
+    pub queue_order: Vec<QueueEntryId>,
+    /// What is playing, as Up Next names it ("Night Drive", "Songs").
+    #[serde(default)]
+    pub queue_source: String,
+    /// Songs that played, newest last (`queue::MAX_HISTORY`).
+    #[serde(default)]
+    pub history: Vec<queue::HistoryEntry>,
     pub position_ms: u64,
     pub output: AudioOutput,
     #[serde(skip)]
@@ -1371,8 +1387,12 @@ pub enum Effect {
         selected: usize,
         members: Vec<usize>,
         shuffle: bool,
+        /// What Up Next calls it ("Night Drive", "Search “bri”").
+        source: String,
     },
     PlayQueue(usize),
+    /// Play this library song now; what was playing goes on after it.
+    PlayNow(usize),
     PlayNext(usize),
     PlayNextCollection(Vec<usize>),
     AddToQueue(usize),
@@ -1457,6 +1477,13 @@ pub enum Effect {
         index: usize,
         delta: i8,
     },
+    /// Remove these Up Next entries (chosen together).
+    QueueRemoveEntries(Vec<QueueEntryId>),
+    /// These Up Next entries go to the top of your queue, together.
+    QueueEntriesNext(Vec<QueueEntryId>),
+    /// Clear your queue (the songs you queued).
+    ClearQueued,
+    /// Clear everything after the song playing.
     ClearQueue,
     RebuildLibrary,
     ResetSettings,
@@ -1531,6 +1558,9 @@ impl AppModel {
         self.queue_entry_ids = (1..=self.queue.len())
             .map(|id| QueueEntryId(id as u64))
             .collect();
+        self.queue_queued.clear();
+        self.queue_order = self.queue_entry_ids.clone();
+        self.queue_source.clear();
         self.queue_position = index;
         self.position_ms = 0;
         // A new queue is no longer the book (starting a book sets it again).
@@ -1583,7 +1613,9 @@ impl AppModel {
         if index >= self.queue.len() || index == self.queue_position {
             return None;
         }
-        self.queue_entry_ids.remove(index);
+        let id = self.queue_entry_ids.remove(index);
+        self.queue_queued.retain(|q| *q != id);
+        self.queue_order.retain(|q| *q != id);
         let track = self.queue.remove(index);
         if index < self.queue_position {
             self.queue_position = self.queue_position.saturating_sub(1);
@@ -1609,6 +1641,9 @@ impl AppModel {
         }
         self.queue.truncate(end);
         self.queue_entry_ids.truncate(end);
+        let kept = &self.queue_entry_ids;
+        self.queue_queued.retain(|q| kept.contains(q));
+        self.queue_order.retain(|q| kept.contains(q));
         true
     }
     pub fn invalidate(&mut self) -> u64 {
@@ -1623,6 +1658,10 @@ impl AppModel {
         }
         self.queue_position = n as usize;
         self.position_ms = 0;
+        // Back a song: your queued songs still come right after it.
+        if delta < 0 {
+            self.anchor_queued();
+        }
         self.invalidate();
         true
     }
@@ -1640,17 +1679,25 @@ impl AppModel {
                 next_track_id,
                 output_position_ms,
             } if generation == self.generation => {
-                let next_position = next_entry_id
+                let found = next_entry_id
                     .and_then(|id| self.queue_entry_ids.iter().position(|entry| *entry == id))
                     .or_else(|| {
                         next_track_id
                             .and_then(|id| self.queue.iter().position(|track| track.id == id))
-                    })
-                    .filter(|position| *position > self.queue_position);
-                if let Some(next_position) = next_position {
-                    self.queue_position = next_position;
-                    self.position_ms = output_position_ms;
-                    self.playback = PlaybackState::Buffering;
+                    });
+                match (found, next_entry_id) {
+                    (Some(next_position), _) if next_position > self.queue_position => {
+                        self.queue_position = next_position;
+                        self.position_ms = output_position_ms;
+                        self.playback = PlaybackState::Buffering;
+                    }
+                    // Repeat All: the decoder went on from the end to the start.
+                    (Some(_), Some(id)) if self.settings.repeat == RepeatMode::All => {
+                        self.wrap_to(id);
+                        self.position_ms = output_position_ms;
+                        self.playback = PlaybackState::Buffering;
+                    }
+                    _ => {}
                 }
             }
             Event::Position { generation, ms } if generation == self.generation => {

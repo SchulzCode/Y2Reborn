@@ -1230,11 +1230,13 @@ fn headphone_profiles_are_listed_imported_and_shown_instead_of_presets() {
 #[test]
 fn wheel_one_detent_is_one_step_outside_long_library_lists() {
     let mut ui = radios();
-    // Settings, queue, modal and short lists ignore acceleration.
+    // Settings, queue, modal and short lists ignore acceleration. (Up Next
+    // steps over its "Next from" heading.)
     for screen in [Screen::Settings, Screen::Queue, Screen::Tracks] {
         let mut m = app(screen);
         ui.model_action(&mut m, Action::WheelClockwise(4));
-        assert_eq!(m.navigation.focus, 1, "{screen:?}");
+        let one = if screen == Screen::Queue { 2 } else { 1 };
+        assert_eq!(m.navigation.focus, one, "{screen:?}");
         ui.model_action(&mut m, Action::WheelCounterClockwise(3));
         assert_eq!(m.navigation.focus, 0, "{screen:?}");
     }
@@ -1921,15 +1923,18 @@ fn filtered_track_context_actions_stay_on_the_selected_track() {
 fn queue_context_follows_its_occurrence_and_closes_when_it_vanishes() {
     let mut ui = radios();
     let mut m = app(Screen::Queue);
-    m.navigation.focus = 3;
+    // Up Next: the song playing, the "Next from" heading, then queue index
+    // 1 onwards: row 4 is queue index 3.
+    m.navigation.focus = 4;
     ui.model_action(&mut m, Action::ContextMenu);
     let id = m.navigation.context_key.clone().unwrap();
     m.queue.swap(3, 4);
     m.queue_entry_ids.swap(3, 4);
-    m.navigation.modal_focus = 0;
+    // Play Next, Move, Remove from Queue: the entry where it is now.
+    m.navigation.modal_focus = 2;
     assert_eq!(
         ui.model_action(&mut m, Action::Select),
-        Effect::PlayQueue(4)
+        Effect::QueueRemove(4)
     );
     m.navigation.modal = Some(Modal::ContextMenu);
     m.navigation.context_key = Some(id);
@@ -3486,7 +3491,8 @@ fn playlists_section_lists_favorites_first_then_a_to_z_and_opens_a_playlist() {
         Effect::PlayCollection {
             selected: 1,
             members: vec![1, 4, 2],
-            shuffle: false
+            shuffle: false,
+            source: "Road Trip".into()
         }
     );
     m.screen = Screen::Playlist;
@@ -4616,4 +4622,194 @@ fn search_page_speed_on_a_large_library() {
         );
     }
     eprintln!("worst keystroke (search + frame): {worst:?}");
+}
+
+/// Open the menu on the focused row and choose `menu_key` in it.
+fn menu_select(ui: &mut Ui, m: &mut AppModel, menu_key: &str) -> Effect {
+    ui.model_action(m, Action::ContextMenu);
+    let tracks = m.library.tracks.clone();
+    let rows = ui.modal_rows_public(m, &tracks);
+    m.navigation.modal_focus = rows
+        .iter()
+        .position(|r| r.key == menu_key)
+        .unwrap_or_else(|| panic!("{menu_key} not in {rows:?}"));
+    ui.model_action(m, Action::Select)
+}
+
+#[test]
+fn up_next_opens_on_the_song_playing_with_history_above_and_its_parts_named() {
+    let mut ui = radios();
+    let mut m = app(Screen::NowPlaying);
+    let tracks = m.library.tracks.clone();
+    m.step(1);
+    m.step(1); // Song 2 plays
+    m.note_played(&tracks[0]);
+    m.note_played(&tracks[1]);
+    m.queue_source = "Album 0".into();
+    m.queue_last(vec![tracks[7].clone()]).unwrap();
+    // Now Playing's menu names the song that comes next: yours first.
+    ui.model_action(&mut m, Action::Select);
+    let rows = ui.modal_rows_public(&m, &tracks);
+    let up_next = rows.iter().position(|r| r.key == "show_queue").unwrap();
+    assert_eq!(rows[up_next].secondary, "Song 7");
+    m.navigation.modal_focus = up_next;
+    ui.model_action(&mut m, Action::Select);
+    assert_eq!(m.screen, Screen::Queue);
+    let rows = ui.rows(&m, &tracks);
+    let keys: Vec<&str> = rows.iter().map(|r| r.key.as_str()).collect();
+    assert_eq!(
+        keys[..7],
+        [
+            "heading:history",
+            "hist:0",
+            "hist:1",
+            "queue:3",
+            "heading:queue",
+            "queue:10",
+            "heading:source"
+        ]
+    );
+    assert_eq!(rows[6].label, "Next from Album 0");
+    assert_eq!(rows[6].secondary, "6");
+    assert_eq!(m.navigation.focus, 3, "it opens on the song playing");
+    // Down skips the heading: your song.
+    ui.model_action(&mut m, Action::WheelClockwise(1));
+    assert_eq!(m.navigation.focus, 5);
+    // A song from the history plays now.
+    m.navigation.focus = 1;
+    assert_eq!(ui.model_action(&mut m, Action::Select), Effect::PlayNow(0));
+    assert_eq!(m.screen, Screen::NowPlaying);
+}
+
+#[test]
+fn a_moved_song_follows_the_wheel_until_select_puts_it_down() {
+    let mut ui = radios();
+    let mut m = app(Screen::Queue);
+    let tracks = m.library.tracks.clone();
+    // The song playing, the source's heading, then queue index 1 at row 2.
+    m.navigation.focus = 2;
+    assert_eq!(menu_select(&mut ui, &mut m, "queue_move"), Effect::None);
+    assert_eq!(ui.list_title(&m), "Moving");
+    let id = m.queue_entry_ids[1];
+    assert_eq!(
+        ui.model_action(&mut m, Action::WheelClockwise(3)),
+        Effect::QueueMove { index: 1, delta: 1 },
+        "one place per detent"
+    );
+    // The player moves it; the focus follows it there.
+    assert!(m.move_entry(id, false));
+    ui.normalize(&mut m, &tracks);
+    assert_eq!(m.navigation.focus, 3);
+    assert_eq!(ui.model_action(&mut m, Action::Select), Effect::None);
+    assert_eq!(ui.list_title(&m), "Up Next");
+    // Down again is an ordinary step now.
+    ui.model_action(&mut m, Action::WheelClockwise(1));
+    assert_eq!(m.navigation.focus, 4);
+}
+
+#[test]
+fn select_songs_chooses_rows_then_acts_on_them_together() {
+    let mut ui = radios();
+    let mut m = app(Screen::Tracks);
+    m.navigation.focus = 4;
+    assert_eq!(menu_select(&mut ui, &mut m, "select_songs"), Effect::None);
+    // Up one and choose it too; Select toggles, it never plays.
+    ui.model_action(&mut m, Action::WheelCounterClockwise(1));
+    assert_eq!(ui.model_action(&mut m, Action::Select), Effect::None);
+    assert_eq!(ui.list_title(&m), "2 Selected");
+    let first = ui.rows(&m, &m.library.tracks.clone())[3].key.clone();
+    let second = ui.rows(&m, &m.library.tracks.clone())[4].key.clone();
+    let index = |k: &str| k.strip_prefix("track:").unwrap().parse::<usize>().unwrap();
+    // Hold Select: what to do with them, in the list's order.
+    assert_eq!(
+        menu_select(&mut ui, &mut m, "sel_queue"),
+        Effect::AddToQueueCollection(vec![index(&first), index(&second)])
+    );
+    assert!(ui.selection.is_none(), "done after acting");
+    // Back ends choosing without leaving the list.
+    menu_select(&mut ui, &mut m, "select_songs");
+    ui.model_action(&mut m, Action::Back);
+    assert!(ui.selection.is_none());
+    assert_eq!(m.screen, Screen::Tracks);
+    // Up Next: two songs removed together, the song playing never chosen.
+    let mut m = app(Screen::Queue);
+    m.navigation.focus = 2;
+    menu_select(&mut ui, &mut m, "select_songs");
+    ui.model_action(&mut m, Action::WheelClockwise(1));
+    ui.model_action(&mut m, Action::Select);
+    m.navigation.focus = 0;
+    ui.model_action(&mut m, Action::Select);
+    assert_eq!(ui.list_title(&m), "2 Selected");
+    assert_eq!(
+        menu_select(&mut ui, &mut m, "sel_remove"),
+        Effect::QueueRemoveEntries(vec![m.queue_entry_ids[1], m.queue_entry_ids[2]])
+    );
+}
+
+#[test]
+fn albums_artists_genres_and_search_results_queue_as_a_whole() {
+    let mut ui = radios();
+    let mut m = app(Screen::Albums);
+    m.settings.album_view = reborn_core::AlbumView::Grid;
+    let tracks = m.library.tracks.clone();
+    let rows = ui.rows(&m, &tracks);
+    m.navigation.focus = 1;
+    let album = rows[1].key.clone();
+    let members: Vec<usize> = (0..9)
+        .filter(|&i| tracks[i].album == rows[1].label)
+        .collect();
+    assert_eq!(members.len(), 3);
+    ui.model_action(&mut m, Action::ContextMenu);
+    let menu: Vec<String> = ui
+        .modal_rows_public(&m, &tracks)
+        .into_iter()
+        .map(|r| r.label)
+        .collect();
+    assert_eq!(
+        menu,
+        [
+            "Play",
+            "Shuffle",
+            "Play Next",
+            "Add to Queue",
+            "Add to Playlist…"
+        ]
+    );
+    m.navigation.modal = None;
+    assert_eq!(
+        menu_select(&mut ui, &mut m, "group_next"),
+        Effect::PlayNextCollection(members.clone()),
+        "{album}"
+    );
+    m.navigation.focus = 1;
+    assert_eq!(
+        menu_select(&mut ui, &mut m, "group_play"),
+        Effect::PlayCollection {
+            selected: members[0],
+            members,
+            shuffle: false,
+            source: rows[1].label.clone(),
+        }
+    );
+    // The search's Play All row: its songs, named after the search.
+    let mut m = app(Screen::Search);
+    m.navigation.filter = "song".into();
+    let rows = ui.rows(&m, &tracks);
+    m.navigation.focus = rows
+        .iter()
+        .position(|r| r.key == "search_play_all")
+        .unwrap();
+    match menu_select(&mut ui, &mut m, "group_shuffle") {
+        Effect::PlayCollection {
+            members,
+            shuffle,
+            source,
+            ..
+        } => {
+            assert_eq!(members.len(), 9);
+            assert!(shuffle);
+            assert_eq!(source, "Search “song”");
+        }
+        other => panic!("{other:?}"),
+    }
 }

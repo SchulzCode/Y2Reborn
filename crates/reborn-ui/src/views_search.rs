@@ -15,10 +15,10 @@ use crate::{
 use reborn_core::{AppModel, Track};
 
 /// Where the rows start, under the status bar.
-const TOP: f32 = 38.;
-const VIEW_H: f32 = HEIGHT - TOP;
+pub(crate) const TOP: f32 = 38.;
+pub(crate) const VIEW_H: f32 = HEIGHT - TOP;
 const FIELD_ROW: f32 = 44.;
-const HEADING_ROW: f32 = 28.;
+pub(crate) const HEADING_ROW: f32 = 28.;
 pub(crate) const ROW: f32 = 53.;
 
 pub(crate) fn row_height(kind: SearchKind) -> f32 {
@@ -52,7 +52,12 @@ pub(crate) fn window(heights: &[f32], focus: usize, scroll: usize) -> usize {
 
 pub fn page(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interactive: bool) {
     let accent = ui.accent();
-    components::status_bar(c, ui, m, "Search", true);
+    let title = if ui.selecting(m).is_some() {
+        ui.list_title(m)
+    } else {
+        "Search".into()
+    };
+    components::status_bar(c, ui, m, &title, true);
     let heights = ui.search_heights(m, tracks);
     let (summary, found) = ui.search_summary(m, tracks);
     let count = heights.len();
@@ -137,9 +142,14 @@ pub fn page(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interactive
                 }
                 let song = row_track(&row, tracks).map(|(_, t)| t);
                 let playing = song.is_some_and(|t| is_current(m, t));
-                let tail = song.map_or(0., |t| {
-                    text::width(Face::R11, &components::time(t.duration_ms)) + 16.
-                });
+                let mark = ui.selection_mark(m, &row.key);
+                let tail = if mark.is_some() {
+                    34.
+                } else {
+                    song.map_or(0., |t| {
+                        text::width(Face::R11, &components::time(t.duration_ms)) + 16.
+                    })
+                };
                 lines(
                     c,
                     &row.label,
@@ -149,7 +159,9 @@ pub fn page(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interactive
                     selected,
                     if playing { accent } else { color::TEXT },
                 );
-                if let Some(t) = song {
+                if let Some(on) = mark {
+                    components::select_mark(c, WIDTH - 50., y + 26., on, accent);
+                } else if let Some(t) = song {
                     c.text_mid_right(
                         WIDTH - 40.,
                         y + 26.,

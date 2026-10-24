@@ -198,7 +198,7 @@ fn song_list(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interactiv
     let focus = m.navigation.focus.min(count.saturating_sub(1));
     let visible = visible_rows_for(m.screen);
     let scroll = components::list_window(m, focus, visible);
-    components::status_bar(c, ui, m, &screen_title(m), true);
+    components::status_bar(c, ui, m, &ui.list_title(m), true);
     let artists = m.screen == Screen::Artists;
     let queue = m.screen == Screen::Queue;
     // With UI motion one row more on each side slides in as the list scrolls.
@@ -234,9 +234,14 @@ fn song_list(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interactiv
         }
         let title_face = if selected { Face::S15 } else { Face::R15 };
         let title_color = if playing { accent } else { color::TEXT };
-        let tail_w = song.map_or(0., |t| {
-            text::width(Face::R11, &components::time(t.duration_ms)) + 16.
-        });
+        let mark = ui.selection_mark(m, &row.key);
+        let tail_w = if mark.is_some() {
+            34.
+        } else {
+            song.map_or(0., |t| {
+                text::width(Face::R11, &components::time(t.duration_ms)) + 16.
+            })
+        };
         c.text_mid(
             70.,
             y + 18.,
@@ -252,7 +257,9 @@ fn song_list(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interactiv
         };
         let sub_color = if playing { accent } else { color::MUTED };
         c.text_mid(70., y + 36., 340. - tail_w, &sub, Face::R11, sub_color);
-        if let Some(t) = song {
+        if let Some(on) = mark {
+            components::select_mark(c, WIDTH - 50., y + 26., on, accent);
+        } else if let Some(t) = song {
             c.text_mid_right(
                 WIDTH - 40.,
                 y + 26.,
@@ -397,7 +404,12 @@ fn album_page(
     interactive: bool,
 ) {
     let accent = ui.accent();
-    components::status_bar(c, ui, m, "Album", true);
+    let title = if ui.selecting(m).is_some() {
+        ui.list_title(m)
+    } else {
+        "Album".into()
+    };
+    components::status_bar(c, ui, m, &title, true);
     let count = ui.row_count(m, tracks);
     let focus = m.navigation.focus.min(count.saturating_sub(1));
     let scroll = components::list_window(m, focus, visible_rows_for(Screen::Album));
@@ -494,7 +506,9 @@ fn album_page(
             text::width(Face::R11, &components::time(t.duration_ms)) + 20.
         });
         c.text_mid(58., y + 26., 360. - tail, &row.label, face, tint);
-        if let Some(t) = song {
+        if let Some(on) = ui.selection_mark(m, &row.key) {
+            components::select_mark(c, WIDTH - 40., y + 26., on, accent);
+        } else if let Some(t) = song {
             c.text_mid_right(
                 WIDTH - 28.,
                 y + 26.,
@@ -745,7 +759,7 @@ fn songs_under(tracks: &[Track], key: &str) -> usize {
 
 // --------------------------------------------------------------- empty states
 
-fn empty(c: &mut Canvas, ui: &Ui, m: &AppModel, interactive: bool) {
+pub(crate) fn empty(c: &mut Canvas, ui: &Ui, m: &AppModel, interactive: bool) {
     let (title, body, action) = empty_copy(m);
     let mark = if m.library.scanning {
         components::Mark::Busy(ui.spin_phase())

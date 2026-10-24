@@ -28,11 +28,13 @@ pub mod skin;
 mod text;
 pub mod theme;
 mod time_zone;
+mod up_next;
 mod views_books;
 mod views_coverflow;
 mod views_library;
 mod views_playing;
 mod views_playlists;
+mod views_queue;
 mod views_radio;
 mod views_search;
 mod views_settings;
@@ -118,6 +120,15 @@ impl Item {
         self.kind = kind;
         self
     }
+}
+
+/// Select Songs (Beta 8.33): the list it was started on and the row keys
+/// chosen there (songs `track:`, Up Next entries `queue:`).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Selection {
+    pub screen: Screen,
+    pub filter: String,
+    pub keys: Vec<String>,
 }
 
 /// Connection progress of the joined network, in user terms.
@@ -432,6 +443,12 @@ pub struct Ui {
     /// The search's keys folding away into its page (Beta 8.32): when it
     /// began, and the keys as they were.
     folding: RefCell<Option<(Instant, keyboard::Keyboard)>>,
+    /// Up Next's history rows and library lookups (Beta 8.33).
+    up_next_cache: RefCell<up_next::Cache>,
+    /// The Up Next entry being moved with the wheel.
+    queue_moving: std::cell::Cell<Option<reborn_core::QueueEntryId>>,
+    /// Select Songs: the rows chosen on one list.
+    pub selection: Option<Selection>,
     /// The playing position as last reported, and when: Now Playing moves
     /// on between reports.
     position_seen: std::cell::Cell<Option<(u64, Instant)>>,
@@ -537,6 +554,9 @@ impl Ui {
             m.navigation.focus = (0..count)
                 .find(|i| self.row_at(m, tracks, *i).is_some_and(|r| r.enabled))
                 .unwrap_or(0);
+        }
+        if m.screen == Screen::Queue {
+            self.follow_moving(m, tracks);
         }
         if m.navigation.modal.is_some() {
             let rows = self.modal_rows(m, tracks);
@@ -1099,7 +1119,7 @@ impl Ui {
             | Screen::Album
             | Screen::Tracks
             | Screen::Search => self.catalog_rows(m, tracks),
-            Screen::Queue => self.queue_rows(m),
+            Screen::Queue => self.queue_rows(m, tracks),
             Screen::Playlists | Screen::Playlist => self.playlist_rows(m, tracks),
             Screen::Audiobooks => views_books::book_rows(self, m, tracks),
             Screen::Book => views_books::page_rows(self, m, tracks),
@@ -1149,7 +1169,7 @@ impl Ui {
             c.ensure(m, tracks);
             c.rows.len()
         } else if m.screen == Screen::Queue {
-            m.queue.len()
+            self.up_next(m, tracks).len()
         } else if matches!(m.screen, Screen::Playlists | Screen::Playlist) {
             self.with_playlist_rows(m, tracks, <[Item]>::len)
         } else {
@@ -1186,22 +1206,18 @@ impl Ui {
         )
     }
     pub(crate) fn row_at(&self, m: &AppModel, tracks: &[Track], index: usize) -> Option<Item> {
+        let mut item = self.row_at_plain(m, tracks, index)?;
+        // Select Songs: chosen rows carry a check (skins draw it as one).
+        if let Some(on) = self.selection_mark(m, &item.key) {
+            item.kind = RowKind::Check(on);
+        }
+        Some(item)
+    }
+    fn row_at_plain(&self, m: &AppModel, tracks: &[Track], index: usize) -> Option<Item> {
         if Self::is_catalog(m.screen) {
             self.track_rows_page(m, tracks, index, 1).pop()
         } else if m.screen == Screen::Queue {
-            m.queue.get(index).map(|t| {
-                Item::new(
-                    track_title(t),
-                    format!(
-                        "queue:{}",
-                        m.queue_entry_ids
-                            .get(index)
-                            .map(|v| v.0)
-                            .unwrap_or(index as u64)
-                    ),
-                )
-                .with_secondary(display_or_unknown(&t.artist))
-            })
+            self.up_next_item(m, tracks, &self.up_next(m, tracks), index)
         } else if matches!(m.screen, Screen::Playlists | Screen::Playlist) {
             self.with_playlist_rows(m, tracks, |rows| rows.get(index).cloned())
         } else {
@@ -1231,9 +1247,10 @@ impl Ui {
                 .collect()
         }
     }
-    fn queue_rows(&self, m: &AppModel) -> Vec<Item> {
-        (0..m.queue.len())
-            .filter_map(|i| self.row_at(m, &[], i))
+    fn queue_rows(&self, m: &AppModel, tracks: &[Track]) -> Vec<Item> {
+        let layout = self.up_next(m, tracks);
+        (0..layout.len())
+            .filter_map(|i| self.up_next_item(m, tracks, &layout, i))
             .collect()
     }
 
@@ -1306,8 +1323,15 @@ impl Ui {
                     Item::new("Up Next", "show_queue"),
                 ];
             }
+            // The song after this one, named where Up Next opens.
+            let next = m
+                .queue
+                .get(m.queue_position + 1)
+                .filter(|_| m.settings.repeat != RepeatMode::Track)
+                .map(|t| track_title(t).to_owned())
+                .unwrap_or_default();
             return vec![
-                Item::new("Up Next", "show_queue"),
+                Item::new("Up Next", "show_queue").with_secondary(next),
                 Item::new("Sleep Timer", "sleep_timer").with_secondary(sleep_label(m, false)),
                 Item::new("Shuffle", "toggle_shuffle").with_secondary(if m.settings.shuffle {
                     "On"
@@ -1328,6 +1352,9 @@ impl Ui {
                 .and_then(|target| self.row_at(m, tracks, target).map(|item| item.key))
         });
         let key = selected_key.as_deref();
+        if key == Some("selection") {
+            return self.selection_menu(m);
+        }
         if matches!(m.screen, Screen::Playlists | Screen::Playlist) {
             return self.playlist_context_rows(m, key.unwrap_or(""));
         }
@@ -1342,7 +1369,7 @@ impl Ui {
             .and_then(|key| key.strip_prefix("track:"))
             .and_then(|i| i.parse::<usize>().ok())
         {
-            return vec![
+            let mut rows = vec![
                 Item::new("Play Next", "play_next"),
                 Item::new("Add to Queue", "add_queue"),
                 Item::new("Add to Playlist…", "add_playlist"),
@@ -1350,6 +1377,14 @@ impl Ui {
                 Item::new("Go to Album", "go_album"),
                 Item::new("Go to Artist", "go_artist"),
             ];
+            if Self::selects(m.screen) {
+                rows.insert(3, Item::new("Select Songs…", "select_songs"));
+            }
+            return rows;
+        }
+        // An album, artist, genre or folder row, the search's Play All.
+        if key.is_some_and(Self::group_key) {
+            return Self::group_menu();
         }
         if matches!(m.screen, Screen::Album | Screen::Artist) && key == Some("play:collection") {
             return vec![
@@ -1383,23 +1418,7 @@ impl Ui {
                     Item::new("Station Info", "radio_info"),
                 ]
             }
-            Screen::Queue => {
-                let Some(i) = self.queue_target(m, key) else {
-                    return vec![];
-                };
-                let mut rows = vec![
-                    Item::new("Play Now", "queue_play"),
-                    Item::new("Remove from Queue", "queue_remove"),
-                    Item::new("Move Up", "queue_up"),
-                    Item::new("Move Down", "queue_down"),
-                    Item::new("Clear Upcoming", "clear_queue"),
-                ];
-                rows[1].enabled = i != m.queue_position;
-                rows[2].enabled = i > m.queue_position.saturating_add(1);
-                rows[3].enabled = i > m.queue_position && i + 1 < m.queue.len();
-                rows[4].enabled = m.queue_position + 1 < m.queue.len();
-                rows
-            }
+            Screen::Queue => self.up_next_menu(m, key),
             Screen::Bluetooth => {
                 let Some(device) = self.device(key) else {
                     return vec![];
@@ -1731,6 +1750,10 @@ impl Ui {
         if self.keyboard.is_some() {
             return self.entry(m, tracks, action);
         }
+        // Up Next's song moving with the wheel; Select Songs.
+        if let Some(effect) = self.list_mode_input(m, tracks, action) {
+            return effect;
+        }
         if m.screen == Screen::Playlist && m.navigation.modal.is_none() {
             if let Some(effect) = self.moving_action(m, tracks, action) {
                 return effect;
@@ -1876,6 +1899,8 @@ impl Ui {
                 .last_step
                 .is_none_or(|at| now.duration_since(at) >= WRAP_REST);
         self.last_step = Some(now);
+        // Up Next's parts, for its headings below (before `focus` borrows).
+        let up_next = (!modal && m.screen == Screen::Queue).then(|| self.up_next(m, tracks));
         let focus = if modal {
             &mut m.navigation.modal_focus
         } else {
@@ -1909,14 +1934,15 @@ impl Ui {
                 next = n as usize;
             }
         }
-        if !modal && m.screen == Screen::Search {
-            // The search page's headings are not stops.
+        if !modal && matches!(m.screen, Screen::Search | Screen::Queue) {
+            // The search page's and Up Next's headings are not stops.
             let catalog = self.catalog.borrow();
-            let heading = |i: usize| {
-                catalog
+            let heading = |i: usize| match &up_next {
+                Some(layout) => layout.row(i).is_some_and(up_next::Row::heading),
+                None => catalog
                     .rows
                     .get(i)
-                    .is_some_and(|r| r.search_kind() == catalog::SearchKind::Heading)
+                    .is_some_and(|r| r.search_kind() == catalog::SearchKind::Heading),
             };
             while heading(next) {
                 let n = next as i32 + delta.signum();
@@ -2194,8 +2220,16 @@ impl Ui {
                 }
             }
             Screen::Queue => {
+                // A song from the history plays now, before what was playing.
+                if let Some(lib) = key.strip_prefix("hist:").and_then(|v| v.parse().ok()) {
+                    Self::go(m, Screen::NowPlaying, "");
+                    return Effect::PlayNow(lib);
+                }
                 if let Some(index) = self.queue_target(m, Some(key)) {
                     Self::go(m, Screen::NowPlaying, "");
+                    if index == m.queue_position {
+                        return Effect::None;
+                    }
                     return Effect::PlayQueue(index);
                 }
             }
@@ -2472,6 +2506,7 @@ impl Ui {
             selected: index,
             members,
             shuffle,
+            source: source_label(m),
         };
         Self::go(m, Screen::NowPlaying, "");
         effect
@@ -2498,6 +2533,7 @@ impl Ui {
                 selected,
                 members,
                 shuffle: false,
+                source: source_label(m),
             }
         } else {
             Effect::Play(selected)
@@ -2777,6 +2813,12 @@ impl Ui {
                 .map_or(reborn_core::SleepChoice::Off, |t| t.choice);
             return Effect::SetSleepTimer(now.next());
         }
+        if menu_key.starts_with("sel_") {
+            return self.selection_effect(m, tracks, menu_key);
+        }
+        if menu_key.starts_with("group_") {
+            return self.group_effect(m, tracks, &source_key, menu_key);
+        }
         if menu_key == "book_speed" {
             // The menu stays open: each press steps the speed on.
             return m.book_part().map_or(Effect::None, |(book, _)| {
@@ -2823,9 +2865,7 @@ impl Ui {
             m.current()
                 .and_then(|current| tracks.iter().position(|track| track.id == current.id))
         } else {
-            source_key
-                .strip_prefix("track:")
-                .and_then(|value| value.parse().ok())
+            self.menu_song(m, tracks, &source_key)
         };
         let station = source_key
             .strip_prefix("station:")
@@ -2988,6 +3028,7 @@ impl Ui {
             }
             "show_queue" => {
                 Self::go(m, Screen::Queue, "");
+                self.open_up_next(m, tracks);
                 Effect::None
             }
             "toggle_shuffle" => Effect::SetShuffle(!m.settings.shuffle),
@@ -3022,6 +3063,20 @@ impl Ui {
                     delta: if menu_key == "queue_up" { -1 } else { 1 },
                 })
                 .unwrap_or(Effect::None),
+            "queue_next" => Self::entry_of(m, &source_key)
+                .map(|id| Effect::QueueEntriesNext(vec![id]))
+                .unwrap_or(Effect::None),
+            "queue_move" => {
+                if let Some(id) = Self::entry_of(m, &source_key) {
+                    self.start_moving(id);
+                }
+                Effect::None
+            }
+            "select_songs" => {
+                self.start_selection(m, &source_key);
+                Effect::None
+            }
+            "clear_queued" => Effect::ClearQueued,
             _ => Effect::None,
         }
     }
@@ -3236,10 +3291,10 @@ impl Ui {
         keyboard::draw_folding(c, self, k, p);
     }
 
-    /// The search page in Reborn's own drawing (a skin's list scrolls by
-    /// its own rows).
+    /// The search page or Up Next in Reborn's own drawing, rows of
+    /// differing heights (a skin's list scrolls by its own rows).
     fn native_search(&self, m: &AppModel, tracks: &[Track]) -> bool {
-        m.screen == Screen::Search
+        matches!(m.screen, Screen::Search | Screen::Queue)
             && self
                 .skin
                 .as_deref()
@@ -3253,8 +3308,20 @@ impl Ui {
             views_search::window(&heights, m.navigation.focus, m.navigation.scroll);
     }
 
-    /// Each search page row's height.
+    /// Each search page (or Up Next) row's height.
     pub(crate) fn search_heights(&self, m: &AppModel, tracks: &[Track]) -> Vec<f32> {
+        if m.screen == Screen::Queue {
+            let layout = self.up_next(m, tracks);
+            return (0..layout.len())
+                .map(|i| {
+                    if layout.row(i).is_some_and(up_next::Row::heading) {
+                        views_search::HEADING_ROW
+                    } else {
+                        views_search::ROW
+                    }
+                })
+                .collect();
+        }
         let mut catalog = self.catalog.borrow_mut();
         catalog.ensure(m, tracks);
         catalog
@@ -3693,6 +3760,28 @@ fn track_matches(track: &Track, filter: &str) -> bool {
             .is_some_and(|parent| parent.starts_with(value));
     }
     true
+}
+/// What Up Next calls a collection played from the screen showing it.
+pub(crate) fn source_label(m: &AppModel) -> String {
+    let filter = &m.navigation.filter;
+    match m.screen {
+        Screen::Album => filter
+            .strip_prefix("album:")
+            .and_then(|f| f.split_once('\u{1f}'))
+            .map(|(_, album)| display_or_unknown(album).to_owned())
+            .unwrap_or_else(|| "Album".into()),
+        Screen::Artist => filter
+            .strip_prefix("artist:")
+            .map(|artist| display_or_unknown(artist).to_owned())
+            .unwrap_or_else(|| "Artist".into()),
+        Screen::Search => format!("Search “{}”", filter.trim()),
+        Screen::Tracks => match filter.strip_prefix("genre:") {
+            Some("") => "No Genre".into(),
+            Some(genre) => genre.to_owned(),
+            None => "Songs".into(),
+        },
+        _ => screens::screen_title(m),
+    }
 }
 fn album_filter(track: &Track) -> String {
     format!("album:{}\u{1f}{}", track.album_artist, track.album)
