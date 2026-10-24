@@ -207,7 +207,7 @@ dependencies = [
 
 [[package]]
 name = "reborn"
-version = "1.0.0-beta.8.34"
+version = "1.0.0-beta.8.35"
 dependencies = [
  "reborn-audio",
  "reborn-control",
@@ -224,7 +224,7 @@ dependencies = [
 
 [[package]]
 name = "reborn-audio"
-version = "1.0.0-beta.8.34"
+version = "1.0.0-beta.8.35"
 dependencies = [
  "cc",
  "libc",
@@ -238,7 +238,7 @@ dependencies = [
 
 [[package]]
 name = "reborn-control"
-version = "1.0.0-beta.8.34"
+version = "1.0.0-beta.8.35"
 dependencies = [
  "reborn-core",
  "reborn-observability",
@@ -248,7 +248,7 @@ dependencies = [
 
 [[package]]
 name = "reborn-core"
-version = "1.0.0-beta.8.34"
+version = "1.0.0-beta.8.35"
 dependencies = [
  "serde",
  "serde_json",
@@ -256,7 +256,7 @@ dependencies = [
 
 [[package]]
 name = "reborn-graphics"
-version = "1.0.0-beta.8.34"
+version = "1.0.0-beta.8.35"
 dependencies = [
  "cc",
  "libc",
@@ -268,7 +268,7 @@ dependencies = [
 
 [[package]]
 name = "reborn-library"
-version = "1.0.0-beta.8.34"
+version = "1.0.0-beta.8.35"
 dependencies = [
  "reborn-core",
  "reborn-media",
@@ -281,7 +281,7 @@ dependencies = [
 
 [[package]]
 name = "reborn-media"
-version = "1.0.0-beta.8.34"
+version = "1.0.0-beta.8.35"
 dependencies = [
  "cc",
  "libc",
@@ -294,7 +294,7 @@ dependencies = [
 
 [[package]]
 name = "reborn-observability"
-version = "1.0.0-beta.8.34"
+version = "1.0.0-beta.8.35"
 dependencies = [
  "flate2",
  "serde",
@@ -304,7 +304,7 @@ dependencies = [
 
 [[package]]
 name = "reborn-platform"
-version = "1.0.0-beta.8.34"
+version = "1.0.0-beta.8.35"
 dependencies = [
  "dbus",
  "libc",
@@ -316,7 +316,7 @@ dependencies = [
 
 [[package]]
 name = "reborn-ui"
-version = "1.0.0-beta.8.34"
+version = "1.0.0-beta.8.35"
 dependencies = [
  "ab_glyph_rasterizer",
  "reborn-core",
