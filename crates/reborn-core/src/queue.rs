@@ -326,6 +326,11 @@ impl AppModel {
         if self.queue.len() < start + 2 {
             return false;
         }
+        // A queue without its source's order (restored from a session of
+        // Beta 8.32 or older): the order now is the one Shuffle off restores.
+        if self.queue_order.is_empty() {
+            self.queue_order = self.queue_entry_ids.clone();
+        }
         let mut order: Vec<usize> = (0..self.queue.len()).collect();
         shuffle_from(&mut order, start, seed);
         self.permute(&order);
@@ -669,6 +674,17 @@ mod tests {
             after[..],
             "the album goes on after {at}"
         );
+    }
+
+    #[test]
+    fn shuffle_off_restores_a_queue_restored_without_its_order() {
+        // Found on the owner's player: a Beta 8.32 session has no order.
+        let mut m = album(8);
+        m.queue_order.clear();
+        assert!(m.shuffle_source(7));
+        assert_ne!(upcoming(&m), ["s2", "s3", "s4", "s5", "s6", "s7", "s8"]);
+        assert!(m.unshuffle_source());
+        assert_eq!(upcoming(&m), ["s2", "s3", "s4", "s5", "s6", "s7", "s8"]);
     }
 
     #[test]
