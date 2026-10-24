@@ -1,6 +1,19 @@
 # Current Reborn state on the Y2
 
-## 1.0.0-beta.8.31 — Y2Linux 1.0 Beta 8.31 (Baseline 130), 2026-10-24 (latest): left/right balance
+## 1.0.0-beta.8.33 — Y2Linux 1.0 Beta 8.33 (Baseline 134), 2026-10-24 (latest): search page and queue redesign
+
+Published as `baseline-134` (Reborn `eca7f49`, sequence 9702; 8.32 was never published), installed on the owner's
+player first. **Search** is one page with the keys over it: first results above the keys, Up/wheel/Search fold the
+keys into the results (Artists, Albums, Audiobooks, Songs under headings, Play All), the field brings them back.
+**Queue** (`reborn_core::queue`): your queued songs play first (Add to Queue before the rest, Play Next on top),
+queue edits, Shuffle and Repeat no longer restart the song (`Playback::set_upcoming`), Repeat All wraps on Next,
+Previous restarts the first song, Shuffle on/off reshuffles or restores what plays. **Up Next** opens on the song
+playing with a 50-song history above, QUEUE / NEXT FROM headings, Move with the wheel, Select Songs (also Songs,
+albums, search), queue actions for albums/artists/genres/folders/search, a NEXT line on Now Playing. Session schema
+3 (queue by reference). `rebornctl action NAME` for device tests of hold menus. Also #38 (artists of joined tags).
+Design: last two sections of [Product UI v4](ui/REBORN-PRODUCT-UI-V4.md).
+
+## 1.0.0-beta.8.31 — Y2Linux 1.0 Beta 8.31 (Baseline 130), 2026-10-24: left/right balance
 
 Published as `baseline-130` (Reborn `b12a1ee` + identity `b07cb9d`, sequence 9500), installed on the owner's player
 first. Settings → Sound → Balance (user request: one ear hears less): `settings.balance` -10..=10 dB (negative = left
