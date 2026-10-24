@@ -455,6 +455,7 @@ fn output(ui: &Ui, m: &AppModel) -> Page {
     rows.push(
         row("DAC Filter", "dac_filter", m.settings.dac_filter.label()).with_kind(RowKind::Chevron),
     );
+    rows.extend(measure_headphones(m));
     Page::rows(rows)
 }
 
@@ -493,6 +494,21 @@ fn dac_filter(m: &AppModel) -> Page {
     page.status =
         Some("How the headphone DAC filters between samples. Fast is the usual choice.".into());
     page
+}
+
+/// The jack group's last row: the headphone load measurement, when the
+/// codec offers it (cs43130 `y2_hp`). It reports the load only; the level
+/// stays the one chosen above.
+fn measure_headphones(m: &AppModel) -> Option<Item> {
+    use reborn_core::platform::HeadphoneLoad;
+    let detail = match m.platform.headphones {
+        HeadphoneLoad::Unavailable => return None,
+        HeadphoneLoad::Unmeasured => String::new(),
+        HeadphoneLoad::Measuring => "Measuring…".into(),
+        HeadphoneLoad::Measured { ohms: (l, r) } if l == r => format!("{l} ohms"),
+        HeadphoneLoad::Measured { ohms: (l, r) } => format!("{l}/{r} ohms"),
+    };
+    Some(row("Measure Headphones", "hp_measure", detail))
 }
 
 fn crossfade(m: &AppModel) -> Page {
