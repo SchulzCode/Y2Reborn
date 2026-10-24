@@ -1,6 +1,18 @@
 # Current Reborn state on the Y2
 
-## 1.0.0-beta.8.34 — Y2Linux 1.0 Beta 8.34 (Baseline 135), 2026-10-24 (latest): MTP fix in the platform
+## 1.0.0-beta.8.35 — Y2Linux 1.0 Beta 8.35 (Baseline 136), 2026-10-25 (latest): louder headphones, safe by default
+
+Published as `baseline-136` (Reborn `e0921a0`, change `5a40103`, sequence 9902). Report F45 (FiiO FH7 too quiet at
+High): each `HpLevel` has its own DAC Master (`master_db`: Low −9, Medium −6, High 0 dB → ≈0.35/0.71/1.73 Vrms at
+volume 100; Beta 8.5–8.34 held −19.5 dB for all), set by the C sink (`rb_wired_masters`) for the level the amplifier
+really runs at, −24 dB until then. The volume is even in dB (`volume_db`: 0.6 dB a step from 10, 3 dB below, −81 dB at
+1). Safe level `SAFE_PEAK_DBV` = the old loudest output (−14.7 dBV; safe volume 90/80/67): wired volume up stops
+there and opens `ConfirmAction::LoudVolume`; `Settings::loud_ok` lapses after `LOUD_LISTENING_LIMIT_S` (20 h) above
+it. `prepare_wired_start` moves an old-scale volume once (`volume_scale`), gives the wired volume back and caps the
+start; a return from Bluetooth is capped too; a level change keeps the loudness (`volume_for_level`). Device-checked
+on the owner's player (migration, Master per level, warning); output not measured with a meter.
+
+## 1.0.0-beta.8.34 — Y2Linux 1.0 Beta 8.34 (Baseline 135), 2026-10-24: MTP fix in the platform
 
 Published as `baseline-135` (Reborn `01f1ed3`, identity only, sequence 9802). The fix is Y2Linux's (#61: MTP no
 longer hangs when a computer connects); Reborn is unchanged since 8.33.
