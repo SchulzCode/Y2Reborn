@@ -60,12 +60,12 @@ pub fn draw(ui: &Ui, m: &AppModel, tracks: &[Track], has_art: bool) -> Vec<Quad>
         | Screen::Artists
         | Screen::Genres
         | Screen::Tracks
-        | Screen::Search
         | Screen::Folders
         | Screen::Album
         | Screen::Artist
         | Screen::Queue
         | Screen::Audiobooks => views_library::browse(&mut c, ui, m, tracks, has_art, interactive),
+        Screen::Search => crate::views_search::page(&mut c, ui, m, tracks, interactive),
         Screen::Book => crate::views_books::book_page(&mut c, ui, m, tracks, interactive),
         Screen::Settings
         | Screen::Wifi
@@ -119,12 +119,12 @@ fn native_screen(
         | Screen::Artists
         | Screen::Genres
         | Screen::Tracks
-        | Screen::Search
         | Screen::Folders
         | Screen::Album
         | Screen::Artist
         | Screen::Queue
         | Screen::Audiobooks => views_library::browse(c, ui, m, tracks, has_art, interactive),
+        Screen::Search => crate::views_search::page(c, ui, m, tracks, interactive),
         Screen::Book => crate::views_books::book_page(c, ui, m, tracks, interactive),
         Screen::Settings
         | Screen::Wifi
@@ -421,7 +421,16 @@ fn skinned_overlays(c: &mut Canvas, ui: &Ui, skin: &Skin, m: &AppModel, tracks: 
                 skin::remap(c, at, &skin.palette, ui.cover_accent());
             }
         }
-    } else if m.navigation.modal.is_some() {
+    } else if m.navigation.modal.is_none() {
+        let at = c.draw.len();
+        ui.draw_folding(c);
+        skin::remap(c, at, &skin.palette, ui.cover_accent());
+    }
+    if ui.alert.is_none()
+        && ui.pairing.is_none()
+        && ui.keyboard.is_none()
+        && m.navigation.modal.is_some()
+    {
         let (title, body) = ui.modal_copy(m);
         let rows = ui.modal_rows_public(m, tracks);
         let focus = m.navigation.modal_focus.min(rows.len().saturating_sub(1));
@@ -577,6 +586,8 @@ fn overlays(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track]) {
         crate::keyboard::draw(c, ui, m, tracks, k);
     } else if m.navigation.modal.is_some() {
         modal(c, ui, m, tracks);
+    } else {
+        ui.draw_folding(c);
     }
     if matches!(
         m.platform.battery.level,

@@ -483,7 +483,7 @@ fn the_book_list_and_page_follow_progress_and_start_books() {
     assert!(
         found
             .iter()
-            .any(|r| r.key == format!("book:{key}") && r.secondary == "Audiobook · Michael Ende"),
+            .any(|r| r.key == format!("book:{key}") && r.secondary == "Michael Ende"),
         "{found:?}"
     );
 }
@@ -1547,10 +1547,11 @@ fn library_search_counts_while_typing_and_lists_artists_albums_songs() {
     assert_eq!(m.navigation.filter, "bea");
     let rows = ui.rows(&m, &m.library.tracks.clone());
     assert_eq!(rows[0].key, "search_edit");
-    assert_eq!(rows[1].key, "track:4");
-    assert_eq!(rows[1].secondary, "Song · Michael Jackson");
-    // Select plays the song.
-    m.navigation.focus = 1;
+    assert_eq!(rows[1].key, "heading:songs");
+    assert_eq!(rows[2].key, "track:4");
+    assert!(rows[2].secondary.starts_with("Michael Jackson · "));
+    // The focus is on it; Select plays the song.
+    assert_eq!(m.navigation.focus, 2);
     assert!(matches!(
         ui.model_action(&mut m, Action::Select),
         Effect::PlayCollection { selected: 4, .. } | Effect::Play(4)
@@ -1560,10 +1561,7 @@ fn library_search_counts_while_typing_and_lists_artists_albums_songs() {
     m.navigation.filter = "album 1".into();
     m.navigation.focus = 0;
     let rows = ui.rows(&m, &m.library.tracks.clone());
-    assert!(
-        rows.iter().any(|r| r.secondary.starts_with("Album · ")),
-        "{rows:?}"
-    );
+    assert!(rows.iter().any(|r| r.key.starts_with("album:")), "{rows:?}");
     ui.model_action(&mut m, Action::Select);
     assert_eq!(ui.keyboard.as_ref().unwrap().text, "album 1");
 }
@@ -3199,14 +3197,18 @@ fn radio_countries_and_genres_open_their_station_lists() {
 }
 
 #[test]
-fn live_search_shows_results_while_typing_and_opens_them_with_back_to_the_results() {
+fn the_search_page_previews_while_typing_and_folds_the_keys_into_its_results() {
     let mut ui = Ui::default();
     let mut m = app(Screen::Home);
     m.library.tracks[4].title = "Beat It".into();
     m.library.tracks[4].artist = "Michael Jackson".into();
+    let tracks = m.library.tracks.clone();
     select_key(&mut ui, &mut m, "search");
-    assert!(ui.keyboard.as_ref().unwrap().results.is_empty());
-    // b, e: the song shows up while typing, before Done.
+    // The search page, with the keys over it.
+    assert_eq!(m.screen, Screen::Search);
+    assert_eq!(m.navigation.stack.last(), Some(&Screen::Home));
+    assert!(ui.search_preview(&m, &tracks, 3).is_empty());
+    // b, e: the song shows above the keys while typing.
     for a in [
         Action::NavigateDown,
         Action::NavigateDown,
@@ -3226,20 +3228,23 @@ fn live_search_shows_results_while_typing_and_opens_them_with_back_to_the_result
         k.col = 2;
     }
     ui.model_action(&mut m, Action::Select);
-    let k = ui.keyboard.as_ref().unwrap();
-    assert_eq!(k.text, "be");
-    assert_eq!(k.results[0].key, "track:4");
-    assert_eq!(k.results[0].secondary, "Song · Michael Jackson");
-    // Up from the top row reaches it; Select plays it from the results page.
+    assert_eq!(ui.keyboard.as_ref().unwrap().text, "be");
+    assert_eq!(m.navigation.filter, "be");
+    let preview = ui.search_preview(&m, &tracks, 3);
+    assert_eq!(preview[0].key, "track:4");
+    assert_eq!(preview[0].secondary, "Song · Michael Jackson");
+    assert_eq!(ui.keyboard.as_ref().unwrap().found, 1);
+    // Up from the top row: the keys fold away, the first result has the focus.
     ui.model_action(&mut m, Action::NavigateUp);
-    assert_eq!(ui.keyboard.as_ref().unwrap().result_focus, Some(0));
+    assert!(ui.keyboard.is_none());
+    assert_eq!(m.screen, Screen::Search);
+    let rows = ui.rows(&m, &tracks);
+    assert_eq!(rows[m.navigation.focus].key, "track:4");
     assert!(matches!(
         ui.model_action(&mut m, Action::Select),
         Effect::PlayCollection { selected: 4, .. } | Effect::Play(4)
     ));
-    assert!(ui.keyboard.is_none());
-    assert_eq!(m.navigation.stack.last(), Some(&Screen::Search));
-    // An artist opens its page; Back returns to the full results.
+    // An artist opens its page; Back returns to the search as it was left.
     let mut m = app(Screen::Home);
     select_key(&mut ui, &mut m, "search");
     ui.keyboard.as_mut().unwrap().text = "Élo".into();
@@ -3252,16 +3257,101 @@ fn live_search_shows_results_while_typing_and_opens_them_with_back_to_the_result
         k.col = 8;
     }
     ui.model_action(&mut m, Action::Select);
-    let k = ui.keyboard.as_ref().unwrap();
-    assert!(k.results[0].key.starts_with("artist:"), "{:?}", k.results);
-    ui.model_action(&mut m, Action::NavigateUp);
-    ui.model_action(&mut m, Action::NavigateUp);
-    ui.model_action(&mut m, Action::NavigateUp);
+    assert!(ui.search_preview(&m, &tracks, 3)[0]
+        .key
+        .starts_with("artist:"));
+    // The wheel folds the keys away too.
+    ui.model_action(&mut m, Action::WheelClockwise(1));
+    assert!(ui.keyboard.is_none());
+    let focus = m.navigation.focus;
+    assert!(ui.rows(&m, &tracks)[focus].key.starts_with("artist:"));
     ui.model_action(&mut m, Action::Select);
     assert_eq!(m.screen, Screen::Artist);
     ui.model_action(&mut m, Action::Back);
     assert_eq!(m.screen, Screen::Search);
     assert_eq!(m.navigation.filter, "Élo");
+    assert_eq!(m.navigation.focus, focus);
+    // Up to the field (over the heading) and Select: the keys come back with
+    // the text; Cancel gives the search back as it was.
+    ui.model_action(&mut m, Action::WheelCounterClockwise(1));
+    assert_eq!(m.navigation.focus, 0, "headings are not stops");
+    ui.model_action(&mut m, Action::Select);
+    assert_eq!(ui.keyboard.as_ref().unwrap().text, "Élo");
+    {
+        let k = ui.keyboard.as_mut().unwrap();
+        k.row = 2;
+        k.col = 8;
+    }
+    ui.model_action(&mut m, Action::Select);
+    assert_eq!(m.navigation.filter, "Él");
+    ui.model_action(&mut m, Action::Home);
+    assert!(ui.keyboard.is_none());
+    assert_eq!(m.screen, Screen::Search);
+    assert_eq!(m.navigation.filter, "Élo");
+    // Back leaves the search page.
+    ui.model_action(&mut m, Action::Back);
+    assert_eq!(m.screen, Screen::Home);
+    // A new search cancelled leaves it at once; the last search comes back
+    // with the keys next time.
+    select_key(&mut ui, &mut m, "search");
+    assert_eq!(ui.keyboard.as_ref().unwrap().text, "Élo");
+    ui.model_action(&mut m, Action::Home);
+    assert!(ui.keyboard.is_none());
+    assert_eq!(m.screen, Screen::Home);
+}
+
+#[test]
+fn the_search_page_lists_each_kind_under_a_heading_with_play_all() {
+    let mut ui = Ui::default();
+    let mut m = app(Screen::Search);
+    let tracks = m.library.tracks.clone();
+    m.navigation.filter = "album".into();
+    let rows = ui.rows(&m, &tracks);
+    let keys: Vec<&str> = rows.iter().map(|r| r.key.as_str()).collect();
+    assert_eq!(keys[0], "search_edit");
+    assert_eq!(keys[1], "heading:albums");
+    assert!(!rows[1].enabled);
+    let songs = keys.iter().position(|k| *k == "heading:songs").unwrap();
+    assert_eq!(keys[songs + 1], "search_play_all");
+    let found = rows.len() - 4;
+    assert_eq!(
+        rows[songs + 1].secondary,
+        format!("{} songs", rows.len() - songs - 2)
+    );
+    assert!(rows[0].secondary.ends_with("songs"), "{:?}", rows[0]);
+    assert_eq!(ui.search_summary(&m, &tracks).1, found);
+    // Play All plays the songs found, in the page's order.
+    m.navigation.focus = songs + 1;
+    match ui.model_action(&mut m, Action::Select) {
+        Effect::PlayCollection {
+            members, shuffle, ..
+        } => {
+            assert!(!shuffle);
+            let shown: Vec<usize> = rows[songs + 2..]
+                .iter()
+                .map(|r| r.key["track:".len()..].parse().unwrap())
+                .collect();
+            assert_eq!(members, shown);
+        }
+        other => panic!("{other:?}"),
+    }
+    // A long page scrolls so the focus stays in view under its heading.
+    m.screen = Screen::Search;
+    m.navigation.filter = "a".into();
+    m.navigation.focus = 0;
+    m.navigation.scroll = 0;
+    let count = ui.row_count(&m, &tracks);
+    for _ in 0..count {
+        ui.model_action(&mut m, Action::WheelClockwise(1));
+        let row = &ui.rows(&m, &tracks)[m.navigation.focus];
+        assert!(row.enabled, "{row:?}");
+    }
+    assert_eq!(m.navigation.focus, count - 1);
+    assert!(m.navigation.scroll > 0);
+    // Nothing found: the field, and the page says so.
+    m.navigation.filter = "zzq".into();
+    assert_eq!(ui.row_count(&m, &tracks), 1);
+    assert_eq!(ui.search_summary(&m, &tracks), ("No matches".into(), 0));
 }
 
 #[test]
@@ -4494,4 +4584,36 @@ fn a_collaboration_album_shows_once_under_each_of_its_artists() {
         .search(&m.library.tracks, "kel");
     assert_eq!(found.artists, vec![("Kelis".to_owned(), 1, 1)]);
     assert_eq!(artist_filter(&m.library.tracks[1]), "artist:Calvin Harris");
+}
+
+/// The search page rebuilt per keystroke on a 20 000-song library
+/// (`cargo test -p reborn-ui --release -- --ignored --nocapture search_page_speed`).
+#[test]
+#[ignore]
+fn search_page_speed_on_a_large_library() {
+    let mut ui = Ui::default();
+    let tracks = crate::search::speed::large_library();
+    let mut m = app(Screen::Home);
+    m.library.tracks = tracks.clone();
+    select_key(&mut ui, &mut m, "search");
+    // The index is built when the search opens (here for this copy).
+    ui.search_typed(&mut m, &tracks);
+    let mut worst = std::time::Duration::ZERO;
+    for text in [
+        "t", "th", "the", "the ", "the l", "the li", "the l", "the", "t",
+    ] {
+        ui.keyboard.as_mut().unwrap().text = text.to_owned();
+        let started = std::time::Instant::now();
+        ui.search_typed(&mut m, &tracks);
+        let searched = started.elapsed();
+        let frame = ui.draw(&m, &tracks, false);
+        let took = started.elapsed();
+        worst = worst.max(took);
+        eprintln!(
+            "{text:>8}: search {searched:>10?}, with frame {took:>10?}: {} rows, {} quads",
+            ui.row_count(&m, &tracks),
+            frame.len()
+        );
+    }
+    eprintln!("worst keystroke (search + frame): {worst:?}");
 }

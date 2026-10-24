@@ -4960,6 +4960,12 @@ fn run() -> Result<(), String> {
                 // Per event: an action earlier in this batch may have opened
                 // or closed the keyboard.
                 action_router.set_keyboard(rt.ui.keyboard.is_some());
+                action_router.set_keyboard_wheel(
+                    rt.ui
+                        .keyboard
+                        .as_ref()
+                        .is_some_and(reborn_ui::keyboard::Keyboard::live),
+                );
                 action_router.set_screen_off_buttons(rt.model.settings.screen_off_buttons);
                 let actions = action_router.route(&event, !rt.model.screen_off);
                 for &action in &actions {

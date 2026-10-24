@@ -34,6 +34,7 @@ mod views_library;
 mod views_playing;
 mod views_playlists;
 mod views_radio;
+mod views_search;
 mod views_settings;
 mod views_system;
 
@@ -428,6 +429,9 @@ pub struct Ui {
     /// the slide to the next screen.
     seen: RefCell<Option<Seen>>,
     slide: RefCell<Option<Slide>>,
+    /// The search's keys folding away into its page (Beta 8.32): when it
+    /// began, and the keys as they were.
+    folding: RefCell<Option<(Instant, keyboard::Keyboard)>>,
     /// The playing position as last reported, and when: Now Playing moves
     /// on between reports.
     position_seen: std::cell::Cell<Option<(u64, Instant)>>,
@@ -587,7 +591,10 @@ impl Ui {
         self.flow.borrow().moving()
             || self.transition_progress().is_some()
             || (self.ui_motion
-                && (self.motion.moving() || self.slide.borrow().is_some() || self.download_shown))
+                && (self.motion.moving()
+                    || self.slide.borrow().is_some()
+                    || self.folding.borrow().is_some()
+                    || self.download_shown))
     }
 
     /// Motion a button started (a glide, a slide, Cover Flow): it earns the
@@ -596,7 +603,10 @@ impl Ui {
     pub fn responding(&self) -> bool {
         self.flow.borrow().moving()
             || self.transition_progress().is_some()
-            || (self.ui_motion && (self.motion.settling() || self.slide.borrow().is_some()))
+            || (self.ui_motion
+                && (self.motion.settling()
+                    || self.slide.borrow().is_some()
+                    || self.folding.borrow().is_some()))
     }
 
     /// `target` eased in time under `key` (see `motion::Motion::ease`);
@@ -1899,8 +1909,28 @@ impl Ui {
                 next = n as usize;
             }
         }
+        if !modal && m.screen == Screen::Search {
+            // The search page's headings are not stops.
+            let catalog = self.catalog.borrow();
+            let heading = |i: usize| {
+                catalog
+                    .rows
+                    .get(i)
+                    .is_some_and(|r| r.search_kind() == catalog::SearchKind::Heading)
+            };
+            while heading(next) {
+                let n = next as i32 + delta.signum();
+                if n < 0 || n > last {
+                    next = *focus;
+                    break;
+                }
+                next = n as usize;
+            }
+        }
         *focus = next;
-        if !modal {
+        if !modal && self.native_search(m, tracks) {
+            self.scroll_search(m, tracks);
+        } else if !modal {
             let visible = self.visible_count(m, tracks);
             if next < m.navigation.scroll {
                 m.navigation.scroll = next;
@@ -2114,9 +2144,12 @@ impl Ui {
         if matches!(m.screen, Screen::Playlists | Screen::Playlist) {
             return self.playlist_select(m, tracks, key);
         }
-        if key == "search" || key == "search_edit" {
+        if key == "search" || key == catalog::SEARCH_FIELD {
             self.open_library_search(m, tracks);
             return Effect::None;
+        }
+        if key == catalog::SEARCH_PLAY_ALL {
+            return self.play_filtered(m, tracks, false);
         }
         if let Some(screen) = route(key) {
             Self::go(m, screen, "");
@@ -3004,39 +3037,29 @@ impl Ui {
             Outcome::Stay => Effect::None,
             Outcome::Edited => {
                 if k.purpose == Purpose::LibrarySearch {
-                    let text = k.text.clone();
-                    self.show_live_results(tracks, &text);
+                    self.search_typed(m, tracks);
                 }
                 Effect::None
             }
-            Outcome::Open(index) => {
-                let Some(key) = k.results.get(index).map(|item| item.key.clone()) else {
-                    return Effect::None;
-                };
-                let text = k.text.trim().to_owned();
-                self.keyboard = None;
-                self.library_query = text.clone();
-                // The full results come first, so Back from what opens returns
-                // to them (with Edit Search on top).
-                if m.screen == Screen::Search {
-                    m.navigation.filter = text;
-                } else {
-                    Self::go(m, Screen::Search, text);
-                }
-                m.navigation.focus = 0;
-                m.navigation.scroll = 0;
-                if key.starts_with("artist:") {
-                    Self::go(m, Screen::Artist, key);
-                    Effect::None
-                } else if key.starts_with("album:") {
-                    Self::go(m, Screen::Album, key);
-                    Effect::None
-                } else {
-                    self.play_track(m, tracks, &key)
-                }
+            Outcome::Browse => {
+                self.fold_search(m, tracks);
+                Effect::None
             }
             Outcome::Cancel => {
-                self.keyboard = None;
+                let k = self.keyboard.take();
+                // The search: back to the search being edited, else out of
+                // the search page.
+                if let Some(k) = k.filter(keyboard::Keyboard::live) {
+                    match k.restore.clone() {
+                        Some(text) => {
+                            m.navigation.filter = text;
+                            m.navigation.focus = 0;
+                            m.navigation.scroll = 0;
+                            self.start_fold(k);
+                        }
+                        None => Self::back(m),
+                    }
+                }
                 Effect::None
             }
             Outcome::Done => {
@@ -3102,16 +3125,7 @@ impl Ui {
                             self.flash("Type a name to search for");
                             return Effect::None;
                         }
-                        self.keyboard = None;
-                        self.library_query = text.clone();
-                        // A new search replaces the results it was edited from.
-                        if m.screen == Screen::Search {
-                            m.navigation.filter = text;
-                            m.navigation.focus = 0;
-                            m.navigation.scroll = 0;
-                        } else {
-                            Self::go(m, Screen::Search, text);
-                        }
+                        self.fold_search(m, tracks);
                         Effect::None
                     }
                 }
@@ -3140,66 +3154,147 @@ impl Ui {
         )
     }
 
-    /// Open the library search's keyboard with the last search. The search
-    /// index is built here (once per library), not on the first letter.
-    fn open_library_search(&mut self, m: &AppModel, tracks: &[Track]) {
-        let text = if m.screen == Screen::Search {
-            m.navigation.filter.clone()
+    /// Open the search with its keys up: on the search page with its text
+    /// (Cancel gives it back), else the search page with the last search.
+    /// The search index is built here (once per library), not on the first
+    /// letter.
+    fn open_library_search(&mut self, m: &mut AppModel, tracks: &[Track]) {
+        let k = if m.screen == Screen::Search {
+            let text = m.navigation.filter.clone();
+            let mut k = keyboard::Keyboard::new(keyboard::Purpose::LibrarySearch, text.clone());
+            k.restore = Some(text);
+            k
         } else {
-            self.library_query.clone()
+            Self::go(m, Screen::Search, self.library_query.clone());
+            keyboard::Keyboard::new(keyboard::Purpose::LibrarySearch, self.library_query.clone())
         };
-        self.keyboard = Some(keyboard::Keyboard::new(
-            keyboard::Purpose::LibrarySearch,
-            text.clone(),
-        ));
-        self.show_live_results(tracks, &text);
+        self.keyboard = Some(k);
+        self.folding.borrow_mut().take();
+        self.search_typed(m, tracks);
     }
 
-    /// Search as the text is typed and show the results above the keys:
-    /// artists, then albums, then songs (at most `LIVE_RESULTS`).
-    fn show_live_results(&mut self, tracks: &[Track], text: &str) {
-        const LIVE_RESULTS: usize = 60;
-        let results = self.catalog.borrow_mut().index.search(tracks, text);
-        let (note, items) = if text.trim().is_empty() {
-            (String::new(), vec![])
-        } else {
-            let mut items = Vec::with_capacity(LIVE_RESULTS);
-            for (artist, i, albums) in results.artists.iter().take(LIVE_RESULTS) {
-                let mut item = Item::new(display_or_unknown(artist), format!("artist:{artist}"))
-                    .with_secondary(format!(
-                        "Artist · {}",
-                        crate::components::count(*albums, "album", "albums")
-                    ));
-                item.art = Some(*i);
-                items.push(item);
-            }
-            for &i in results.albums.iter().take(LIVE_RESULTS - items.len()) {
-                let t = &tracks[i];
-                let mut item = Item::new(display_or_unknown(&t.album), album_filter(t))
-                    .with_secondary(format!(
-                        "Album · {}",
-                        display_or_unknown(if t.album_artist.is_empty() {
-                            &t.artist
-                        } else {
-                            &t.album_artist
-                        })
-                    ));
-                item.art = Some(i);
-                items.push(item);
-            }
-            for &i in results.songs.iter().take(LIVE_RESULTS - items.len()) {
-                let t = &tracks[i];
-                let mut item = Item::new(track_title(t), format!("track:{i}"))
-                    .with_secondary(format!("Song · {}", display_or_unknown(&t.artist)));
-                item.art = Some(i);
-                items.push(item);
-            }
-            (results.summary(), items)
+    /// The search's text changed: the page under the keys searches it, and
+    /// the field counts what it finds.
+    pub(crate) fn search_typed(&mut self, m: &mut AppModel, tracks: &[Track]) {
+        let Some(k) = self.keyboard.as_mut() else {
+            return;
         };
-        if let Some(k) = self.keyboard.as_mut() {
-            k.note = note;
-            k.set_results(items);
+        m.navigation.filter = k.text.clone();
+        m.navigation.focus = 0;
+        m.navigation.scroll = 0;
+        let mut catalog = self.catalog.borrow_mut();
+        catalog.ensure(m, tracks);
+        let blank = k.text.trim().is_empty();
+        k.found = if blank { 0 } else { catalog.found };
+        k.note = if blank {
+            String::new()
+        } else {
+            catalog.summary.clone()
+        };
+    }
+
+    /// Fold the search's keys away: the page lists everything found with
+    /// the focus on the first result (on the field when nothing was found).
+    fn fold_search(&mut self, m: &mut AppModel, tracks: &[Track]) {
+        let Some(k) = self.keyboard.take() else {
+            return;
+        };
+        let text = k.text.trim().to_owned();
+        self.library_query = text.clone();
+        m.navigation.filter = text;
+        m.navigation.scroll = 0;
+        m.navigation.focus = {
+            let mut catalog = self.catalog.borrow_mut();
+            catalog.ensure(m, tracks);
+            catalog
+                .rows
+                .iter()
+                .position(|r| r.search_kind() == catalog::SearchKind::Result)
+                .unwrap_or(0)
+        };
+        self.scroll_search(m, tracks);
+        self.start_fold(k);
+    }
+
+    fn start_fold(&self, k: keyboard::Keyboard) {
+        if self.ui_motion {
+            *self.folding.borrow_mut() = Some((Instant::now(), k));
         }
+    }
+
+    /// The search's keys folding away over its page, until they are gone.
+    pub(crate) fn draw_folding(&self, c: &mut canvas::Canvas) {
+        let mut folding = self.folding.borrow_mut();
+        let Some((at, k)) = folding.as_ref() else {
+            return;
+        };
+        let p = motion::ease_out(at.elapsed().as_secs_f32() / FOLD_S);
+        if p >= 1. || self.keyboard.is_some() || !self.ui_motion {
+            *folding = None;
+            return;
+        }
+        keyboard::draw_folding(c, self, k, p);
+    }
+
+    /// The search page in Reborn's own drawing (a skin's list scrolls by
+    /// its own rows).
+    fn native_search(&self, m: &AppModel, tracks: &[Track]) -> bool {
+        m.screen == Screen::Search
+            && self
+                .skin
+                .as_deref()
+                .and_then(|skin| screens::skin_layout(skin, self, m, tracks))
+                .is_none()
+    }
+
+    fn scroll_search(&self, m: &mut AppModel, tracks: &[Track]) {
+        let heights = self.search_heights(m, tracks);
+        m.navigation.scroll =
+            views_search::window(&heights, m.navigation.focus, m.navigation.scroll);
+    }
+
+    /// Each search page row's height.
+    pub(crate) fn search_heights(&self, m: &AppModel, tracks: &[Track]) -> Vec<f32> {
+        let mut catalog = self.catalog.borrow_mut();
+        catalog.ensure(m, tracks);
+        catalog
+            .rows
+            .iter()
+            .map(|r| views_search::row_height(r.search_kind()))
+            .collect()
+    }
+
+    /// What the search found, in words, and how many results.
+    pub(crate) fn search_summary(&self, m: &AppModel, tracks: &[Track]) -> (String, usize) {
+        let mut catalog = self.catalog.borrow_mut();
+        catalog.ensure(m, tracks);
+        (catalog.summary.clone(), catalog.found)
+    }
+
+    /// The search page's first `n` results, each saying what it is: the
+    /// preview above the keys, where there are no headings.
+    pub(crate) fn search_preview(&self, m: &AppModel, tracks: &[Track], n: usize) -> Vec<Item> {
+        let mut catalog = self.catalog.borrow_mut();
+        catalog.ensure(m, tracks);
+        catalog
+            .rows
+            .iter()
+            .filter(|r| r.search_kind() == catalog::SearchKind::Result)
+            .take(n)
+            .map(|r| {
+                let mut item = r.item(tracks);
+                item.secondary = match r {
+                    catalog::Row::SearchSong(i) => {
+                        format!("Song · {}", display_or_unknown(&tracks[*i].artist))
+                    }
+                    _ if item.key.starts_with("artist:") => format!("Artist · {}", item.secondary),
+                    _ if item.key.starts_with("album:") => format!("Album · {}", item.secondary),
+                    _ if item.secondary == "Audiobook" => item.secondary,
+                    _ => format!("Audiobook · {}", item.secondary),
+                };
+                item
+            })
+            .collect()
     }
 
     pub fn draw(&self, m: &AppModel, tracks: &[Track], has_art: bool) -> Vec<Quad> {
@@ -3227,7 +3322,8 @@ impl Ui {
         {
             let mut seen = self.seen.borrow_mut();
             if let Some((screen, filter, depth, old)) = seen.take() {
-                let moved = (screen, &filter) != (here.0, &here.1);
+                // Typing changes the search page's text, not the page.
+                let moved = screen != here.0 || (filter != here.1 && screen != Screen::Search);
                 // Cover Flow's cover flight is its own transition.
                 if moved && !m.screen_off && self.transition.get().is_none() && !old.is_empty() {
                     *self.slide.borrow_mut() = Some(Slide {
@@ -3293,6 +3389,8 @@ struct Slide {
 
 /// How long a screen slide takes.
 const SLIDE_S: f32 = 0.2;
+/// How long the search's keys take to fold away.
+const FOLD_S: f32 = 0.18;
 
 fn route(key: &str) -> Option<Screen> {
     Some(match key {

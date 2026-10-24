@@ -803,6 +803,9 @@ pub struct ActionRouter {
     precise_wheel: bool,
     /// The on-screen keyboard is open: the wheel's four buttons are arrow keys.
     keyboard: bool,
+    /// The open keyboard has a list to browse (the library search): the
+    /// wheel turns reach it.
+    keyboard_wheel: bool,
     /// Buttons pressed as arrow keys; their hold and release belong to the
     /// keyboard even when it closed meanwhile.
     keyboard_held: HashSet<PhysicalControl>,
@@ -820,6 +823,12 @@ impl ActionRouter {
     /// (hold: done). Volume and Power keep their meaning.
     pub fn set_keyboard(&mut self, open: bool) {
         self.keyboard = open;
+    }
+
+    /// The open keyboard's page has results to browse (the library search,
+    /// Beta 8.32): its wheel turns are wheel turns. The buttons stay arrows.
+    pub fn set_keyboard_wheel(&mut self, browses: bool) {
+        self.keyboard_wheel = browses;
     }
 
     /// The setting for the wheel and its buttons while the screen is off.
@@ -1024,7 +1033,7 @@ impl ActionRouter {
                 Some(vec![])
             }
             NormalizedInput::WheelClockwise(_) | NormalizedInput::WheelCounterClockwise(_)
-                if self.keyboard =>
+                if self.keyboard && !self.keyboard_wheel =>
             {
                 Some(vec![])
             }
@@ -1273,6 +1282,16 @@ mod tests {
             input: NormalizedInput::WheelClockwise(1),
         };
         assert_eq!(router.route(&wheel, true), Vec::<Action>::new());
+        // The library search's keyboard browses its results with the wheel;
+        // its buttons stay arrow keys.
+        router.set_keyboard_wheel(true);
+        assert_eq!(router.route(&wheel, true), vec![Action::WheelClockwise(1)]);
+        let mut input = InputManager::empty();
+        let press = input.feed(NAVIGATION_BUTTONS, EV_KEY, 158, 1, now);
+        assert_eq!(router.route(&press[0], true), vec![Action::NavigateUp]);
+        let release = input.feed(NAVIGATION_BUTTONS, EV_KEY, 158, 0, now);
+        assert_eq!(router.route(&release[0], true), Vec::<Action>::new());
+        router.set_keyboard_wheel(false);
         // Closed again, the buttons are playback controls as before.
         router.set_keyboard(false);
         let mut input = InputManager::empty();

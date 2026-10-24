@@ -146,10 +146,22 @@ pub(crate) fn apply(ui: &crate::Ui, m: &AppModel, c: &mut Canvas) {
                 top,
                 bottom,
                 row_h,
-                first,
+                ..
+            }
+            | Moving::Scroll {
+                start,
+                end,
+                top,
+                bottom,
+                row_h,
+                ..
             } => {
                 let key = format!("list:{screen}");
-                let target = first as f32 * row_h;
+                let target = match *mark {
+                    Moving::List { first, .. } => first as f32 * row_h,
+                    Moving::Scroll { offset, .. } => offset,
+                    _ => unreachable!(),
+                };
                 let mut v = ease(&key, None, target, CALM, 0.3);
                 // A long jump (fast wheel) glides only its last row.
                 if (target - v).abs() > 2. * row_h {
@@ -234,7 +246,39 @@ pub(crate) fn apply(ui: &crate::Ui, m: &AppModel, c: &mut Canvas) {
                     q.x += (t - goal) * 18.;
                 }
             }
-            Moving::StatusBar { .. } => {}
+            Moving::StatusBar { .. } | Moving::Corners { .. } => {}
+        }
+    }
+    // Round covers take the colour under their corners where the focus
+    // highlight is now, not where it is headed.
+    let pill = marks
+        .iter()
+        .filter_map(|k| match *k {
+            Moving::Focus {
+                start,
+                end,
+                layer: 0,
+                ..
+            } => c.draw[start..end]
+                .iter()
+                .map(|q| (q.y, q.y + q.h))
+                .reduce(|a, b| (a.0.min(b.0), a.1.max(b.1))),
+            _ => None,
+        })
+        .next();
+    for mark in &marks {
+        if let Moving::Corners {
+            start,
+            end,
+            on,
+            off,
+        } = *mark
+        {
+            for q in &mut c.draw[start..end] {
+                let mid = q.y + q.h / 2.;
+                let covered = pill.is_some_and(|(top, bottom)| mid > top && mid < bottom);
+                q.color = if covered { on } else { off };
+            }
         }
     }
     // Rows that scrolled under the status bar stay under it: a band of the

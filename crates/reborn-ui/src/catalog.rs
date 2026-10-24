@@ -12,10 +12,27 @@ pub enum Row {
     Track(usize),
     /// A track on its album's own page; the artist line is redundant there.
     AlbumTrack(usize),
-    /// A song among search results, named as one.
+    /// A song among search results: its album too, to tell versions apart.
     SearchSong(usize),
+    /// An album among search results (a track of it).
+    SearchAlbum(usize),
     Item(Item),
 }
+
+/// What a row of the search page is: the field, a section heading, Play All
+/// or a result.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SearchKind {
+    Field,
+    Heading,
+    PlayAll,
+    Result,
+}
+
+/// Keys of the search page's own rows.
+pub const SEARCH_FIELD: &str = "search_edit";
+pub const SEARCH_PLAY_ALL: &str = "search_play_all";
+const HEADING: &str = "heading:";
 impl Row {
     pub fn item(&self, tracks: &[Track]) -> Item {
         match self {
@@ -26,9 +43,16 @@ impl Row {
                 item
             }
             Self::SearchSong(i) => {
-                let mut item = track_item(*i, &tracks[*i]);
-                item.secondary = format!("Song · {}", item.secondary);
+                let t = &tracks[*i];
+                let mut item = track_item(*i, t);
+                if !t.album.is_empty() {
+                    item.secondary = format!("{} · {}", item.secondary, t.album);
+                }
                 item
+            }
+            Self::SearchAlbum(i) => {
+                let t = &tracks[*i];
+                album_item(&t.album, &t.album_artist, *i, t)
             }
             Self::Item(i) => i.clone(),
         }
@@ -36,7 +60,16 @@ impl Row {
     pub fn track(&self) -> Option<usize> {
         match self {
             Self::Track(i) | Self::AlbumTrack(i) | Self::SearchSong(i) => Some(*i),
-            Self::Item(_) => None,
+            Self::SearchAlbum(_) | Self::Item(_) => None,
+        }
+    }
+    /// The row's part of the search page, without making its item.
+    pub fn search_kind(&self) -> SearchKind {
+        match self {
+            Self::Item(i) if i.key == SEARCH_FIELD => SearchKind::Field,
+            Self::Item(i) if i.key == SEARCH_PLAY_ALL => SearchKind::PlayAll,
+            Self::Item(i) if i.key.starts_with(HEADING) => SearchKind::Heading,
+            _ => SearchKind::Result,
         }
     }
 }
@@ -44,10 +77,101 @@ impl Row {
 pub struct Catalog {
     stamp: Option<(usize, usize, Screen, String)>,
     pub rows: Vec<Row>,
+    /// The search page: what it found ("2 artists · 9 songs", or "No
+    /// matches") and how many results that is.
+    pub summary: String,
+    pub found: usize,
     /// Folded names for the library search (kept across routes).
     pub index: crate::search::Index,
 }
 impl Catalog {
+    /// The search page (Beta 8.32): the field, then each kind of result
+    /// under its heading — artists, albums, audiobooks, then songs with Play
+    /// All. The keyboard's preview shows the first results of these rows.
+    fn search_rows(&mut self, m: &AppModel, tracks: &[Track]) {
+        let query = &m.navigation.filter;
+        let results = self.index.search(tracks, query);
+        // Audiobooks by title or author, matched as music is: every typed
+        // word begins a word (they are not among the songs).
+        let folded = reborn_core::sort::fold(query);
+        let books: Vec<reborn_core::books::Book> = if folded.trim().is_empty() {
+            vec![]
+        } else {
+            reborn_core::books::books(tracks)
+                .into_iter()
+                .filter(|b| {
+                    let name = reborn_core::sort::fold(&format!("{} {}", b.title, b.author));
+                    crate::search::words_match(&folded, &name)
+                })
+                .collect()
+        };
+        let parts: Vec<String> = [
+            (results.artists.len(), "artist", "artists"),
+            (results.albums.len(), "album", "albums"),
+            (books.len(), "audiobook", "audiobooks"),
+            (results.songs.len(), "song", "songs"),
+        ]
+        .into_iter()
+        .filter(|(n, ..)| *n > 0)
+        .map(|(n, one, many)| crate::components::count(n, one, many))
+        .collect();
+        self.found =
+            results.artists.len() + results.albums.len() + books.len() + results.songs.len();
+        self.summary = if parts.is_empty() {
+            "No matches".into()
+        } else {
+            parts.join(" · ")
+        };
+        // Skins show this row as a list row: it names the search.
+        self.push(
+            Item::new("Edit Search", SEARCH_FIELD)
+                .with_secondary(format!("“{query}” · {}", self.summary)),
+        );
+        let heading = |name: &str, n: usize| {
+            let mut item = Item::new(name, format!("{HEADING}{}", name.to_lowercase()))
+                .with_secondary(crate::screens::count_label(n));
+            item.enabled = false;
+            item
+        };
+        if !results.artists.is_empty() {
+            self.push(heading("Artists", results.artists.len()));
+        }
+        for (artist, i, albums) in results.artists {
+            let mut item = Item::new(display_or_unknown(&artist), format!("artist:{artist}"))
+                .with_secondary(crate::components::count(albums, "album", "albums"));
+            item.art = Some(i);
+            self.push(item);
+        }
+        if !results.albums.is_empty() {
+            self.push(heading("Albums", results.albums.len()));
+        }
+        self.rows
+            .extend(results.albums.into_iter().map(Row::SearchAlbum));
+        if !books.is_empty() {
+            self.push(heading("Audiobooks", books.len()));
+        }
+        for book in books {
+            let mut item = Item::new(book.title.clone(), format!("book:{}", book.key))
+                .with_secondary(if book.author.is_empty() {
+                    "Audiobook".to_owned()
+                } else {
+                    book.author.clone()
+                });
+            item.art = book.art;
+            self.push(item);
+        }
+        if !results.songs.is_empty() {
+            self.push(heading("Songs", results.songs.len()));
+            if results.songs.len() > 1 {
+                self.push(Item::new("Play All", SEARCH_PLAY_ALL).with_secondary(
+                    crate::components::count(results.songs.len(), "song", "songs"),
+                ));
+            }
+        }
+        self.rows
+            .extend(results.songs.into_iter().map(Row::SearchSong));
+    }
+
     fn push(&mut self, item: Item) {
         self.rows.push(Row::Item(item));
     }
@@ -68,52 +192,7 @@ impl Catalog {
         self.stamp = Some(stamp);
         self.rows.clear();
         match m.screen {
-            Screen::Search => {
-                let results = self.index.search(tracks, &m.navigation.filter);
-                self.push(
-                    Item::new("Edit Search", "search_edit").with_secondary(format!(
-                        "“{}” · {}",
-                        m.navigation.filter,
-                        results.summary()
-                    )),
-                );
-                // Audiobooks by title or author (they are not among the songs).
-                let query = reborn_core::sort::fold(&m.navigation.filter);
-                if !query.is_empty() {
-                    for book in reborn_core::books::books(tracks) {
-                        let found = |s: &str| reborn_core::sort::fold(s).contains(&query);
-                        if found(&book.title) || found(&book.author) {
-                            let mut item =
-                                Item::new(book.title.clone(), format!("book:{}", book.key))
-                                    .with_secondary(if book.author.is_empty() {
-                                        "Audiobook".to_owned()
-                                    } else {
-                                        format!("Audiobook · {}", book.author)
-                                    });
-                            item.art = book.art;
-                            self.push(item);
-                        }
-                    }
-                }
-                for (artist, i, albums) in results.artists {
-                    let mut item =
-                        Item::new(display_or_unknown(&artist), format!("artist:{artist}"))
-                            .with_secondary(format!(
-                                "Artist · {}",
-                                crate::components::count(albums, "album", "albums")
-                            ));
-                    item.art = Some(i);
-                    self.push(item);
-                }
-                for i in results.albums {
-                    let t = &tracks[i];
-                    let mut item = album_item(&t.album, &t.album_artist, i, t);
-                    item.secondary = format!("Album · {}", item.secondary);
-                    self.push(item);
-                }
-                self.rows
-                    .extend(results.songs.into_iter().map(Row::SearchSong));
-            }
+            Screen::Search => self.search_rows(m, tracks),
             Screen::Albums => {
                 let mut albums = BTreeMap::new();
                 for (i, t) in tracks.iter().enumerate().filter(|(_, t)| {

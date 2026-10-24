@@ -689,26 +689,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         ui.model_action(m, Action::Select);
     });
-    case!(
-        "70b-search-live-result-focus",
-        at(Screen::Home, ""),
-        |ui, m| {
-            home_focus(ui, m, "search");
-            ui.model_action(m, Action::Select);
-            if let Some(k) = ui.keyboard.as_mut() {
-                k.text = "nort".into();
-            }
-            ui.model_action(m, Action::NavigateDown);
-            for _ in 0..5 {
-                ui.model_action(m, Action::NavigateRight);
-            }
-            ui.model_action(m, Action::Select);
-            // Back on the top row: the results above the keys.
-            ui.model_action(m, Action::NavigateUp);
-            ui.model_action(m, Action::NavigateUp);
-            ui.model_action(m, Action::NavigateUp);
+    case!("70b-search-folded", at(Screen::Home, ""), |ui, m| {
+        home_focus(ui, m, "search");
+        ui.model_action(m, Action::Select);
+        if let Some(k) = ui.keyboard.as_mut() {
+            k.text = "nort".into();
         }
-    );
+        ui.model_action(m, Action::NavigateDown);
+        for _ in 0..5 {
+            ui.model_action(m, Action::NavigateRight);
+        }
+        ui.model_action(m, Action::Select);
+        // Up through the top row: the keys fold away into the results.
+        ui.model_action(m, Action::NavigateUp);
+        ui.model_action(m, Action::NavigateUp);
+    });
     case!("70c-search-live-no-match", at(Screen::Home, ""), |ui, m| {
         home_focus(ui, m, "search");
         ui.model_action(m, Action::Select);
@@ -720,7 +715,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     case!("71-search-results", at(Screen::Search, "north"), |_, m| m
         .navigation
         .focus =
-        1);
+        3);
+    // Down to the songs: Play All under the Songs heading.
+    case!("71b-search-songs", at(Screen::Search, "north"), |ui, m| {
+        for _ in 0..6 {
+            ui.model_action(m, Action::WheelClockwise(1));
+        }
+    });
+    case!("71c-search-field", at(Screen::Search, "north"), |_, m| m
+        .navigation
+        .focus =
+        0);
+    case!(
+        "71d-search-no-matches",
+        at(Screen::Search, "zzq"),
+        |_, _| {}
+    );
+    // Select on the field: the keys rise again with the text.
+    case!("71e-search-edit", at(Screen::Search, "north"), |ui, m| {
+        m.navigation.focus = 0;
+        ui.model_action(m, Action::Select);
+    });
     case!("72-search-keyboard-shift", at(Screen::Home, ""), |ui, m| {
         home_focus(ui, m, "search");
         ui.model_action(m, Action::Select);

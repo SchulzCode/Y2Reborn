@@ -218,11 +218,6 @@ fn song_list(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interactiv
         if selected {
             components::focus_row(c, 10., y + 1., WIDTH - 24., 50.);
         }
-        let bg = if selected {
-            components::FOCUS_OVER_BG
-        } else {
-            color::BG
-        };
         let art_track = row.art.and_then(|i| tracks.get(i).map(|t| (i, t)));
         let queue_art = queue_track.and_then(|q| {
             tracks
@@ -230,13 +225,10 @@ fn song_list(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interactiv
                 .position(|t| t.id == q.id && t.source_id == q.source_id)
                 .map(|i| (i, &tracks[i]))
         });
-        if row.key == "search_edit" {
-            c.rrect(20., y + 7., 38., 38., 8., color::GLASS);
-            c.icon(Icon::Search, 39., y + 26., 22., color::TEXT);
-        } else if artists || row.key.starts_with("artist:") {
-            // Artists are round, also among search results.
+        if artists {
+            // Artists are round.
             cover(c, ui, art_track, 20., y + 7., 38.);
-            c.round_off(20., y + 7., 38., 19., bg);
+            components::round_cover(c, 20., y + 7., 38., selected);
         } else {
             cover(c, ui, art_track.or(queue_art), 20., y + 7., 38.);
         }

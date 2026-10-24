@@ -319,3 +319,37 @@ A paused player with Bluetooth headphones connected stays awake for
 `HEADSET_PAUSE_AWAKE_SECS` (15 minutes) before automatic sleep, so the headphones can
 continue playback; asleep, the radio is off and nothing hears them. The paused sink is still
 released after three minutes (`HOLD_LIMIT`); playing again then reopens it.
+
+## Search page (Beta 8.32, owner request 2026-10-24)
+
+Owner: the search "looks good but navigation wise it's a little tricky and also has some
+visual glitches". Findings before the change: two result views that disagreed (three rows
+above the keys without audiobooks and capped at 60; a second full page with an "Edit Search"
+row), results reached only by Up through the top key row (landing on the third row, and the
+same press wrapping to Done when nothing was found), the wheel dead while typing, Back from
+an opened result landing on a page never seen, one mixed list without headings, audiobooks
+matched inside words; the focused live row covered the scroll rail, the count crowded long
+text out of the field, round artist covers showed grey square corners while the focus glided.
+
+* **One page.** Search is the Search screen with the keys over it. The field stays in
+  place; the first three results show above the keys, each saying what it is ("Artist · 2
+  albums"). Up from the top key row, a turn of the wheel, Search or holding Select folds the
+  keys away (180 ms) and the focus lands on the first result. Up through a lower row only
+  moves up; with nothing found Up still wraps to Done.
+* **The page:** the field (Select brings the keys back with the text, rising into place;
+  Cancel then gives the search back as it was), then ARTISTS, ALBUMS, AUDIOBOOKS and SONGS
+  headings with counts. Headings are not stops; the window keeps a result's heading and the
+  first heading's field in view. Songs start with **Play All** (two or more songs), which
+  plays the songs found in the page's order. Songs show "artist · album".
+* **Back:** from an opened artist or album to the page with the same focus; from the page,
+  out of Search. Cancel on a new search leaves Search at once.
+* **Matching:** audiobooks match as music does (every typed word begins a word of title or
+  author); the count includes them.
+* **Motion:** typing changes the page's text without a screen slide; list scrolling uses
+  `Moving::Scroll` (pixel offset, rows of differing heights); round covers mark
+  `Moving::Corners`, so their corners take the colour under them where the gliding focus is
+  now (also in Artists).
+* **Input:** `ActionRouter::set_keyboard_wheel` lets wheel turns through while the search's
+  keys are up; its buttons stay arrow keys.
+* **Skins** draw the page with their list layout: headings as dim rows, the field as "Edit
+  Search". Previews `70`–`71e`.

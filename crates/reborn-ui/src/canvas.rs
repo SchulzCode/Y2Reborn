@@ -181,6 +181,24 @@ pub enum Moving {
         row_h: f32,
         first: usize,
     },
+    /// List rows of differing heights in the window `top..bottom`, scrolled
+    /// `offset` pixels; long jumps glide only their last `row_h`.
+    Scroll {
+        start: usize,
+        end: usize,
+        top: f32,
+        bottom: f32,
+        offset: f32,
+        row_h: f32,
+    },
+    /// The corners rounding off a cover (an artist): `on` while the focus
+    /// highlight is under them, else `off`, also while it glides past.
+    Corners {
+        start: usize,
+        end: usize,
+        on: u32,
+        off: u32,
+    },
     /// A sheet `height` tall rising from the bottom over its scrim.
     Sheet {
         scrim: usize,

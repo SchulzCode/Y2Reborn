@@ -53,8 +53,10 @@ pub struct Results {
     pub songs: Vec<usize>,
 }
 
+#[cfg(test)]
 impl Results {
-    /// "2 artists · 1 album · 14 songs", or "No matches".
+    /// "2 artists · 1 album · 14 songs", or "No matches" (the search page
+    /// counts audiobooks too: `catalog`).
     pub fn summary(&self) -> String {
         let part = |n: usize, one: &str, many: &str| {
             (n > 0).then(|| crate::components::count(n, one, many))
@@ -82,6 +84,14 @@ fn matches(words: &[&str], inner: &[String], name: &str) -> bool {
         .iter()
         .zip(inner)
         .all(|(w, spaced)| name.starts_with(w) || name.contains(spaced.as_str()))
+}
+
+/// Every word of the folded `query` begins a word of the folded `name`
+/// (what the index finds, for names outside it: audiobooks).
+pub fn words_match(query: &str, name: &str) -> bool {
+    let words: Vec<&str> = query.split(' ').filter(|w| !w.is_empty()).collect();
+    let inner: Vec<String> = words.iter().map(|w| format!(" {w}")).collect();
+    !words.is_empty() && matches(&words, &inner, name)
 }
 
 impl Index {
@@ -320,7 +330,7 @@ mod tests {
 }
 
 #[cfg(test)]
-mod speed {
+pub(crate) mod speed {
     use super::*;
     use std::time::Instant;
 

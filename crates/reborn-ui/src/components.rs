@@ -225,6 +225,27 @@ pub(crate) fn focus_row_on(c: &mut Canvas, x: f32, y: f32, w: f32, h: f32, layer
     });
 }
 
+/// Round off a square cover (an artist) on a list row: its corners take
+/// the colour under them, the focus row's or the page's, and keep doing so
+/// while the focus glides past (UI motion).
+pub fn round_cover(c: &mut Canvas, x: f32, y: f32, size: f32, selected: bool) {
+    let start = c.draw.len();
+    c.round_off(
+        x,
+        y,
+        size,
+        size / 2.,
+        if selected { FOCUS_OVER_BG } else { color::BG },
+    );
+    let end = c.draw.len();
+    c.mark_moving(Moving::Corners {
+        start,
+        end,
+        on: FOCUS_OVER_BG,
+        off: color::BG,
+    });
+}
+
 /// The focus row's fill, and the opaque colour it gives over `BG` (for
 /// masking the corners of round artwork drawn on it).
 pub const FOCUS_FILL: u32 = color::GLASS;
