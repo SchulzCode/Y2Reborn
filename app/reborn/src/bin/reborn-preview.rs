@@ -527,6 +527,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             m.navigation.focus = 0;
         }
     );
+    case!(
+        "08c-cover-flow-fast-scroll",
+        at(Screen::Albums, ""),
+        move |ui, m| {
+            ui.accent = orange;
+            m.navigation.focus = 5;
+            ui.fast_scroll_until =
+                Some(std::time::Instant::now() + std::time::Duration::from_secs(600));
+        }
+    );
     case!("08d-genres", at(Screen::Genres, ""), move |ui, m| {
         ui.accent = teal;
         m.navigation.focus = 1;
