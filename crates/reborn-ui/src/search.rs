@@ -103,11 +103,11 @@ impl Index {
         let mut artists: BTreeMap<&str, Entry> = BTreeMap::new();
         let mut albums: BTreeMap<(&str, &str), usize> = BTreeMap::new();
         for (i, t) in tracks.iter().enumerate() {
-            if !t.artist.is_empty() {
-                let entry =
-                    artists
-                        .entry(t.artist.as_str())
-                        .or_insert((i, Default::default(), vec![]));
+            // One artist per name of a joined or "feat." tag (#38).
+            for artist in t.artists().into_iter().filter(|a| !a.is_empty()) {
+                let entry = artists
+                    .entry(artist)
+                    .or_insert((i, Default::default(), vec![]));
                 if !tracks[entry.0].artwork && t.artwork {
                     entry.0 = i;
                 }
@@ -124,7 +124,7 @@ impl Index {
             .into_iter()
             .map(|(name, (art, albums, tracks))| Artist {
                 name: name.to_owned(),
-                folded: folded[art][1].clone(),
+                folded: fold(name),
                 art,
                 albums: albums.len(),
                 tracks,

@@ -521,7 +521,7 @@ impl Ui {
             }
             ("ple_artist", Some(t)) => {
                 if let Some(track) = tracks.get(t) {
-                    Self::go(m, Screen::Artist, format!("artist:{}", track.artist));
+                    Self::go(m, Screen::Artist, crate::artist_filter(track));
                 }
                 Effect::None
             }

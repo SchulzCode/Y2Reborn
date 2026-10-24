@@ -920,7 +920,7 @@ impl Ui {
         let mut genres = std::collections::BTreeSet::new();
         let mut songs = 0;
         for t in tracks.iter().filter(|t| t.is_music()) {
-            artists.insert(t.artist.as_str());
+            artists.extend(t.artists());
             albums.insert((t.album.as_str(), t.album_artist.as_str()));
             genres.insert(t.genre.as_str());
             songs += 1;
@@ -2967,7 +2967,7 @@ impl Ui {
             }
             "go_artist" => {
                 if let Some(track) = track_index.and_then(|i| tracks.get(i)) {
-                    Self::go(m, Screen::Artist, format!("artist:{}", track.artist));
+                    Self::go(m, Screen::Artist, artist_filter(track));
                 }
                 Effect::None
             }
@@ -3574,7 +3574,10 @@ fn track_matches(track: &Track, filter: &str) -> bool {
         return false;
     }
     if let Some(value) = filter.strip_prefix("artist:") {
-        return track.artist == value;
+        // One of its artists (#38); the whole tag still matches, as a page
+        // saved before the split restores it.
+        return track.artist == value
+            || (track.artist.contains(value) && track.artists().contains(&value));
     }
     if let Some(value) = filter.strip_prefix("genre:") {
         return track.genre == value;
@@ -3595,6 +3598,10 @@ fn track_matches(track: &Track, filter: &str) -> bool {
 }
 fn album_filter(track: &Track) -> String {
     format!("album:{}\u{1f}{}", track.album_artist, track.album)
+}
+/// The page of a track's (first) artist.
+fn artist_filter(track: &Track) -> String {
+    format!("artist:{}", track.artists()[0])
 }
 /// The sleep timer for Now Playing's menu: "Off", "23 min", "End of Chapter".
 pub(crate) fn sleep_label(m: &AppModel, book: bool) -> String {

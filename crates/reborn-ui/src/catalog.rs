@@ -180,15 +180,19 @@ impl Catalog {
             }
             Screen::Artists => {
                 let mut artists: BTreeMap<&str, (usize, BTreeSet<&str>, bool)> = BTreeMap::new();
+                // Each name of a joined or "feat." tag is an artist of its
+                // own, so a collaboration doesn't list its album again (#38).
                 for (i, t) in tracks.iter().enumerate().filter(|(_, t)| t.is_music()) {
-                    let entry =
-                        artists
-                            .entry(t.artist.as_str())
-                            .or_insert((i, BTreeSet::new(), t.artwork));
-                    entry.1.insert(t.album.as_str());
-                    if !entry.2 && t.artwork {
-                        entry.0 = i;
-                        entry.2 = true;
+                    for artist in t.artists() {
+                        let entry =
+                            artists
+                                .entry(artist)
+                                .or_insert((i, BTreeSet::new(), t.artwork));
+                        entry.1.insert(t.album.as_str());
+                        if !entry.2 && t.artwork {
+                            entry.0 = i;
+                            entry.2 = true;
+                        }
                     }
                 }
                 let mut artists: Vec<_> = artists.into_iter().collect();
@@ -290,8 +294,8 @@ impl Catalog {
                 if matches!(m.screen, Screen::Album | Screen::Artist) {
                     if let Some(Row::Item(item)) = self.rows.first_mut() {
                         item.secondary = format!(
-                            "{} songs · {}",
-                            ids.len(),
+                            "{} · {}",
+                            crate::components::count(ids.len(), "song", "songs"),
                             crate::components::time(ids.iter().map(|(_, t)| t.duration_ms).sum())
                         );
                     }

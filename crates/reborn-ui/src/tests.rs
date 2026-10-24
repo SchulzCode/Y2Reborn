@@ -4444,3 +4444,54 @@ fn balance_opens_on_the_current_side_and_sets_it() {
         "Left +1 dB"
     );
 }
+
+#[test]
+fn a_collaboration_album_shows_once_under_each_of_its_artists() {
+    // Y2Reborn #38 / Y2Linux #40: "Calvin Harris;Kelis" and "feat." tags
+    // were artists of their own, each listing the album again.
+    let collaboration = |screen| {
+        let mut m = app(screen);
+        for (t, artist) in m.library.tracks.iter_mut().zip([
+            "Calvin Harris;Frank Ocean",
+            "Calvin Harris feat. Kelis",
+            "Calvin Harris",
+        ]) {
+            t.artist = artist.into();
+            t.album = "Funk Wav Bounces".into();
+            t.album_artist = "Calvin Harris".into();
+        }
+        m
+    };
+    let ui = radios();
+    let m = collaboration(Screen::Artists);
+    let rows = ui.rows(&m, &m.library.tracks);
+    let keys: Vec<_> = rows.iter().map(|r| r.key.as_str()).collect();
+    assert_eq!(
+        keys,
+        [
+            "artist:Calvin Harris",
+            "artist:Élodie · Μουσική · Музыка · 音楽",
+            "artist:Frank Ocean",
+            "artist:Kelis"
+        ]
+    );
+    assert_eq!(rows[0].secondary, "1 album");
+    let mut m = collaboration(Screen::Artist);
+    m.navigation.filter = "artist:Calvin Harris".into();
+    let rows = ui.rows(&m, &m.library.tracks);
+    assert_eq!(rows.len(), 2, "Play and the album once");
+    assert!(rows[0].secondary.starts_with("3 songs"));
+    assert_eq!(rows[1].key, "album:Calvin Harris\u{1f}Funk Wav Bounces");
+    m.navigation.filter = "artist:Kelis".into();
+    let rows = ui.rows(&m, &m.library.tracks);
+    assert_eq!(rows.len(), 2);
+    assert!(rows[0].secondary.starts_with("1 song ·"));
+    // Search finds the guest as an artist; Go to Artist opens the first name.
+    let found = ui
+        .catalog
+        .borrow_mut()
+        .index
+        .search(&m.library.tracks, "kel");
+    assert_eq!(found.artists, vec![("Kelis".to_owned(), 1, 1)]);
+    assert_eq!(artist_filter(&m.library.tracks[1]), "artist:Calvin Harris");
+}
