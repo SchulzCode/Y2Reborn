@@ -5458,6 +5458,19 @@ fn run() -> Result<(), String> {
                     r.map(|_| json!({"accepted":true,"radio":radio,"action":action}))
                 }
                 Command::Playback { action } => rt.play_control(action).map(|_| rt.status()),
+                Command::Action { action } => {
+                    // As the router would hand it over (device tests).
+                    rt.last_activity = Instant::now();
+                    let effect = rt.ui.model_action(&mut rt.model, action);
+                    rt.dirty.mark_render();
+                    rt.effect(effect).map(|_| {
+                        json!({"screen":rt.model.screen,"focus":rt.model.navigation.focus,
+                            "modal":rt.model.navigation.modal.is_some(),
+                            "modal_focus":rt.model.navigation.modal_focus,
+                            "queue_position":rt.model.queue_position,"queue":rt.model.queue.len(),
+                            "queued":rt.model.queued_count(),"notice":rt.ui.notice})
+                    })
+                }
                 Command::Theme { id } => {
                     let applied = match id {
                         Some(id) => rt.effect(Effect::SetTheme(id)),

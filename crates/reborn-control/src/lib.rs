@@ -68,6 +68,11 @@ pub enum Command {
     Playback {
         action: PlaybackAction,
     },
+    /// One UI action as a button would give it (device tests: a held
+    /// Select is `context_menu`, which injected key presses cannot hold).
+    Action {
+        action: reborn_core::Action,
+    },
     /// List installed skins; with `id`, switch to it ("" = Reborn's own look).
     Theme {
         id: Option<String>,
