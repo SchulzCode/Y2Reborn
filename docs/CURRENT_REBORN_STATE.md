@@ -1,6 +1,11 @@
 # Current Reborn state on the Y2
 
-## 1.0.0-beta.8.33 — Y2Linux 1.0 Beta 8.33 (Baseline 134), 2026-10-24 (latest): search page and queue redesign
+## 1.0.0-beta.8.34 — Y2Linux 1.0 Beta 8.34 (Baseline 135), 2026-10-24 (latest): MTP fix in the platform
+
+Published as `baseline-135` (Reborn `01f1ed3`, identity only, sequence 9802). The fix is Y2Linux's (#61: MTP no
+longer hangs when a computer connects); Reborn is unchanged since 8.33.
+
+## 1.0.0-beta.8.33 — Y2Linux 1.0 Beta 8.33 (Baseline 134), 2026-10-24: search page and queue redesign
 
 Published as `baseline-134` (Reborn `eca7f49`, sequence 9702; 8.32 was never published), installed on the owner's
 player first. **Search** is one page with the keys over it: first results above the keys, Up/wheel/Search fold the
