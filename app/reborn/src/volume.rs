@@ -63,8 +63,8 @@ impl VolumeRamp {
         Some((fraction, u32::try_from(ms).unwrap_or(u32::MAX)))
     }
     fn gain(volume: u8) -> f64 {
-        // Preserve the existing FFmpeg DSP's squared amplitude curve.
-        (f64::from(volume.min(100)) / 100.0).powi(2)
+        // Even dB steps (Beta 8.35; the squared curve before).
+        reborn_core::volume_gain(volume)
     }
     pub(crate) fn target(&mut self, volume: u8) {
         let target = Self::gain(volume);
@@ -169,11 +169,11 @@ mod tests {
         // Turning the volume down mid-fade uses the short ramp from where it is.
         let mut ramp = VolumeRamp::fade_in(100, 48_000, 2000);
         ramp.advance(48_000);
-        ramp.target(50);
+        ramp.target(80); // -12 dB
         ramp.advance(240);
         assert_eq!(
             values(&ramp.render(&stereo16(10_000, 1), PcmFormat::S16LE)),
-            [2500, 2500]
+            [2512, 2512]
         );
     }
     #[test]
@@ -225,6 +225,20 @@ mod tests {
             .collect()
     }
     #[test]
+    fn volume_steps_are_even_in_db_and_reach_silence() {
+        assert_eq!(VolumeRamp::gain(100), 1.0);
+        assert_eq!(VolumeRamp::gain(0), 0.0);
+        for v in 10..100u8 {
+            let step = 20.0 * (VolumeRamp::gain(v + 1) / VolumeRamp::gain(v)).log10();
+            assert!((step - 0.6).abs() < 1e-9, "{v}: {step}");
+        }
+        for v in 1..10u8 {
+            let step = 20.0 * (VolumeRamp::gain(v + 1) / VolumeRamp::gain(v)).log10();
+            assert!((step - 3.0).abs() < 1e-9, "{v}: {step}");
+        }
+        assert!((20.0 * VolumeRamp::gain(1).log10() + 81.0).abs() < 1e-9);
+    }
+    #[test]
     fn balance_lowers_only_the_other_side() {
         let mut ramp = VolumeRamp::new(100, 1000);
         ramp.balance(-1); // left louder: the right is 1 dB lower
@@ -256,11 +270,11 @@ mod tests {
             .render(&stereo16(-24_000, 10), PcmFormat::S16LE)
             .iter()
             .all(|v| *v == 0));
-        ramp.target(50);
+        ramp.target(80); // -12 dB
         ramp.advance(240);
         assert_eq!(
             values(&ramp.render(&stereo16(-24_000, 1), PcmFormat::S16LE)),
-            [-6000, -6000]
+            [-6029, -6029]
         );
     }
     #[test]
@@ -290,28 +304,28 @@ mod tests {
                 .flat_map(i32::to_le_bytes)
                 .collect::<Vec<_>>();
             assert_eq!(VolumeRamp::new(100, 44_100).render(&input, format), input);
-            let scaled = VolumeRamp::new(50, 44_100).render(&input, format);
+            let scaled = VolumeRamp::new(80, 44_100).render(&input, format);
             let samples = scaled
                 .as_chunks::<4>()
                 .0
                 .iter()
                 .map(|s| i32::from_le_bytes(*s))
                 .collect::<Vec<_>>();
-            assert_eq!(samples, [18_641, -18_641]);
+            assert_eq!(samples, [18_730, -18_730]);
         }
         // S24 padding may be zero for a negative value; sign comes from bit23.
         let input = [0x00800000i32, 0x007fffff]
             .into_iter()
             .flat_map(i32::to_le_bytes)
             .collect::<Vec<_>>();
-        let scaled = VolumeRamp::new(50, 44_100).render(&input, PcmFormat::S24LE);
+        let scaled = VolumeRamp::new(80, 44_100).render(&input, PcmFormat::S24LE);
         assert_eq!(
             i32::from_le_bytes(scaled[..4].try_into().unwrap()),
-            -2_097_152
+            -2_107_123
         );
         assert_eq!(
             i32::from_le_bytes(scaled[4..].try_into().unwrap()),
-            2_097_152
+            2_107_123
         );
     }
 }

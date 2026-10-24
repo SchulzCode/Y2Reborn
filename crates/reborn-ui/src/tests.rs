@@ -4377,6 +4377,25 @@ fn the_error_report_question_records_no_as_well_as_yes() {
 }
 
 #[test]
+fn the_loud_volume_warning_defaults_to_cancel_and_allows_on_confirm() {
+    let mut ui = radios();
+    for (step, expected) in [(0, Effect::None), (1, Effect::AllowLoudVolume)] {
+        let mut m = app(Screen::Home);
+        m.navigation.modal = Some(Modal::Confirm(ConfirmAction::LoudVolume));
+        m.navigation.modal_focus = 0;
+        let rows = ui.modal_rows_public(&m, &[]);
+        let labels: Vec<_> = rows.iter().map(|r| r.label.as_str()).collect();
+        assert_eq!(labels, ["Cancel", "Raise Volume"]);
+        assert!(ui.modal_copy(&m).1.contains("damage your hearing"));
+        for _ in 0..step {
+            ui.model_action(&mut m, Action::WheelClockwise(1));
+        }
+        assert_eq!(ui.model_action(&mut m, Action::Select), expected);
+        assert_eq!(m.navigation.modal, None);
+    }
+}
+
+#[test]
 fn a_running_report_shows_its_steps_percent_and_what_happens() {
     use reborn_core::platform::{ReportDestination, ReportLive, ReportState, ReportStep};
     let mut ui = radios();

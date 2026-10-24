@@ -2758,6 +2758,7 @@ impl Ui {
                     ConfirmAction::ReportsQuestion => {
                         Effect::Platform(PlatformTask::ReportEnable(key == "confirm"))
                     }
+                    ConfirmAction::LoudVolume => Effect::AllowLoudVolume,
                 }
             }
             Some(Modal::ContextMenu) => self.context_action(m, tracks, &key),
@@ -3582,6 +3583,7 @@ fn confirm_label(action: ConfirmAction) -> &'static str {
         ConfirmAction::Platform(PlatformTask::SdRepair) => "Repair",
         ConfirmAction::Platform(PlatformTask::ReportNewId) => "New ID",
         ConfirmAction::ReportsQuestion => "Send Reports",
+        ConfirmAction::LoudVolume => "Raise Volume",
         ConfirmAction::Platform(_) => "Run",
     }
 }
@@ -3653,6 +3655,10 @@ fn confirm_copy(action: ConfirmAction) -> (&'static str, &'static str) {
         ConfirmAction::ReportsQuestion => (
             "Help Improve Y2Linux?",
             "If something goes wrong, the player can send a report over Wi-Fi: logs and technical details, never your music, names or accounts. Change it in About & Updates.",
+        ),
+        ConfirmAction::LoudVolume => (
+            "Raise the Volume?",
+            "Listening at high volume for a long time can damage your hearing. This is asked again after 20 hours of loud listening.",
         ),
         ConfirmAction::Platform(_) => (
             "Run This Check?",

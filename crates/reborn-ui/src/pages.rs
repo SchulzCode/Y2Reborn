@@ -471,8 +471,8 @@ fn headphone_level(m: &AppModel) -> Page {
             .collect(),
     );
     page.status = Some(
-        "Low suits earphones, High hard-to-drive headphones. Changing it restarts the \
-         music; a higher level fades in."
+        "Low suits earphones and IEMs, Medium most headphones, High hard-to-drive \
+         headphones. The volume changes with it, so the music stays as loud."
             .into(),
     );
     page

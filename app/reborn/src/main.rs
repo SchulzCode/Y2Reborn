@@ -681,6 +681,58 @@ impl Runtime {
         }
     }
 
+    /// Music plays on the headphone jack (where the safe level applies).
+    fn wired_sink(&self) -> bool {
+        matches!(self.model.output, AudioOutput::Wired) && self.bt_volume.device.is_none()
+    }
+    /// Back on the jack: a volume above the safe level starts at it, since
+    /// other headphones may be plugged in now.
+    fn cap_wired_volume(&mut self) {
+        let safe = self.model.settings.hp_level.safe_volume();
+        if self.wired_sink() && self.model.settings.volume > safe {
+            self.model.settings.volume = safe;
+            self.playback.set_volume(self.sink_volume());
+            self.dirty.mark_both();
+            self.dirty.mark_persistence();
+        }
+    }
+    /// Counts wired listening above the safe level (every few seconds);
+    /// after `LOUD_LISTENING_LIMIT_S` the agreement lapses and the volume
+    /// returns to the safe level.
+    fn loud_listening_tick(&mut self, elapsed: Duration) {
+        let s = &self.model.settings;
+        let loud = s.loud_ok
+            && self.wired_sink()
+            && self.model.playback == PlaybackState::Playing
+            && s.volume > s.hp_level.safe_volume();
+        if !loud {
+            return;
+        }
+        // Instant does not advance in suspend; a stalled loop counts once.
+        let add = elapsed.as_secs().min(10) as u32;
+        let s = &mut self.model.settings;
+        s.loud_seconds = s.loud_seconds.saturating_add(add);
+        if s.loud_seconds < reborn_core::LOUD_LISTENING_LIMIT_S {
+            if s.loud_seconds % 60 < add {
+                self.dirty.mark_persistence();
+            }
+            return;
+        }
+        s.loud_ok = false;
+        s.loud_seconds = 0;
+        self.log.emit(
+            Level::Info,
+            "audio",
+            "loud_volume_lapsed",
+            "20 hours above the safe level: volume back to it",
+            None,
+            json!({"hp_level":self.model.settings.hp_level,"volume":self.model.settings.volume}),
+        );
+        self.cap_wired_volume();
+        self.ui
+            .flash("Volume lowered after 20 hours of loud listening");
+        self.checkpoint();
+    }
     /// The software level: full for headphones that hold the volume.
     fn sink_volume(&self) -> u8 {
         if self.bt_volume.device.is_some() {
@@ -723,6 +775,7 @@ impl Runtime {
                 self.model.settings.volume = wired;
             }
             self.bt_volume = BtVolume::default();
+            self.cap_wired_volume();
             self.playback.set_volume(self.model.settings.volume);
             self.dirty.mark_both();
             self.dirty.mark_persistence();
@@ -2074,7 +2127,12 @@ impl Runtime {
         if !active {
             self.active_transport_generation = None;
         }
+        let to_jack =
+            matches!(out, AudioOutput::Wired) && !matches!(self.model.output, AudioOutput::Wired);
         self.model.output = out;
+        if to_jack {
+            self.cap_wired_volume();
+        }
         self.dirty.mark_both();
         if active {
             self.load()?
@@ -2398,8 +2456,21 @@ impl Runtime {
             Effect::Seek(_) if self.model.current().is_some_and(Track::is_radio) => {}
             Effect::Seek(delta) => self.seek_by(delta),
             Effect::AdjustVolume(delta) => {
-                self.model.settings.volume =
-                    (self.model.settings.volume as i16 + delta as i16).clamp(0, 100) as u8;
+                let now = self.model.settings.volume;
+                let mut volume = (now as i16 + delta as i16).clamp(0, 100) as u8;
+                let limit = self.model.settings.wired_volume_limit();
+                if self.wired_sink() && delta > 0 && volume > limit {
+                    // Up to the safe level, then ask (never lower here).
+                    volume = now.max(limit);
+                    if self.model.navigation.modal.is_none() {
+                        self.model.navigation.modal = Some(reborn_core::Modal::Confirm(
+                            reborn_core::ConfirmAction::LoudVolume,
+                        ));
+                        self.model.navigation.modal_focus = 0;
+                        self.dirty.mark_both();
+                    }
+                }
+                self.model.settings.volume = volume;
                 self.playback.set_volume(self.sink_volume());
                 self.send_bt_volume();
                 self.ui.show_volume();
@@ -2654,8 +2725,28 @@ impl Runtime {
             // The level in use again: nothing to restart.
             Effect::SetHpLevel(level) if level == self.model.settings.hp_level => {}
             Effect::SetHpLevel(level) => {
-                let raised = level.index() > self.model.settings.hp_level.index();
+                let from = self.model.settings.hp_level;
+                let raised = level.index() > from.index();
                 self.model.settings.hp_level = level;
+                // The wired volume moves so the output stays as loud (a
+                // lower level may not reach it: then it plays quieter).
+                // Bluetooth without its own volume shares `volume`: left alone.
+                let wired_sink = self.wired_sink();
+                let s = &mut self.model.settings;
+                match s.wired_volume {
+                    Some(wired) => s.wired_volume = Some(s.volume_for_level(wired, from)),
+                    None if wired_sink => {
+                        let before = s.volume;
+                        s.volume = s.volume_for_level(before, from);
+                        // Quieter at once. A higher number waits for the new
+                        // stream at the lower level: the start sets it only
+                        // after the old one is released.
+                        if s.volume < before {
+                            self.playback.set_volume(self.sink_volume());
+                        }
+                    }
+                    None => {}
+                }
                 self.configure_wired();
                 // The amplifier takes a new level only when it powers up:
                 // restart wired playback (a higher level fades in); a held
@@ -2666,8 +2757,23 @@ impl Runtime {
                     self.checkpoint();
                 }
                 if raised {
-                    self.ui.flash("Higher level · Music fades in");
+                    self.ui.flash("Higher level · Volume lowered to match");
                 }
+            }
+            Effect::AllowLoudVolume => {
+                self.model.settings.loud_ok = true;
+                self.model.settings.loud_seconds = 0;
+                self.log.emit(
+                    Level::Info,
+                    "audio",
+                    "loud_volume_allowed",
+                    "listener agreed to wired volumes above the safe level",
+                    None,
+                    json!({"hp_level":self.model.settings.hp_level,"volume":self.model.settings.volume}),
+                );
+                self.checkpoint();
+                // The step that was held back.
+                self.effect(Effect::AdjustVolume(2))?;
             }
             Effect::SetDacFilter(filter) => {
                 self.model.settings.dac_filter = filter;
@@ -2690,6 +2796,8 @@ impl Runtime {
                     volume: self.model.settings.volume,
                     wired_volume: self.model.settings.wired_volume,
                     bluetooth_absolute_volume: self.model.settings.bluetooth_absolute_volume,
+                    loud_ok: self.model.settings.loud_ok,
+                    loud_seconds: self.model.settings.loud_seconds,
                     music_directory: self.model.settings.music_directory.clone(),
                     ..Default::default()
                 };
@@ -3629,7 +3737,13 @@ impl Runtime {
             PlaybackAction::Wired => self.switch(AudioOutput::Wired),
             PlaybackAction::Bluetooth(s) => self.switch(AudioOutput::Bluetooth(s)),
             PlaybackAction::Volume(v) => {
-                self.model.settings.volume = v.min(100);
+                // No one to ask here: never above the agreed wired level.
+                let limit = if self.wired_sink() {
+                    self.model.settings.wired_volume_limit()
+                } else {
+                    100
+                };
+                self.model.settings.volume = v.min(limit.max(self.model.settings.volume)).min(100);
                 self.dirty.mark_both();
                 self.playback.set_volume(self.sink_volume());
                 self.send_bt_volume();
@@ -5674,6 +5788,7 @@ fn run() -> Result<(), String> {
             }
         }
         if periodic.elapsed() > Duration::from_secs(2) {
+            rt.loud_listening_tick(periodic.elapsed());
             periodic = Instant::now();
             rt.automatic_sleep_tick();
             if rt.background.update(
@@ -6001,6 +6116,8 @@ fn recover_settings(path: &Path) -> Option<reborn_core::Settings> {
         .get("settings")?
         .as_object()?;
     let mut merged = serde_json::to_value(Settings::default()).ok()?;
+    // A session without the field saved the old volume scale.
+    merged["volume_scale"] = 0.into();
     for (key, field) in saved {
         let mut candidate = merged.clone();
         candidate[key.as_str()] = field.clone();
@@ -6010,11 +6127,8 @@ fn recover_settings(path: &Path) -> Option<reborn_core::Settings> {
     }
     let mut settings: Settings = serde_json::from_value(merged).ok()?;
     // Saved while headphones held the volume: the wired one comes back
-    // until they connect again.
-    if let Some(wired) = settings.wired_volume.take() {
-        settings.volume = wired;
-    }
-    settings.volume = settings.volume.min(100);
+    // until they connect again; an old-scale volume moves once.
+    settings.prepare_wired_start();
     settings.balance = settings
         .balance
         .clamp(-reborn_core::MAX_BALANCE, reborn_core::MAX_BALANCE);

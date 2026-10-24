@@ -60,12 +60,14 @@ const char *rb_alsa_error(int e) { return snd_strerror(e); }
 /* Y2Linux wired output controls: the headphone level ("HP Output Level",
  * full scale 1.0/1.41/1.73 Vrms) and the DAC filter. The kernel writes the
  * level only while the amplifier is down (DS1155F2), so it is set before a
- * stream starts and "HP Output Level Live" says what the stream got. Master
- * is -19.5 dB with the level control (Low then plays 0.26 dB below the
- * earlier 1.73 Vrms at -24 dB) and stays -24 dB on kernels without it. */
+ * stream starts and "HP Output Level Live" says what the stream got. Each
+ * level has its own Master (Reborn's table, rb_wired_masters); it is set for
+ * the level the amplifier really runs at. Until that is known, and on kernels
+ * without the control, Master is -24 dB (quiet at any full scale). */
 #define RB_MASTER_CDB_LEGACY -2400
-#define RB_MASTER_CDB_LEVELS -1950
 static int wired_level, wired_slow, wired_phase, wired_nos;
+static int wired_masters[3] = {RB_MASTER_CDB_LEGACY, RB_MASTER_CDB_LEGACY,
+                               RB_MASTER_CDB_LEGACY};
 static int wired_live = -1; /* level of the previous wired stream */
 /* A higher level was chosen (not the startup setting): the next wired stream
  * fades in even when none has played since boot. */
@@ -135,6 +137,16 @@ static int wired_apply(snd_ctl_t *ctl) {
     return 0;
   return r < 0 ? r : 1;
 }
+/* The Master (centi-dB, -2400..0) each level plays with. */
+int rb_wired_masters(int low, int medium, int high) {
+  int masters[3] = {low, medium, high};
+  for (int i = 0; i < 3; i++)
+    if (masters[i] < RB_MASTER_CDB_LEGACY || masters[i] > 0)
+      return -EINVAL;
+  for (int i = 0; i < 3; i++)
+    __atomic_store_n(&wired_masters[i], masters[i], __ATOMIC_RELAXED);
+  return 0;
+}
 /* Remember the wired settings and apply them now; a level chosen during
  * playback reaches the output when its next stream starts. */
 int rb_wired_configure(int level, int slow, int phase, int nos) {
@@ -162,7 +174,7 @@ int rb_wired_note_live(int live) {
   wired_live = live;
   return raised;
 }
-/* The Master level a wired stream uses on this kernel. */
+/* The Master level a wired stream at the chosen level uses on this kernel. */
 static int wired_master_cdb(void) {
   snd_ctl_t *ctl = NULL;
   if (snd_ctl_open(&ctl, "hw:Y2Audio", 0) < 0)
@@ -173,7 +185,9 @@ static int wired_master_cdb(void) {
   snd_ctl_elem_info_alloca(&info);
   int present = ctl_id(ctl, "HP Output Level", id, info) >= 0;
   snd_ctl_close(ctl);
-  return present ? RB_MASTER_CDB_LEVELS : RB_MASTER_CDB_LEGACY;
+  return present ? __atomic_load_n(&wired_masters[__atomic_load_n(&wired_level, __ATOMIC_RELAXED)],
+                                    __ATOMIC_RELAXED)
+                 : RB_MASTER_CDB_LEGACY;
 }
 
 int rb_wired_device(char *out, int n) {
@@ -406,7 +420,7 @@ int rb_sink_open(const char *name, unsigned rate, unsigned format, int wired,
     }
   }
   /* The level must be in place before the stream powers the amplifier. */
-  int levels = 0;
+  int levels = 0, master = RB_MASTER_CDB_LEGACY;
   params->hp_level_live = -1;
   if (wired) {
     snd_ctl_t *ctl = NULL;
@@ -481,7 +495,6 @@ int rb_sink_open(const char *name, unsigned rate, unsigned format, int wired,
                                                  &s->sw)) < 0)
       goto fail;
     s->restore = 1;
-    int master = levels ? RB_MASTER_CDB_LEVELS : RB_MASTER_CDB_LEGACY;
     if ((r = snd_mixer_selem_set_playback_dB_all(m, master, 0)) < 0)
       goto fail;
     if ((r = snd_mixer_selem_set_playback_switch_all(h, 1)) < 0)
@@ -494,6 +507,10 @@ int rb_sink_open(const char *name, unsigned rate, unsigned format, int wired,
       if (live >= 0 && live <= 2) {
         params->hp_level_live = live;
         params->level_raised = rb_wired_note_live(live);
+        /* Nothing is written yet: the level's own Master before any sound. */
+        int own = __atomic_load_n(&wired_masters[live], __ATOMIC_RELAXED);
+        if (snd_mixer_selem_set_playback_dB_all(m, own, 0) >= 0)
+          master = own;
       }
     }
   }
@@ -502,8 +519,7 @@ int rb_sink_open(const char *name, unsigned rate, unsigned format, int wired,
   params->buffer = buffer;
   params->format = format;
   params->channels = 2;
-  params->hardware_mixer_gain_cdb =
-      wired ? (levels ? RB_MASTER_CDB_LEVELS : RB_MASTER_CDB_LEGACY) : INT32_MIN;
+  params->hardware_mixer_gain_cdb = wired ? master : INT32_MIN;
   snprintf(params->device, sizeof(params->device), "%s", name);
   *out = s;
   return 0;

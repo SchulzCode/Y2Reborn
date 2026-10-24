@@ -52,6 +52,7 @@ unsafe extern "C" {
         params: *mut RawParams,
     ) -> c_int;
     fn rb_wired_configure(level: c_int, slow: c_int, phase: c_int, nos: c_int) -> c_int;
+    fn rb_wired_masters(low: c_int, medium: c_int, high: c_int) -> c_int;
     #[cfg(test)]
     fn rb_wired_note_live(live: c_int) -> c_int;
     fn rb_sink_close(p: *mut c_void);
@@ -153,6 +154,18 @@ pub fn wired_configure(
         level.index() | u32::from(slow) << 8 | u32::from(phase) << 9 | u32::from(nos) << 10;
     if WIRED_CHOICE.swap(choice, Ordering::AcqRel) != choice {
         WIRED_EPOCH.fetch_add(1, Ordering::AcqRel);
+    }
+    let master = |level: reborn_core::HpLevel| (level.master_db() * 100.0).round() as c_int;
+    // SAFETY: plain integers, checked by the C side.
+    let r = unsafe {
+        rb_wired_masters(
+            master(reborn_core::HpLevel::Low),
+            master(reborn_core::HpLevel::Medium),
+            master(reborn_core::HpLevel::High),
+        )
+    };
+    if r < 0 {
+        return Err(error(r));
     }
     // SAFETY: plain integers; the C side opens and closes its own handle.
     let r = unsafe {

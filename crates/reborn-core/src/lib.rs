@@ -276,7 +276,66 @@ impl HpLevel {
     pub fn from_key(key: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|l| l.key() == key)
     }
+    /// The amplifier's full scale in dBV: 1.0, 1.41 and 1.73 Vrms.
+    pub fn full_scale_dbv(self) -> f64 {
+        match self {
+            Self::Low => 0.0,
+            Self::Medium => 2.984,
+            Self::High => 4.761,
+        }
+    }
+    /// The DAC Master (dB) a wired stream plays this level with: at full
+    /// volume Low gives about 0.35 Vrms, Medium 0.71 (stock's loudest) and
+    /// High the chip's 1.73.
+    pub fn master_db(self) -> f64 {
+        match self {
+            Self::Low => -9.0,
+            Self::Medium => -6.0,
+            Self::High => 0.0,
+        }
+    }
+    /// The output at full volume and a full-scale signal, in dBV.
+    pub fn peak_dbv(self) -> f64 {
+        self.full_scale_dbv() + self.master_db()
+    }
+    /// The loudest volume at or below `SAFE_PEAK_DBV`.
+    pub fn safe_volume(self) -> u8 {
+        volume_at_most(SAFE_PEAK_DBV - self.peak_dbv())
+    }
 }
+/// The loudest wired output before Beta 8.35 (High's 1.73 Vrms with the
+/// Master at −19.5 dB, about 0.18 Vrms). Louder takes the listener's
+/// agreement (`Settings::loud_ok`).
+pub const SAFE_PEAK_DBV: f64 = 4.761 - 19.5;
+/// After this much listening above `SAFE_PEAK_DBV` the agreement lapses.
+pub const LOUD_LISTENING_LIMIT_S: u32 = 20 * 3600;
+/// The volume's level in dB: 10–100 rise 0.6 dB a step (a wheel click,
+/// two steps, is 1.2 dB), 1–9 fall 3 dB a step to −81 dB, 0 is silence.
+pub fn volume_db(volume: u8) -> f64 {
+    let v = f64::from(volume.clamp(1, 100));
+    if v >= 10.0 {
+        -0.6 * (100.0 - v)
+    } else {
+        -54.0 - 3.0 * (10.0 - v)
+    }
+}
+/// The software gain of a volume (1.0 at 100).
+pub fn volume_gain(volume: u8) -> f64 {
+    if volume == 0 {
+        0.0
+    } else {
+        10f64.powf(volume_db(volume) / 20.0)
+    }
+}
+/// The loudest volume at or below `db`; 1 when even 1 is louder.
+pub fn volume_at_most(db: f64) -> u8 {
+    (1..=100u8)
+        .rev()
+        .find(|&v| volume_db(v) <= db + 1e-9)
+        .unwrap_or(1)
+}
+/// See `Settings::volume_scale`.
+pub const VOLUME_SCALE: u8 = 1;
 /// The DAC's interpolation filter (CS43131 PCM Filter Option).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
@@ -890,6 +949,8 @@ pub enum ConfirmAction {
     Platform(PlatformTask),
     /// The one-time question after the update: send error reports or not.
     ReportsQuestion,
+    /// Wired volume above the safe level (hearing warning).
+    LoudVolume,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1063,6 +1124,17 @@ pub struct Settings {
     /// Wired headphone output level.
     #[serde(default)]
     pub hp_level: HpLevel,
+    /// 1 once the volume uses the dB scale and the louder levels (Beta
+    /// 8.35). Older sessions saved a squared scale with the Master at
+    /// −19.5 dB; their volume moves to the same output level once.
+    #[serde(default)]
+    pub volume_scale: u8,
+    /// The listener agreed to wired volumes above `SAFE_PEAK_DBV`.
+    #[serde(default)]
+    pub loud_ok: bool,
+    /// Seconds of wired listening above `SAFE_PEAK_DBV` since the agreement.
+    #[serde(default)]
+    pub loud_seconds: u32,
     /// Wired DAC interpolation filter.
     #[serde(default)]
     pub dac_filter: DacFilter,
@@ -1208,6 +1280,9 @@ impl Default for Settings {
             lastfm_now_playing: true,
             internal_setup_asked: false,
             hp_level: HpLevel::Low,
+            volume_scale: VOLUME_SCALE,
+            loud_ok: false,
+            loud_seconds: 0,
             dac_filter: DacFilter::Fast,
             eq_profile: None,
             eq_profile_on: false,
@@ -1265,6 +1340,44 @@ impl Settings {
             .map(str::to_owned)
             .collect();
         std::mem::swap(&mut self.home_pins, &mut pins);
+    }
+}
+impl Settings {
+    /// The loudest wired volume allowed now: the safe one until the
+    /// listener agrees to more.
+    pub fn wired_volume_limit(&self) -> u8 {
+        if self.loud_ok {
+            100
+        } else {
+            self.hp_level.safe_volume()
+        }
+    }
+    /// A restored session starts on the jack: the wired volume comes back
+    /// (headphones holding their own take over again when they connect), a
+    /// volume from the old scale moves to the same output level, and the
+    /// start is never above the safe level (other headphones may be on).
+    pub fn prepare_wired_start(&mut self) {
+        if let Some(wired) = self.wired_volume.take() {
+            self.volume = wired;
+        }
+        self.volume = self.volume.min(100);
+        if self.volume_scale < VOLUME_SCALE {
+            // Old: squared scale, Master −19.5 dB at every level.
+            if self.volume > 0 {
+                let old = 40.0 * (f64::from(self.volume) / 100.0).log10();
+                self.volume = volume_at_most(old - 19.5 - self.hp_level.master_db());
+            }
+            self.volume_scale = VOLUME_SCALE;
+        }
+        self.volume = self.volume.min(self.hp_level.safe_volume());
+    }
+    /// The volume that keeps the output level when the wired level changes
+    /// from `from` to `self.hp_level` (never above 100).
+    pub fn volume_for_level(&self, volume: u8, from: HpLevel) -> u8 {
+        if volume == 0 {
+            return 0;
+        }
+        volume_at_most(volume_db(volume) + from.peak_dbv() - self.hp_level.peak_dbv())
     }
 }
 /// See `Settings::codec_revision`.
@@ -1437,6 +1550,8 @@ pub enum Effect {
     /// Look for profile files again (the profile list opened).
     ScanEqProfiles,
     SetHpLevel(HpLevel),
+    /// The listener agreed to wired volumes above the safe level.
+    AllowLoudVolume,
     SetDacFilter(DacFilter),
     SetBrightness(u8),
     SetCrossfade(u32),
@@ -1811,7 +1926,7 @@ impl AppModel {
         m.output = AudioOutput::Wired;
         m.generation = 0;
         m.navigation = NavigationState::default();
-        m.settings.volume = m.settings.volume.min(100);
+        m.settings.prepare_wired_start();
         m.settings.crossfade_ms = m.settings.crossfade_ms.min(30_000);
         m.settings.balance = m.settings.balance.clamp(-MAX_BALANCE, MAX_BALANCE);
         m.settings.eq_bands.truncate(8);
@@ -1965,6 +2080,129 @@ mod tests {
         assert!(fs::metadata(&path).unwrap().len() <= SESSION_MAX_BYTES as u64);
         assert!(AppModel::restore(&path).unwrap().current().is_some());
         fs::remove_file(path).unwrap();
+    }
+    /// The output at the chip (dBV) for a level and volume, full-scale signal.
+    fn wired_dbv(level: HpLevel, volume: u8) -> f64 {
+        level.peak_dbv() + volume_db(volume)
+    }
+    #[test]
+    fn safe_volume_is_the_old_loudest_output_at_every_level() {
+        let expected = [
+            (HpLevel::Low, 90),
+            (HpLevel::Medium, 80),
+            (HpLevel::High, 67),
+        ];
+        for (level, safe) in expected {
+            assert_eq!(level.safe_volume(), safe, "{level:?}");
+            assert!(wired_dbv(level, safe) <= SAFE_PEAK_DBV + 1e-9);
+            assert!(wired_dbv(level, safe + 1) > SAFE_PEAK_DBV);
+        }
+        // Full volume: about 0.35, 0.71 and 1.73 Vrms.
+        let volts = |level: HpLevel| 10f64.powf(level.peak_dbv() / 20.0);
+        assert!((volts(HpLevel::Low) - 0.355).abs() < 0.005);
+        assert!((volts(HpLevel::Medium) - 0.706).abs() < 0.005);
+        assert!((volts(HpLevel::High) - 1.73).abs() < 0.005);
+        let mut s = Settings::default();
+        assert_eq!(s.wired_volume_limit(), 90);
+        s.loud_ok = true;
+        assert_eq!(s.wired_volume_limit(), 100);
+    }
+    #[test]
+    fn an_old_scale_volume_moves_to_the_same_output_and_never_louder() {
+        let path = std::env::temp_dir().join(format!("reborn-volume-{}.json", std::process::id()));
+        let restore = |level: HpLevel, volume: u8, wired: Option<u8>, scale: Option<u8>| {
+            let mut model = AppModel::default();
+            model.settings.hp_level = level;
+            model.settings.volume = volume;
+            model.settings.wired_volume = wired;
+            model.settings.loud_ok = true;
+            let mut value = serde_json::to_value(&model).unwrap();
+            match scale {
+                Some(s) => value["settings"]["volume_scale"] = s.into(),
+                None => {
+                    value["settings"]
+                        .as_object_mut()
+                        .unwrap()
+                        .remove("volume_scale");
+                }
+            }
+            fs::write(
+                &path,
+                serde_json::to_vec(&json!({"schema":3,"model":value})).unwrap(),
+            )
+            .unwrap();
+            AppModel::restore(&path).unwrap().settings
+        };
+        for level in HpLevel::ALL {
+            for old in [1u8, 10, 25, 50, 75, 90, 100] {
+                let s = restore(level, old, None, None);
+                assert_eq!(s.volume_scale, VOLUME_SCALE);
+                // Old: squared scale, Master -19.5 dB.
+                let before =
+                    level.full_scale_dbv() - 19.5 + 40.0 * (f64::from(old) / 100.0).log10();
+                let after = wired_dbv(level, s.volume);
+                assert!(
+                    after <= before + 1e-9 || s.volume == 1,
+                    "{level:?} {old}: {after} > {before}"
+                );
+                assert!(
+                    before - after < 0.6 + 1e-9 || old < 10,
+                    "{level:?} {old}: {before} → {after}"
+                );
+            }
+            assert_eq!(restore(level, 0, None, None).volume, 0);
+        }
+        assert_eq!(restore(HpLevel::High, 100, None, None).volume, 67);
+        assert_eq!(restore(HpLevel::Low, 100, None, None).volume, 82);
+        // Saved while headphones held the volume: the wired one comes back.
+        assert_eq!(
+            restore(HpLevel::Low, 90, Some(40), Some(VOLUME_SCALE)).volume,
+            40
+        );
+        // Already on the new scale: kept, but the start is never above the
+        // safe level, even after the listener agreed to more.
+        let s = restore(HpLevel::High, 100, None, Some(VOLUME_SCALE));
+        assert_eq!((s.volume, s.loud_ok), (67, true));
+        assert_eq!(
+            restore(HpLevel::Low, 50, None, Some(VOLUME_SCALE)).volume,
+            50
+        );
+        fs::remove_file(path).unwrap();
+    }
+    #[test]
+    fn a_level_change_keeps_the_output_where_the_volume_reaches_it() {
+        for from in HpLevel::ALL {
+            for to in HpLevel::ALL {
+                for volume in [5u8, 30, 60, 67, 90, 100] {
+                    let s = Settings {
+                        hp_level: to,
+                        ..Settings::default()
+                    };
+                    let moved = s.volume_for_level(volume, from);
+                    let before = wired_dbv(from, volume);
+                    let after = wired_dbv(to, moved);
+                    // Volume 1 is the floor (−81 dB): a quieter target stays there.
+                    assert!(
+                        after <= before + 1e-9 || moved == 1,
+                        "{from:?}→{to:?} {volume}"
+                    );
+                    if (10..100).contains(&moved) {
+                        assert!(before - after < 0.6 + 1e-9, "{from:?}→{to:?} {volume}");
+                    }
+                }
+                let s = Settings {
+                    hp_level: to,
+                    ..Settings::default()
+                };
+                assert_eq!(s.volume_for_level(0, from), 0);
+            }
+        }
+        // Low → High at the safe volume stays at the safe output.
+        let high = Settings {
+            hp_level: HpLevel::High,
+            ..Settings::default()
+        };
+        assert_eq!(high.volume_for_level(90, HpLevel::Low), 67);
     }
     #[test]
     fn codec_default_is_auto_and_an_old_sbc_default_moves_to_auto_once() {

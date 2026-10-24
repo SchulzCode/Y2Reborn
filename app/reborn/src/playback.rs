@@ -2595,9 +2595,10 @@ mod tests {
             .iter()
             .all(|s| *s == 1 << 28));
         assert!(samples[1024 + settled_after..1536].iter().all(|s| *s == 0));
+        let quarter = (f64::from(1 << 28) * reborn_core::volume_gain(25)).round() as i32;
         assert!(samples[1536 + settled_after..2048]
             .iter()
-            .all(|s| *s == 1 << 24));
+            .all(|s| *s == quarter));
         assert!(samples[2048 + settled_after..]
             .iter()
             .all(|s| *s == 1 << 28));
