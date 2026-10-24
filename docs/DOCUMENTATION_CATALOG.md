@@ -117,6 +117,9 @@ Indexed pages: **66**. Explicit historical/contract scope notices:
 | [Headphone profile sources](../assets/eq/SOURCES.md) | Source asset reference |
 | [Reborn UI v1 font](../assets/fonts/README.md) | Source asset reference |
 | [Pixelify Sans (Bunny Bow skin font)](../assets/fonts/pixelify/README.md) | Source asset reference |
+| [DM Sans (Gallery skin font)](../assets/fonts/dmsans/README.md) | Source asset reference |
+| [Syne (Gallery skin font)](../assets/fonts/syne/README.md) | Source asset reference |
+| [IBM Plex Mono (Gallery skin font)](../assets/fonts/plexmono/README.md) | Source asset reference |
 | [Reborn Simple icon atlas](../assets/icons/README.md) | Source asset reference |
 
 ## Platform 1.0 integration source and evidence
