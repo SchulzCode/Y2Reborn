@@ -1,6 +1,20 @@
 # Current Reborn state on the Y2
 
-## 1.0.0-beta.8.35 — Y2Linux 1.0 Beta 8.35 (Baseline 136), 2026-10-25 (latest): louder headphones, safe by default
+## 1.0.0-beta.8.36 — Y2Linux 1.0 Beta 8.36 (Baseline 138), 2026-10-25 (latest): issue fixes, one menu order
+
+Published as `baseline-138` (Reborn `92b9c9a`; fixes `d340263`, redesign `92b9c9a`; sequence 10050). Fixes from the
+GitHub issues: `art_key` gives a song without an album its own cover (#43); skins mark Up Next's playing row by queue
+entry (`Ui::entry_key`, #60); `keep_up_next_focus` keeps the focused song when rows move, the fallback is the nearest
+selectable row (#32); `split_genres`/`Track::genres` and `joined_names` ("A, B") for joined tags (#40). Owner's menu
+rules (spec: [Product UI v4](ui/REBORN-PRODUCT-UI-V4.md), last section): one order in every song and collection menu
+(test `every_menu_lists_its_shared_actions_in_one_order`), Up Next Add to Queue (`entries_last`,
+`Effect::QueueEntriesLast`), Save Up Next as Playlist… / Clear Queue / Clear Up Next on the song playing, Play and
+Shuffle for playlists; Customize: Cover Flow On/Off (albums and audiobooks), Artists All / Album Artists
+(`albumartist:` filter, `album_artist_of`), Now Playing Wheel Volume / Seek (`NowPlayingWheel`); album filters carry
+a genre (`album_parts`) with Show All N Songs; sheet values and skins' `{detail}` use the room their label leaves
+(`Scene::label_end`). Device-checked on the owner's player.
+
+## 1.0.0-beta.8.35 — Y2Linux 1.0 Beta 8.35 (Baseline 136), 2026-10-25: louder headphones, safe by default
 
 Published as `baseline-136` (Reborn `e0921a0`, change `5a40103`, sequence 9902). Report F45 (FiiO FH7 too quiet at
 High): each `HpLevel` has its own DAC Master (`master_db`: Low −9, Medium −6, High 0 dB → ≈0.35/0.71/1.73 Vrms at
