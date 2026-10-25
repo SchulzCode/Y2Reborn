@@ -177,12 +177,80 @@ fn page(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interactive: bo
     });
     let focus = m.navigation.focus.min(count.saturating_sub(1));
     let moving = ui.playlists.moving.is_some();
-    // The header (picture, name, Play and Shuffle) is the list's first row
-    // and scrolls away with it, as on an album page (8.37).
-    let first = components::header_page_first(focus, lead, count, m.navigation.scroll);
-    let offset = components::header_page_offset(first);
-    let page_at = c.draw.len();
-    if components::header_page_shows_header(ui, first) {
+    // The header (picture, name, Play and Shuffle) stays; only the songs
+    // under it scroll, as on an album page (8.37).
+    let first = components::header_list_first(focus, lead, count, m.navigation.scroll);
+    let range = components::header_list_rows(ui, first, lead, count);
+    let rows_at = c.draw.len();
+    for (n, row) in ui
+        .visible_rows(m, tracks, range.start, range.len())
+        .iter()
+        .enumerate()
+    {
+        let i = range.start + n;
+        let y = components::header_list_y(i, lead, first);
+        let selected = interactive && i == focus;
+        let lifted = moving
+            && row
+                .key
+                .strip_prefix("pl_entry:")
+                .and_then(|i| i.parse::<usize>().ok())
+                == ui.playlists.moving.map(|(from, _)| from);
+        let song = row.art.and_then(|i| tracks.get(i).map(|t| (i, t)));
+        let available = song.is_some_and(|(_, t)| t.online);
+        if lifted {
+            // Being moved is a state: the focus row, ringed in the accent.
+            components::focus_row(c, 8., y - 1., WIDTH - 16., ROW_H + 1.);
+            c.rrect_outline(8., y - 1., WIDTH - 16., ROW_H + 1., 12., 2., accent);
+        } else if selected {
+            components::focus_row(c, 10., y + 1., WIDTH - 24., ROW_H - 3.);
+        }
+        match song {
+            Some(s) => cover(c, ui, Some(s), 20., y + 7., 38.),
+            None => {
+                c.rrect(20., y + 7., 38., 38., 6., color::GLASS_FAINT);
+                c.icon(Icon::Note, 39., y + 26., 18., color::DIM);
+            }
+        }
+        let playing = song.is_some_and(|(_, t)| crate::screens::is_current(m, t));
+        let face = if selected || lifted {
+            Face::S15
+        } else {
+            Face::R15
+        };
+        let tint = if !available {
+            color::DIM
+        } else if playing {
+            accent
+        } else {
+            color::TEXT
+        };
+        let tail = song.map_or(0., |(_, t)| {
+            text::width(Face::R11, &components::time(t.duration_ms)) + 16.
+        });
+        c.text_mid(72., y + 18., 340. - tail, &row.label, face, tint);
+        c.text_mid(
+            72.,
+            y + 36.,
+            340. - tail,
+            &row.secondary,
+            Face::R11,
+            if lifted { accent } else { color::MUTED },
+        );
+        if let Some((_, t)) = song {
+            c.text_mid_right(
+                WIDTH - 40.,
+                y + 26.,
+                &components::time(t.duration_ms),
+                Face::R11,
+                color::DIM,
+            );
+        }
+    }
+    components::header_list_motion(c, rows_at, first, count - lead, accent);
+    // The header over the list: a song gliding up passes under it.
+    c.rect(0., 38., WIDTH, components::PAGE_LIST_TOP - 38., color::BG);
+    {
         let favorite = is_favorites(&p.path);
         let size = 104.;
         if favorite {
@@ -244,81 +312,4 @@ fn page(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interactive: bo
             }
         }
     }
-    let range = components::header_page_rows(ui, first, lead, count);
-    for (n, row) in ui
-        .visible_rows(m, tracks, range.start, range.len())
-        .iter()
-        .enumerate()
-    {
-        let i = range.start + n;
-        let y = components::header_page_y(i, lead, 0.);
-        let selected = interactive && i == focus;
-        let lifted = moving
-            && row
-                .key
-                .strip_prefix("pl_entry:")
-                .and_then(|i| i.parse::<usize>().ok())
-                == ui.playlists.moving.map(|(from, _)| from);
-        let song = row.art.and_then(|i| tracks.get(i).map(|t| (i, t)));
-        let available = song.is_some_and(|(_, t)| t.online);
-        if lifted {
-            // Being moved is a state: the focus row, ringed in the accent.
-            components::focus_row(c, 8., y - 1., WIDTH - 16., ROW_H + 1.);
-            c.rrect_outline(8., y - 1., WIDTH - 16., ROW_H + 1., 12., 2., accent);
-        } else if selected {
-            components::focus_row(c, 10., y + 1., WIDTH - 24., ROW_H - 3.);
-        }
-        match song {
-            Some(s) => cover(c, ui, Some(s), 20., y + 7., 38.),
-            None => {
-                c.rrect(20., y + 7., 38., 38., 6., color::GLASS_FAINT);
-                c.icon(Icon::Note, 39., y + 26., 18., color::DIM);
-            }
-        }
-        let playing = song.is_some_and(|(_, t)| crate::screens::is_current(m, t));
-        let face = if selected || lifted {
-            Face::S15
-        } else {
-            Face::R15
-        };
-        let tint = if !available {
-            color::DIM
-        } else if playing {
-            accent
-        } else {
-            color::TEXT
-        };
-        let tail = song.map_or(0., |(_, t)| {
-            text::width(Face::R11, &components::time(t.duration_ms)) + 16.
-        });
-        c.text_mid(72., y + 18., 340. - tail, &row.label, face, tint);
-        c.text_mid(
-            72.,
-            y + 36.,
-            340. - tail,
-            &row.secondary,
-            Face::R11,
-            if lifted { accent } else { color::MUTED },
-        );
-        if let Some((_, t)) = song {
-            c.text_mid_right(
-                WIDTH - 40.,
-                y + 26.,
-                &components::time(t.duration_ms),
-                Face::R11,
-                color::DIM,
-            );
-        }
-    }
-    components::shift_from(c, page_at, -offset);
-    c.mark_moving(Moving::Scroll {
-        start: page_at,
-        end: c.draw.len(),
-        top: crate::views_search::TOP,
-        bottom: crate::theme::HEIGHT,
-        offset,
-        row_h: components::PAGE_ROW,
-    });
-    let total = components::PAGE_HEADER + (count - lead) as f32 * components::PAGE_ROW;
-    components::page_rail(c, offset, total, accent);
 }

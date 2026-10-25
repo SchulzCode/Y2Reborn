@@ -2070,7 +2070,7 @@ impl Ui {
         } else if !modal && self.native_header_page(m, tracks) {
             let (lead, count) = (self.header_lead(m, tracks), self.row_count(m, tracks));
             m.navigation.scroll =
-                components::header_page_first(next, lead, count, m.navigation.scroll);
+                components::header_list_first(next, lead, count, m.navigation.scroll);
         } else if !modal {
             let visible = self.visible_count(m, tracks);
             if next < m.navigation.scroll {
@@ -3477,7 +3477,7 @@ impl Ui {
     }
 
     /// An album, a playlist or a book drawn by Reborn: its header scrolls
-    /// with its rows (`components::header_page_first`).
+    /// stays and its list scrolls (`components::header_list_first`).
     fn native_header_page(&self, m: &AppModel, tracks: &[Track]) -> bool {
         matches!(m.screen, Screen::Album | Screen::Playlist | Screen::Book)
             && self
@@ -3531,8 +3531,15 @@ impl Ui {
 
     fn scroll_search(&self, m: &mut AppModel, tracks: &[Track]) {
         let heights = self.search_heights(m, tracks);
-        m.navigation.scroll =
-            views_search::window(&heights, m.navigation.focus, m.navigation.scroll);
+        let (focus, scroll) = (m.navigation.focus, m.navigation.scroll);
+        m.navigation.scroll = if m.screen == Screen::Queue {
+            views_search::window(&heights, focus, scroll)
+        } else {
+            let fixed = self
+                .row_at(m, tracks, 0)
+                .is_some_and(|r| r.key == catalog::SEARCH_FIELD);
+            views_search::search_first(&heights, focus, scroll, fixed)
+        };
     }
 
     /// Each search page (or Up Next) row's height.

@@ -412,78 +412,24 @@ fn album_page(
     components::status_bar(c, ui, m, &title, true);
     let count = ui.row_count(m, tracks);
     let focus = m.navigation.focus.min(count.saturating_sub(1));
-    // The header is the list's first row and scrolls away with it (8.37).
+    // The header stays; only the songs under it scroll (8.37).
     let lead = ui.header_lead(m, tracks);
-    let first = components::header_page_first(focus, lead, count, m.navigation.scroll);
-    let offset = components::header_page_offset(first);
+    let first = components::header_list_first(focus, lead, count, m.navigation.scroll);
     let rows_all = ui.visible_rows(m, tracks, 0, 1);
     // Opening from Cover Flow: the centre cover flies into the header box.
     let opening = ui
         .transition_progress()
         .filter(|(kind, _)| *kind == crate::flow::TransitionKind::Open)
         .map(|(_, t)| t);
-    let page_at = c.draw.len();
-    let cover_at = c.draw.len();
-    let mut rest_at = cover_at;
-    if components::header_page_shows_header(ui, first) {
-        let head = ui.collection_track(m, tracks);
-        let key = head.map(|t| {
-            (
-                tracks.iter().position(|x| std::ptr::eq(x, t)).unwrap_or(0),
-                t,
-            )
-        });
-        let matches_current = head
-            .zip(m.current())
-            .is_some_and(|(t, cur)| t.album == cur.album && t.album_artist == cur.album_artist);
-        if has_art && matches_current {
-            art_quad(c, 24., 44., 104., true);
-        } else {
-            cover_rounded(c, ui, key, 24., 44., 104., 9.);
-        }
-        rest_at = c.draw.len();
-        if let Some(t) = head {
-            c.text_mid(
-                144.,
-                72.,
-                316.,
-                &t.album_or_unknown(),
-                Face::S25,
-                color::TEXT,
-            );
-            let artist = if t.album_artist.is_empty() {
-                &t.artist
-            } else {
-                &t.album_artist
-            };
-            c.text_mid(
-                144.,
-                98.,
-                310.,
-                &crate::names_or_unknown(artist),
-                Face::R15,
-                color::TEXT,
-            );
-            if let Some(Item { secondary, .. }) = rows_all.first() {
-                c.text_mid(144., 119., 310., secondary, Face::R11, color::MUTED);
-            }
-        }
-        pill_row(
-            c,
-            144.,
-            134.,
-            &[("Play", focus == 0), ("Shuffle", focus == 1)],
-            interactive,
-        );
-    }
-    let range = components::header_page_rows(ui, first, lead, count);
+    let range = components::header_list_rows(ui, first, lead, count);
+    let rows_at = c.draw.len();
     for (n, row) in ui
         .visible_rows(m, tracks, range.start, range.len())
         .iter()
         .enumerate()
     {
         let index = range.start + n;
-        let y = components::header_page_y(index, lead, 0.);
+        let y = components::header_list_y(index, lead, first);
         let song = row_track(row, tracks).map(|(_, t)| t);
         let selected = interactive && index == focus;
         if selected {
@@ -523,26 +469,69 @@ fn album_page(
             );
         }
     }
-    components::shift_from(c, page_at, -offset);
-    c.mark_moving(Moving::Scroll {
-        start: page_at,
-        end: c.draw.len(),
-        top: crate::views_search::TOP,
-        bottom: crate::theme::HEIGHT,
-        offset,
-        row_h: components::PAGE_ROW,
+    components::header_list_motion(c, rows_at, first, count.saturating_sub(lead), accent);
+    let rows_end = c.draw.len();
+    // The header over the list: a song gliding up passes under it.
+    c.rect(0., 38., WIDTH, components::PAGE_LIST_TOP - 38., color::BG);
+    let cover_at = c.draw.len();
+    let head = ui.collection_track(m, tracks);
+    let key = head.map(|t| {
+        (
+            tracks.iter().position(|x| std::ptr::eq(x, t)).unwrap_or(0),
+            t,
+        )
     });
-    let total = components::PAGE_HEADER + count.saturating_sub(lead) as f32 * components::PAGE_ROW;
-    components::page_rail(c, offset, total, accent);
+    let matches_current = head
+        .zip(m.current())
+        .is_some_and(|(t, cur)| t.album == cur.album && t.album_artist == cur.album_artist);
+    if has_art && matches_current {
+        art_quad(c, 24., 44., 104., true);
+    } else {
+        cover_rounded(c, ui, key, 24., 44., 104., 9.);
+    }
+    let rest_at = c.draw.len();
+    if let Some(t) = head {
+        c.text_mid(
+            144.,
+            72.,
+            316.,
+            &t.album_or_unknown(),
+            Face::S25,
+            color::TEXT,
+        );
+        let artist = if t.album_artist.is_empty() {
+            &t.artist
+        } else {
+            &t.album_artist
+        };
+        c.text_mid(
+            144.,
+            98.,
+            310.,
+            &crate::names_or_unknown(artist),
+            Face::R15,
+            color::TEXT,
+        );
+        if let Some(Item { secondary, .. }) = rows_all.first() {
+            c.text_mid(144., 119., 310., secondary, Face::R11, color::MUTED);
+        }
+    }
+    pill_row(
+        c,
+        144.,
+        134.,
+        &[("Play", focus == 0), ("Shuffle", focus == 1)],
+        interactive,
+    );
     if let Some(t) = opening {
-        fly_in(c, cover_at, rest_at, t);
+        fly_in(c, rows_at..rows_end, cover_at, rest_at, t);
     }
 }
 
 /// The album page's first frames after Cover Flow: every quad of the header
 /// cover is carried from the centre of Cover Flow into its box, and the rest
 /// of the page rises and fades in.
-fn fly_in(c: &mut Canvas, cover_at: usize, rest_at: usize, t: f32) {
+fn fly_in(c: &mut Canvas, rows: std::ops::Range<usize>, cover_at: usize, rest_at: usize, t: f32) {
     let (bx, by, bs) = crate::views_coverflow::PAGE_COVER;
     let from = crate::flow::cover_corners(0.);
     let at = |u: f32, v: f32| -> [f32; 2] {
@@ -574,7 +563,9 @@ fn fly_in(c: &mut Canvas, cover_at: usize, rest_at: usize, t: f32) {
         });
     }
     let rise = (1. - t) * 48.;
-    for q in &mut c.draw[rest_at..] {
+    let rest = c.draw.len();
+    for i in rows.chain(rest_at..rest) {
+        let q = &mut c.draw[i];
         q.y += rise;
         let a = ((q.color & 0xff) as f32 * t).round() as u32;
         q.color = q.color & !0xff | a;

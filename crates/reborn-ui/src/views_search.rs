@@ -53,6 +53,73 @@ pub(crate) fn window(heights: &[f32], focus: usize, scroll: usize) -> usize {
     first
 }
 
+/// The search page's first result in view: the field (when `fixed`, row 0)
+/// stays and the results under it scroll as every list (8.37: the field
+/// scrolled away); a result coming into view from above brings its heading.
+pub(crate) fn search_first(heights: &[f32], focus: usize, scroll: usize, fixed: bool) -> usize {
+    let skip = usize::from(fixed && !heights.is_empty());
+    if heights.len() <= skip {
+        return skip;
+    }
+    let view = VIEW_H - heights[..skip].iter().sum::<f32>();
+    let last = heights.len() - 1;
+    // The field focused: the results stay where they are.
+    let focus = if focus < skip {
+        scroll.clamp(skip, last)
+    } else {
+        focus.min(last)
+    };
+    let mut first = scroll.clamp(skip, focus);
+    if first == focus && first > skip && heights[first - 1] == HEADING_ROW {
+        first -= 1;
+    }
+    while first < focus && heights[first..=focus].iter().sum::<f32>() > view {
+        first += 1;
+    }
+    first
+}
+
+/// The search's field: as the keys left it; focused, its caret says Select
+/// types again.
+fn field_row(
+    c: &mut Canvas,
+    m: &AppModel,
+    y: f32,
+    selected: bool,
+    summary: &str,
+    found: usize,
+    accent: u32,
+) {
+    let query = crate::catalog::search_parts(&m.navigation.filter).0;
+    if selected {
+        components::focus_row(
+            c,
+            10.,
+            keyboard::FIELD_Y - TOP + y,
+            WIDTH - 24.,
+            keyboard::FIELD_H,
+        );
+    }
+    keyboard::field(
+        c,
+        (
+            10.,
+            keyboard::FIELD_Y - TOP + y,
+            WIDTH - 24.,
+            keyboard::FIELD_H,
+        ),
+        query,
+        // Nothing found: the page says so below.
+        if query.trim().is_empty() || found == 0 {
+            ""
+        } else {
+            summary
+        },
+        "Artist, album or song",
+        selected.then_some(accent),
+    );
+}
+
 pub fn page(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interactive: bool) {
     let accent = ui.accent();
     // "Search", or the section shown alone (See All).
@@ -66,7 +133,12 @@ pub fn page(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interactive
     let (summary, found) = ui.search_summary(m, tracks);
     let count = heights.len();
     let focus = m.navigation.focus.min(count.saturating_sub(1));
-    let first = window(&heights, focus, m.navigation.scroll);
+    // The field stays at the top; the results scroll under it (8.37).
+    let fixed = ui
+        .row_at(m, tracks, 0)
+        .is_some_and(|r| r.key == crate::catalog::SEARCH_FIELD);
+    let skip = usize::from(fixed);
+    let first = search_first(&heights, focus, m.navigation.scroll, fixed);
     let mut tops = Vec::with_capacity(count + 1);
     let mut y = 0.;
     for h in &heights {
@@ -74,59 +146,26 @@ pub fn page(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interactive
         y += h;
     }
     tops.push(y);
-    let offset = tops[first];
+    let list_top = TOP + tops[skip.min(count)];
+    let offset = tops[first.min(count)];
     // With UI motion a row more on each side slides in as the page scrolls.
     let from = if ui.ui_motion {
-        first.saturating_sub(1)
+        first.saturating_sub(1).max(skip)
     } else {
         first
     };
-    let reach = if ui.ui_motion { VIEW_H + ROW } else { VIEW_H };
+    let reach = HEIGHT - list_top + if ui.ui_motion { ROW } else { 0. };
     let rows_start = c.draw.len();
     let mut index = from;
     while index < count && tops[index] - offset < reach {
         let Some(row) = ui.row_at(m, tracks, index) else {
             break;
         };
-        let y = TOP + tops[index] - offset;
+        let y = list_top + tops[index] - offset;
         let selected = interactive && index == focus;
         match row_kind(&row.key, row.enabled) {
-            SearchKind::Field => {
-                if selected {
-                    components::focus_row(
-                        c,
-                        10.,
-                        keyboard::FIELD_Y - TOP + y,
-                        WIDTH - 24.,
-                        keyboard::FIELD_H,
-                    );
-                }
-                // The field as the keys left it; focused, its caret says
-                // Select types again.
-                keyboard::field(
-                    c,
-                    (
-                        10.,
-                        keyboard::FIELD_Y - TOP + y,
-                        WIDTH - 24.,
-                        keyboard::FIELD_H,
-                    ),
-                    crate::catalog::search_parts(&m.navigation.filter).0,
-                    // Nothing found: the page says so below.
-                    if crate::catalog::search_parts(&m.navigation.filter)
-                        .0
-                        .trim()
-                        .is_empty()
-                        || found == 0
-                    {
-                        ""
-                    } else {
-                        &summary
-                    },
-                    "Artist, album or song",
-                    selected.then_some(accent),
-                );
-            }
+            // Drawn over the results below.
+            SearchKind::Field => {}
             SearchKind::Heading => {
                 let mid = y + HEADING_ROW / 2. + 3.;
                 components::section_label(c, 20., mid, &row.label);
@@ -212,11 +251,24 @@ pub fn page(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interactive
     c.mark_moving(Moving::Scroll {
         start: rows_start,
         end: c.draw.len(),
-        top: TOP,
+        top: list_top,
         bottom: HEIGHT,
         offset,
         row_h: ROW,
     });
+    if fixed {
+        // A result gliding up passes under the field.
+        c.rect(0., TOP, WIDTH, list_top - TOP, color::BG);
+        field_row(
+            c,
+            m,
+            TOP,
+            interactive && focus == 0,
+            &summary,
+            found,
+            accent,
+        );
+    }
     if !crate::catalog::search_parts(&m.navigation.filter)
         .0
         .trim()
@@ -231,16 +283,9 @@ pub fn page(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interactive
             "Check the spelling, or type less of the name.",
         );
     }
-    // The rail follows the rows' place on the page, not their count.
-    let total = tops[count];
-    if total > VIEW_H {
-        let thumb = (VIEW_H * VIEW_H / total).clamp(18., VIEW_H - 12.);
-        let rail_top = TOP + 6.;
-        let rail_h = VIEW_H - 12.;
-        let at = rail_top + (rail_h - thumb) * (offset / (total - VIEW_H)).min(1.);
-        c.rrect(WIDTH - 14., rail_top, 2., rail_h, 1., color::TRACK);
-        c.rrect(WIDTH - 14., at.round(), 2., thumb.round(), 1., accent);
-    }
+    // The rail follows the results' place on the page, not their count.
+    let field = tops[skip.min(count)];
+    components::page_rail(c, list_top, offset - field, tops[count] - field, accent);
 }
 
 fn row_kind(key: &str, enabled: bool) -> SearchKind {

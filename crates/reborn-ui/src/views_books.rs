@@ -1,7 +1,7 @@
 //! Audiobooks: the list of books, a book's page with its chapters, and what
 //! Now Playing shows while a book plays (chapter, book, author, time left).
 use crate::{
-    canvas::{Canvas, Moving},
+    canvas::Canvas,
     components::{self, cover_rounded},
     text::{self, Face},
     theme::{color, WIDTH},
@@ -205,13 +205,47 @@ pub(crate) fn book_page(
         .count();
     let count = rows.len();
     let focus = m.navigation.focus.min(count.saturating_sub(1));
-    // The header is the list's first row and scrolls away with it (8.37).
-    let first = components::header_page_first(focus, pills, count, m.navigation.scroll);
-    let offset = components::header_page_offset(first);
+    // The header stays; only the chapters under it scroll (8.37).
+    let first = components::header_list_first(focus, pills, count, m.navigation.scroll);
     let l = listening(m, tracks, &book);
     let current = place(m, tracks, &book).and_then(|(part, pos)| l.chapter_at(part, pos));
-    let page_at = c.draw.len();
-    if components::header_page_shows_header(ui, first) {
+    let range = components::header_list_rows(ui, first, pills, count);
+    let rows_at = c.draw.len();
+    for (n, row) in rows.iter().skip(range.start).take(range.len()).enumerate() {
+        let index = range.start + n;
+        let chapter = index - pills;
+        let y = components::header_list_y(index, pills, first);
+        let selected = interactive && index == focus;
+        if selected {
+            components::focus_row(c, 10., y + 1., WIDTH - 20., 50.);
+        }
+        c.text_mid_center(
+            34.,
+            y + 26.,
+            &(chapter + 1).to_string(),
+            Face::R11,
+            if selected { color::TEXT } else { color::DIM },
+        );
+        let face = if selected { Face::S15 } else { Face::R15 };
+        let tint = if current == Some(chapter) {
+            accent
+        } else {
+            color::TEXT
+        };
+        let tail = text::width(Face::R11, &row.secondary) + 20.;
+        c.text_mid(58., y + 26., 360. - tail, &row.label, face, tint);
+        c.text_mid_right(
+            WIDTH - 28.,
+            y + 26.,
+            &row.secondary,
+            Face::R11,
+            if selected { color::TEXT } else { color::DIM },
+        );
+    }
+    components::header_list_motion(c, rows_at, first, count - pills, accent);
+    // The header over the list: a chapter gliding up passes under it.
+    c.rect(0., 38., WIDTH, components::PAGE_LIST_TOP - 38., color::BG);
+    {
         let art = book.art.and_then(|i| tracks.get(i).map(|t| (i, t)));
         cover_rounded(c, ui, art, 24., 44., 104., 9.);
         c.text_mid(144., 72., 316., &book.title, Face::S25, color::TEXT);
@@ -242,49 +276,6 @@ pub(crate) fn book_page(
             .collect();
         pill_row(c, 144., 134., &labels, interactive);
     }
-    let range = components::header_page_rows(ui, first, pills, count);
-    for (n, row) in rows.iter().skip(range.start).take(range.len()).enumerate() {
-        let index = range.start + n;
-        let chapter = index - pills;
-        let y = components::header_page_y(index, pills, 0.);
-        let selected = interactive && index == focus;
-        if selected {
-            components::focus_row(c, 10., y + 1., WIDTH - 20., 50.);
-        }
-        c.text_mid_center(
-            34.,
-            y + 26.,
-            &(chapter + 1).to_string(),
-            Face::R11,
-            if selected { color::TEXT } else { color::DIM },
-        );
-        let face = if selected { Face::S15 } else { Face::R15 };
-        let tint = if current == Some(chapter) {
-            accent
-        } else {
-            color::TEXT
-        };
-        let tail = text::width(Face::R11, &row.secondary) + 20.;
-        c.text_mid(58., y + 26., 360. - tail, &row.label, face, tint);
-        c.text_mid_right(
-            WIDTH - 28.,
-            y + 26.,
-            &row.secondary,
-            Face::R11,
-            if selected { color::TEXT } else { color::DIM },
-        );
-    }
-    components::shift_from(c, page_at, -offset);
-    c.mark_moving(Moving::Scroll {
-        start: page_at,
-        end: c.draw.len(),
-        top: crate::views_search::TOP,
-        bottom: crate::theme::HEIGHT,
-        offset,
-        row_h: components::PAGE_ROW,
-    });
-    let total = components::PAGE_HEADER + (count - pills) as f32 * components::PAGE_ROW;
-    components::page_rail(c, offset, total, accent);
 }
 
 /// What Now Playing shows for a book: chapter title, book, author, the

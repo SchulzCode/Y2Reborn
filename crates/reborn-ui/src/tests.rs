@@ -5390,39 +5390,32 @@ fn a_playlist_page_keeps_the_focused_song_on_screen() {
 }
 
 #[test]
-fn a_page_header_scrolls_away_one_row_at_a_time_like_every_list() {
-    use components::{header_page_first, header_page_offset, PAGE_HEADER, PAGE_ROW};
-    let view = crate::views_search::VIEW_H;
+fn a_page_header_stays_and_its_list_scrolls_one_row_at_a_time() {
+    use components::{header_list_first, header_list_y, PAGE_LIST_TOP, PAGE_ROW};
     // Play and Shuffle in the header, then twenty songs.
     let (lead, count) = (2, 22);
-    let row_span = |focus: usize, offset: f32| {
-        let top = if focus < lead {
-            96.
-        } else {
-            PAGE_HEADER + (focus - lead) as f32 * PAGE_ROW
-        } - offset;
-        (top, top + if focus < lead { 28. } else { PAGE_ROW })
-    };
     let mut scroll = 0;
-    let mut last = 0.;
+    let mut last = 0;
     let walk: Vec<usize> = (0..count).chain((0..count).rev()).collect();
     for focus in walk {
-        scroll = header_page_first(focus, lead, count, scroll);
-        let offset = header_page_offset(scroll);
-        let (top, bottom) = row_span(focus, offset);
-        assert!(
-            top >= 0. && bottom <= view,
-            "focus {focus}: {top}..{bottom}"
-        );
-        // One step: no more than a row, the header counting as one.
-        assert!((offset - last).abs() <= PAGE_HEADER, "focus {focus}");
-        last = offset;
+        scroll = header_list_first(focus, lead, count, scroll);
+        if focus >= lead {
+            let y = header_list_y(focus, lead, scroll);
+            assert!(
+                y >= PAGE_LIST_TOP && y + PAGE_ROW <= crate::theme::HEIGHT,
+                "focus {focus}: {y}"
+            );
+        }
+        // One row a step at most, as every list.
+        assert!(scroll.abs_diff(last) <= 1, "focus {focus}");
+        last = scroll;
     }
-    // Back at the top the header shows whole again.
-    assert_eq!(header_page_offset(scroll), 0.);
+    assert_eq!(scroll, 0, "back at the top");
+    // Play or Shuffle focused: the list stays where it is.
+    assert_eq!(header_list_first(1, lead, count, 7), 7);
     // A short page never scrolls.
     for focus in 0..5 {
-        assert_eq!(header_page_first(focus, 2, 5, 0), 0);
+        assert_eq!(header_list_first(focus, 2, 5, 0), 0);
     }
 }
 

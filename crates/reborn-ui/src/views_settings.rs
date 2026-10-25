@@ -711,17 +711,9 @@ fn line(c: &mut Canvas, x0: f32, y0: f32, x1: f32, y1: f32, tint: u32) {
 fn display(c: &mut Canvas, ui: &Ui, m: &AppModel, page: &Page, focus: usize, interactive: bool) {
     let mut index = 0;
     let mut y = 38.;
-    // Brightness and five rows do not fit: once the focus passes the rows
-    // shown under the brightness card, the card scrolls away like a row of
-    // any list (8.37: it vanished at once).
-    let under_card = ((HEIGHT - 8. - (y + 92.)) / 50.).floor() as usize;
-    let scrolled = m.platform.brightness_available && focus > under_card;
-    let offset = if scrolled { 92. } else { 0. };
-    let page_at = c.draw.len();
-    if m.platform.brightness_available && scrolled && !ui.ui_motion {
-        index = 1;
-        y += 92.;
-    } else if m.platform.brightness_available {
+    // The brightness card stays; the rows under it scroll as every list
+    // (8.37: the card vanished once the focus passed the rows under it).
+    if m.platform.brightness_available {
         components::card(c, 10., y, WIDTH - 20., 78.);
         if interactive && focus == 0 {
             components::focus_row(c, 14., y + 4., WIDTH - 28., 70.);
@@ -746,23 +738,40 @@ fn display(c: &mut Canvas, ui: &Ui, m: &AppModel, page: &Page, focus: usize, int
         index = 1;
         y += 92.;
     }
-    let end = page.rows.len();
-    if end > index {
-        group(c, ui, &page.rows[index..end], index, focus, interactive, y);
+    let rows = page.rows.len().saturating_sub(index);
+    if rows == 0 {
+        return;
     }
-    components::shift_from(c, page_at, -offset);
-    c.mark_moving(Moving::Scroll {
-        start: page_at,
+    let visible = (((HEIGHT - 8. - y) / 50.).floor() as usize).clamp(1, rows);
+    let start = ui.group_window(m, focus.saturating_sub(index), visible, rows);
+    let rows_at = c.draw.len();
+    let from = index + start;
+    group(
+        c,
+        ui,
+        &page.rows[from..from + visible],
+        from,
+        focus,
+        interactive,
+        y,
+    );
+    c.mark_moving(Moving::List {
+        start: rows_at,
         end: c.draw.len(),
-        top: 38.,
-        bottom: HEIGHT,
-        offset,
+        top: y,
+        bottom: y + visible as f32 * 50. + 4.,
         row_h: 50.,
+        first: start,
     });
-    if m.platform.brightness_available && page.rows.len() > 1 + under_card {
-        // Two positions: with the brightness card, or scrolled past it.
-        components::scroll_rail(c, 44., 286., usize::from(scrolled), 3, 2, ui.accent());
-    }
+    components::scroll_rail(
+        c,
+        y + 4.,
+        visible as f32 * 50. - 4.,
+        start,
+        rows,
+        visible,
+        ui.accent(),
+    );
 }
 
 fn storage(c: &mut Canvas, m: &AppModel, page: &Page, focus: usize, interactive: bool) {
