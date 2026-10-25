@@ -5358,3 +5358,33 @@ fn playlists_are_found_by_name_and_open_or_play_from_the_results() {
         (Screen::Search, "road")
     );
 }
+
+#[test]
+fn a_playlist_page_keeps_the_focused_song_on_screen() {
+    // Owner on the device: the focus went below the screen in a short playlist.
+    let (mut ui, mut m) = playlists_app();
+    let songs: Vec<String> = (0..9)
+        .map(|i| format!("../album{}/song{i}.flac", i / 3))
+        .collect();
+    let songs: Vec<&str> = songs.iter().map(String::as_str).collect();
+    ui.playlists
+        .set_lists(vec![playlist("/data/music/Playlists/Nine.m3u8", &songs)]);
+    let tracks = m.library.tracks.clone();
+    select_key(&mut ui, &mut m, "playlist:0");
+    assert_eq!(m.screen, Screen::Playlist);
+    for step in 0..12 {
+        let focus = m.navigation.focus;
+        let row = ui.rows(&m, &tracks)[focus].clone();
+        if row.key.starts_with("pl_entry:") {
+            let text = drawn_text(&ui.draw(&m, &tracks, false));
+            assert!(
+                text.contains(&row.label),
+                "step {step}: {} not drawn",
+                row.label
+            );
+        }
+        ui.model_action(&mut m, Action::WheelClockwise(1));
+    }
+    // It stops on the last song.
+    assert_eq!(m.navigation.focus, ui.row_count(&m, &tracks) - 1);
+}

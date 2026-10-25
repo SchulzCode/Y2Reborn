@@ -177,9 +177,11 @@ fn page(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interactive: bo
     });
     let focus = m.navigation.focus.min(count.saturating_sub(1));
     let moving = ui.playlists.moving.is_some();
-    // The header (picture, name, Play and Shuffle) while the top is in view.
-    let scroll = components::list_window(m, focus.max(lead), 6).saturating_sub(lead);
-    let header = scroll == 0 && !(moving && focus >= lead + 3);
+    // The header (picture, name, Play and Shuffle) while the focus is on one
+    // of the three songs under it, as on an album page; past them the list
+    // takes the screen. (It stayed until the sixth song, so the focus went
+    // off the bottom with a long-enough playlist.)
+    let header = focus < lead + 3;
     let (top, first, shown) = if header {
         (178., lead, 3usize)
     } else {
