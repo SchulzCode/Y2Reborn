@@ -1,7 +1,7 @@
 //! Settings and its pages: grouped cards, switches, pickers and the radios
 //! (the password is typed on `keyboard`).
 use crate::{
-    canvas::{Canvas, Icon},
+    canvas::{Canvas, Icon, Moving},
     components::{self, signal_bars},
     pages::{self, Page},
     screens::{screen_title, wrap_lines},
@@ -274,12 +274,21 @@ pub(crate) fn group_page(
         y += 30.;
     }
     if !page.rows.is_empty() {
+        // As every list (8.37): the rows keep their place until the focus
+        // reaches an edge, then glide one row (it moved on every step back).
         let visible = (((HEIGHT - 40. - y) / 50.).floor() as usize).max(1);
-        let start = focus
-            .saturating_sub(visible - 1)
-            .min(page.rows.len().saturating_sub(visible));
+        let start = ui.group_window(m, focus, visible, page.rows.len());
         let end = (start + visible).min(page.rows.len());
+        let rows_at = c.draw.len();
         group(c, ui, &page.rows[start..end], start, focus, interactive, y);
+        c.mark_moving(Moving::List {
+            start: rows_at,
+            end: c.draw.len(),
+            top: y,
+            bottom: y + visible as f32 * 50. + 4.,
+            row_h: 50.,
+            first: start,
+        });
     }
     hint(c, page);
 }
@@ -703,11 +712,15 @@ fn display(c: &mut Canvas, ui: &Ui, m: &AppModel, page: &Page, focus: usize, int
     let mut index = 0;
     let mut y = 38.;
     // Brightness and five rows do not fit: once the focus passes the rows
-    // shown under the brightness card, the page scrolls the card away.
+    // shown under the brightness card, the card scrolls away like a row of
+    // any list (8.37: it vanished at once).
     let under_card = ((HEIGHT - 8. - (y + 92.)) / 50.).floor() as usize;
     let scrolled = m.platform.brightness_available && focus > under_card;
-    if scrolled {
+    let offset = if scrolled { 92. } else { 0. };
+    let page_at = c.draw.len();
+    if m.platform.brightness_available && scrolled && !ui.ui_motion {
         index = 1;
+        y += 92.;
     } else if m.platform.brightness_available {
         components::card(c, 10., y, WIDTH - 20., 78.);
         if interactive && focus == 0 {
@@ -733,14 +746,19 @@ fn display(c: &mut Canvas, ui: &Ui, m: &AppModel, page: &Page, focus: usize, int
         index = 1;
         y += 92.;
     }
-    let end = if scrolled || !m.platform.brightness_available {
-        page.rows.len()
-    } else {
-        page.rows.len().min(index + under_card)
-    };
+    let end = page.rows.len();
     if end > index {
         group(c, ui, &page.rows[index..end], index, focus, interactive, y);
     }
+    components::shift_from(c, page_at, -offset);
+    c.mark_moving(Moving::Scroll {
+        start: page_at,
+        end: c.draw.len(),
+        top: 38.,
+        bottom: HEIGHT,
+        offset,
+        row_h: 50.,
+    });
     if m.platform.brightness_available && page.rows.len() > 1 + under_card {
         // Two positions: with the brightness card, or scrolled past it.
         components::scroll_rail(c, 44., 286., usize::from(scrolled), 3, 2, ui.accent());

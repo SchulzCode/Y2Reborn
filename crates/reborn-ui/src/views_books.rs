@@ -1,7 +1,7 @@
 //! Audiobooks: the list of books, a book's page with its chapters, and what
 //! Now Playing shows while a book plays (chapter, book, author, time left).
 use crate::{
-    canvas::Canvas,
+    canvas::{Canvas, Moving},
     components::{self, cover_rounded},
     text::{self, Face},
     theme::{color, WIDTH},
@@ -205,10 +205,13 @@ pub(crate) fn book_page(
         .count();
     let count = rows.len();
     let focus = m.navigation.focus.min(count.saturating_sub(1));
-    let scroll = components::list_window(m, focus, 5);
+    // The header is the list's first row and scrolls away with it (8.37).
+    let first = components::header_page_first(focus, pills, count, m.navigation.scroll);
+    let offset = components::header_page_offset(first);
     let l = listening(m, tracks, &book);
     let current = place(m, tracks, &book).and_then(|(part, pos)| l.chapter_at(part, pos));
-    if scroll == 0 {
+    let page_at = c.draw.len();
+    if components::header_page_shows_header(ui, first) {
         let art = book.art.and_then(|i| tracks.get(i).map(|t| (i, t)));
         cover_rounded(c, ui, art, 24., 44., 104., 9.);
         c.text_mid(144., 72., 316., &book.title, Face::S25, color::TEXT);
@@ -239,15 +242,11 @@ pub(crate) fn book_page(
             .collect();
         pill_row(c, 144., 134., &labels, interactive);
     }
-    let (top, first, shown) = if scroll == 0 {
-        (178., pills, 3usize)
-    } else {
-        (38., scroll.max(pills), 6usize)
-    };
-    for (n, row) in rows.iter().skip(first).take(shown).enumerate() {
-        let index = first + n;
+    let range = components::header_page_rows(ui, first, pills, count);
+    for (n, row) in rows.iter().skip(range.start).take(range.len()).enumerate() {
+        let index = range.start + n;
         let chapter = index - pills;
-        let y = top + n as f32 * 53.;
+        let y = components::header_page_y(index, pills, 0.);
         let selected = interactive && index == focus;
         if selected {
             components::focus_row(c, 10., y + 1., WIDTH - 20., 50.);
@@ -275,9 +274,17 @@ pub(crate) fn book_page(
             if selected { color::TEXT } else { color::DIM },
         );
     }
-    if count > 6 {
-        components::scroll_rail(c, 178., 160., scroll, count, 6, accent);
-    }
+    components::shift_from(c, page_at, -offset);
+    c.mark_moving(Moving::Scroll {
+        start: page_at,
+        end: c.draw.len(),
+        top: crate::views_search::TOP,
+        bottom: crate::theme::HEIGHT,
+        offset,
+        row_h: components::PAGE_ROW,
+    });
+    let total = components::PAGE_HEADER + (count - pills) as f32 * components::PAGE_ROW;
+    components::page_rail(c, offset, total, accent);
 }
 
 /// What Now Playing shows for a book: chapter title, book, author, the

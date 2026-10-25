@@ -450,6 +450,9 @@ pub struct Ui {
     /// Up Next's focused row and its key as last seen: the focus follows
     /// that song when the rows move under it.
     up_next_focus: RefCell<Option<(usize, String)>>,
+    /// A settings page's first row shown, as last drawn (its own window:
+    /// the rows fit under its text differ from page to page).
+    group_scroll: RefCell<Option<(Screen, String, usize)>>,
     /// Select Songs: the rows chosen on one list.
     pub selection: Option<Selection>,
     /// The playing position as last reported, and when: Now Playing moves
@@ -2064,6 +2067,10 @@ impl Ui {
         *focus = next;
         if !modal && self.native_search(m, tracks) {
             self.scroll_search(m, tracks);
+        } else if !modal && self.native_header_page(m, tracks) {
+            let (lead, count) = (self.header_lead(m, tracks), self.row_count(m, tracks));
+            m.navigation.scroll =
+                components::header_page_first(next, lead, count, m.navigation.scroll);
         } else if !modal {
             let visible = self.visible_count(m, tracks);
             if next < m.navigation.scroll {
@@ -3467,6 +3474,59 @@ impl Ui {
                 .as_deref()
                 .and_then(|skin| screens::skin_layout(skin, self, m, tracks))
                 .is_none()
+    }
+
+    /// An album, a playlist or a book drawn by Reborn: its header scrolls
+    /// with its rows (`components::header_page_first`).
+    fn native_header_page(&self, m: &AppModel, tracks: &[Track]) -> bool {
+        matches!(m.screen, Screen::Album | Screen::Playlist | Screen::Book)
+            && self
+                .skin
+                .as_deref()
+                .and_then(|skin| screens::skin_layout(skin, self, m, tracks))
+                .is_none()
+    }
+
+    /// A settings page's first row shown: kept until the focus reaches an
+    /// edge, as every list (8.37).
+    pub(crate) fn group_window(
+        &self,
+        m: &AppModel,
+        focus: usize,
+        visible: usize,
+        count: usize,
+    ) -> usize {
+        let mut last = self.group_scroll.borrow_mut();
+        let here = (m.screen, m.navigation.filter.as_str());
+        let prev = last
+            .as_ref()
+            .filter(|(s, f, _)| (*s, f.as_str()) == here)
+            .map_or(0, |(_, _, first)| *first);
+        let first = prev
+            .min(focus)
+            .max((focus + 1).saturating_sub(visible))
+            .min(count.saturating_sub(visible));
+        *last = Some((m.screen, m.navigation.filter.clone(), first));
+        first
+    }
+
+    /// The buttons in such a page's header (Play, Shuffle, Continue…): its
+    /// first rows.
+    pub(crate) fn header_lead(&self, m: &AppModel, tracks: &[Track]) -> usize {
+        const BUTTONS: [&str; 6] = [
+            "play:collection",
+            "shuffle:collection",
+            "pl_play",
+            "pl_shuffle",
+            "book_resume",
+            "book_restart",
+        ];
+        (0..2)
+            .take_while(|&i| {
+                self.row_at(m, tracks, i)
+                    .is_some_and(|r| BUTTONS.contains(&r.key.as_str()))
+            })
+            .count()
     }
 
     fn scroll_search(&self, m: &mut AppModel, tracks: &[Track]) {

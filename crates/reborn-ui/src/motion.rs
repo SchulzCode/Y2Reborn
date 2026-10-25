@@ -306,7 +306,7 @@ pub(crate) fn apply(ui: &crate::Ui, m: &AppModel, c: &mut Canvas) {
     }
 }
 
-fn shift_y(q: &mut Quad, dy: f32) {
+pub(crate) fn shift_y(q: &mut Quad, dy: f32) {
     q.y += dy;
     if let Some(w) = q.warp.as_mut() {
         for corner in &mut w.corners {

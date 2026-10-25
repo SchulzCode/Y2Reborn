@@ -177,18 +177,12 @@ fn page(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interactive: bo
     });
     let focus = m.navigation.focus.min(count.saturating_sub(1));
     let moving = ui.playlists.moving.is_some();
-    // The header (picture, name, Play and Shuffle) while the focus is on one
-    // of the three songs under it, as on an album page; past them the list
-    // takes the screen. (It stayed until the sixth song, so the focus went
-    // off the bottom with a long-enough playlist.)
-    let header = focus < lead + 3;
-    let (top, first, shown) = if header {
-        (178., lead, 3usize)
-    } else {
-        let first = components::list_window(m, focus, 6).max(lead);
-        (38., first, 6usize)
-    };
-    if header {
+    // The header (picture, name, Play and Shuffle) is the list's first row
+    // and scrolls away with it, as on an album page (8.37).
+    let first = components::header_page_first(focus, lead, count, m.navigation.scroll);
+    let offset = components::header_page_offset(first);
+    let page_at = c.draw.len();
+    if components::header_page_shows_header(ui, first) {
         let favorite = is_favorites(&p.path);
         let size = 104.;
         if favorite {
@@ -250,9 +244,14 @@ fn page(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interactive: bo
             }
         }
     }
-    for (n, row) in ui.visible_rows(m, tracks, first, shown).iter().enumerate() {
-        let i = first + n;
-        let y = top + (i - first) as f32 * ROW_H;
+    let range = components::header_page_rows(ui, first, lead, count);
+    for (n, row) in ui
+        .visible_rows(m, tracks, range.start, range.len())
+        .iter()
+        .enumerate()
+    {
+        let i = range.start + n;
+        let y = components::header_page_y(i, lead, 0.);
         let selected = interactive && i == focus;
         let lifted = moving
             && row
@@ -311,16 +310,15 @@ fn page(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interactive: bo
             );
         }
     }
-    let entries = count - lead;
-    if entries > shown {
-        components::scroll_rail(
-            c,
-            top + 4.,
-            shown as f32 * ROW_H - 8.,
-            first - lead,
-            entries,
-            shown,
-            accent,
-        );
-    }
+    components::shift_from(c, page_at, -offset);
+    c.mark_moving(Moving::Scroll {
+        start: page_at,
+        end: c.draw.len(),
+        top: crate::views_search::TOP,
+        bottom: crate::theme::HEIGHT,
+        offset,
+        row_h: components::PAGE_ROW,
+    });
+    let total = components::PAGE_HEADER + (count - lead) as f32 * components::PAGE_ROW;
+    components::page_rail(c, offset, total, accent);
 }

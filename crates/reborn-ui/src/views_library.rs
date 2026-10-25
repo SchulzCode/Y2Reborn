@@ -412,16 +412,20 @@ fn album_page(
     components::status_bar(c, ui, m, &title, true);
     let count = ui.row_count(m, tracks);
     let focus = m.navigation.focus.min(count.saturating_sub(1));
-    let scroll = components::list_window(m, focus, visible_rows_for(Screen::Album));
-    let rows_all = ui.visible_rows(m, tracks, scroll, 6);
+    // The header is the list's first row and scrolls away with it (8.37).
+    let lead = ui.header_lead(m, tracks);
+    let first = components::header_page_first(focus, lead, count, m.navigation.scroll);
+    let offset = components::header_page_offset(first);
+    let rows_all = ui.visible_rows(m, tracks, 0, 1);
     // Opening from Cover Flow: the centre cover flies into the header box.
     let opening = ui
         .transition_progress()
         .filter(|(kind, _)| *kind == crate::flow::TransitionKind::Open)
         .map(|(_, t)| t);
+    let page_at = c.draw.len();
     let cover_at = c.draw.len();
     let mut rest_at = cover_at;
-    if scroll == 0 {
+    if components::header_page_shows_header(ui, first) {
         let head = ui.collection_track(m, tracks);
         let key = head.map(|t| {
             (
@@ -472,14 +476,14 @@ fn album_page(
             interactive,
         );
     }
-    let (top, first, shown) = if scroll == 0 {
-        (178., 2usize, 3usize)
-    } else {
-        (38., scroll, 6usize)
-    };
-    for (n, row) in ui.visible_rows(m, tracks, first, shown).iter().enumerate() {
-        let index = first + n;
-        let y = top + n as f32 * 53.;
+    let range = components::header_page_rows(ui, first, lead, count);
+    for (n, row) in ui
+        .visible_rows(m, tracks, range.start, range.len())
+        .iter()
+        .enumerate()
+    {
+        let index = range.start + n;
+        let y = components::header_page_y(index, lead, 0.);
         let song = row_track(row, tracks).map(|(_, t)| t);
         let selected = interactive && index == focus;
         if selected {
@@ -519,9 +523,17 @@ fn album_page(
             );
         }
     }
-    if count > 6 {
-        components::scroll_rail(c, 178., 160., scroll, count, 6, accent);
-    }
+    components::shift_from(c, page_at, -offset);
+    c.mark_moving(Moving::Scroll {
+        start: page_at,
+        end: c.draw.len(),
+        top: crate::views_search::TOP,
+        bottom: crate::theme::HEIGHT,
+        offset,
+        row_h: components::PAGE_ROW,
+    });
+    let total = components::PAGE_HEADER + count.saturating_sub(lead) as f32 * components::PAGE_ROW;
+    components::page_rail(c, offset, total, accent);
     if let Some(t) = opening {
         fly_in(c, cover_at, rest_at, t);
     }

@@ -1057,3 +1057,87 @@ pub fn icon_tile(
     c.rrect(x, y, size, size, radius, alpha(tint, 0x30));
     c.icon(icon, x + size / 2., y + size / 2., icon_size, tint);
 }
+
+// ---------------------------------------------------------- header pages
+
+/// An album's, a playlist's and a book's header (cover, name, Play and
+/// Shuffle) is its list's first row and scrolls away like any row, one step
+/// at a time (Beta 8.37: it vanished at once and the list took the screen).
+pub const PAGE_HEADER: f32 = 140.;
+/// A row under the header.
+pub const PAGE_ROW: f32 = 53.;
+
+/// The page's first row in view (0: the header) so the focused row — the
+/// header's `lead` buttons first, then the rows — is wholly shown, moving as
+/// little as possible from `scroll`, as the search page scrolls.
+pub fn header_page_first(focus: usize, lead: usize, count: usize, scroll: usize) -> usize {
+    let mut heights = vec![PAGE_HEADER];
+    heights.extend(std::iter::repeat_n(PAGE_ROW, count.saturating_sub(lead)));
+    let at = focus.saturating_sub(lead) + usize::from(focus >= lead);
+    // Whole rows from the top, as every list: the first in view moves only as
+    // far as the focused row needs.
+    let mut first = scroll.min(at);
+    while first < at && heights[first..=at].iter().sum::<f32>() > crate::views_search::VIEW_H {
+        first += 1;
+    }
+    first
+}
+
+/// How far up the page is moved when `first` is its first row in view.
+pub fn header_page_offset(first: usize) -> f32 {
+    if first == 0 {
+        0.
+    } else {
+        PAGE_HEADER + (first - 1) as f32 * PAGE_ROW
+    }
+}
+
+/// Where row `index` (the buttons are the first `lead`) is drawn.
+pub fn header_page_y(index: usize, lead: usize, offset: f32) -> f32 {
+    crate::views_search::TOP + PAGE_HEADER + index.saturating_sub(lead) as f32 * PAGE_ROW - offset
+}
+
+/// Whether the header is drawn: in view, or the row above it while UI
+/// motion slides it.
+pub fn header_page_shows_header(ui: &Ui, first: usize) -> bool {
+    first == 0 || (ui.ui_motion && first == 1)
+}
+
+/// The rows under the header to draw: from the first in view to the bottom
+/// of the screen, one more each side while UI motion slides them.
+pub fn header_page_rows(
+    ui: &Ui,
+    first: usize,
+    lead: usize,
+    count: usize,
+) -> std::ops::Range<usize> {
+    let mut from = lead + first.saturating_sub(1);
+    if ui.ui_motion {
+        from = from.saturating_sub(1).max(lead);
+    }
+    let fit =
+        (crate::views_search::VIEW_H / PAGE_ROW).ceil() as usize + 1 + usize::from(ui.ui_motion);
+    from..(from + fit).min(count)
+}
+
+/// Move quads `start..` up by the page's offset (the header with its rows).
+pub fn shift_from(c: &mut Canvas, start: usize, dy: f32) {
+    for q in &mut c.draw[start..] {
+        crate::motion::shift_y(q, dy);
+    }
+}
+
+/// The rail of a page `total` tall scrolled by `offset`, as the search's.
+pub fn page_rail(c: &mut Canvas, offset: f32, total: f32, accent: u32) {
+    let view = crate::views_search::VIEW_H;
+    if total <= view {
+        return;
+    }
+    let top = crate::views_search::TOP;
+    let thumb = (view * view / total).clamp(18., view - 12.);
+    let rail_top = top + 6.;
+    let rail_h = view - 12.;
+    let at = rail_top + (rail_h - thumb) * (offset / (total - view)).min(1.);
+    c.rrect(WIDTH - 14., rail_top, 2., rail_h, 1., color::TRACK);
+    c.rrect(WIDTH - 14., at.round(), 2., thumb.round(), 1., accent);
+}

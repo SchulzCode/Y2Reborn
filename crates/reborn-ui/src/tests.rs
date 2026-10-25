@@ -5388,3 +5388,54 @@ fn a_playlist_page_keeps_the_focused_song_on_screen() {
     // It stops on the last song.
     assert_eq!(m.navigation.focus, ui.row_count(&m, &tracks) - 1);
 }
+
+#[test]
+fn a_page_header_scrolls_away_one_row_at_a_time_like_every_list() {
+    use components::{header_page_first, header_page_offset, PAGE_HEADER, PAGE_ROW};
+    let view = crate::views_search::VIEW_H;
+    // Play and Shuffle in the header, then twenty songs.
+    let (lead, count) = (2, 22);
+    let row_span = |focus: usize, offset: f32| {
+        let top = if focus < lead {
+            96.
+        } else {
+            PAGE_HEADER + (focus - lead) as f32 * PAGE_ROW
+        } - offset;
+        (top, top + if focus < lead { 28. } else { PAGE_ROW })
+    };
+    let mut scroll = 0;
+    let mut last = 0.;
+    let walk: Vec<usize> = (0..count).chain((0..count).rev()).collect();
+    for focus in walk {
+        scroll = header_page_first(focus, lead, count, scroll);
+        let offset = header_page_offset(scroll);
+        let (top, bottom) = row_span(focus, offset);
+        assert!(
+            top >= 0. && bottom <= view,
+            "focus {focus}: {top}..{bottom}"
+        );
+        // One step: no more than a row, the header counting as one.
+        assert!((offset - last).abs() <= PAGE_HEADER, "focus {focus}");
+        last = offset;
+    }
+    // Back at the top the header shows whole again.
+    assert_eq!(header_page_offset(scroll), 0.);
+    // A short page never scrolls.
+    for focus in 0..5 {
+        assert_eq!(header_page_first(focus, 2, 5, 0), 0);
+    }
+}
+
+#[test]
+fn settings_pages_keep_their_rows_until_the_focus_reaches_an_edge() {
+    // As every list (8.37): a window of 5 over 10 rows, down and back up.
+    let ui = radios();
+    let m = app(Screen::Customize);
+    let down: Vec<usize> = (0..10).map(|f| ui.group_window(&m, f, 5, 10)).collect();
+    assert_eq!(down, [0, 0, 0, 0, 0, 1, 2, 3, 4, 5]);
+    let up: Vec<usize> = (0..10)
+        .rev()
+        .map(|f| ui.group_window(&m, f, 5, 10))
+        .collect();
+    assert_eq!(up, [5, 5, 5, 5, 5, 4, 3, 2, 1, 0]);
+}
