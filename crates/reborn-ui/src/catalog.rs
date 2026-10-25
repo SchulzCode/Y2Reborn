@@ -75,7 +75,7 @@ impl Row {
 }
 #[derive(Default)]
 pub struct Catalog {
-    stamp: Option<(usize, usize, Screen, String)>,
+    stamp: Option<(usize, usize, Screen, String, reborn_core::ArtistsList)>,
     pub rows: Vec<Row>,
     /// The search page: what it found ("2 artists · 9 songs", or "No
     /// matches") and how many results that is.
@@ -185,6 +185,7 @@ impl Catalog {
             tracks.len(),
             m.screen,
             m.navigation.filter.clone(),
+            m.settings.artists_list,
         );
         if self.stamp.as_ref() == Some(&stamp) {
             return;
@@ -222,8 +223,14 @@ impl Catalog {
                     );
                     self.push(Item::new("Shuffle", "shuffle:collection"));
                 }
+                // A genre's album opens on that genre's songs (#50).
+                let genre = m.navigation.filter.strip_prefix("genre:");
                 for ((album, artist), (i, t)) in albums {
-                    self.push(album_item(album, artist, i, t));
+                    let mut item = album_item(album, artist, i, t);
+                    if let Some(genre) = genre {
+                        item.key = format!("{}\u{1f}genre:{genre}", item.key);
+                    }
+                    self.push(item);
                 }
             }
             Screen::Genres => {
@@ -261,9 +268,22 @@ impl Catalog {
             Screen::Artists => {
                 let mut artists: BTreeMap<&str, (usize, BTreeSet<&str>, bool)> = BTreeMap::new();
                 // Each name of a joined or "feat." tag is an artist of its
-                // own, so a collaboration doesn't list its album again (#38).
+                // own, so a collaboration doesn't list its album again (#38);
+                // or only album artists (Customize > Artists, #41).
+                let album_artists =
+                    m.settings.artists_list == reborn_core::ArtistsList::AlbumArtists;
+                let prefix = if album_artists {
+                    "albumartist"
+                } else {
+                    "artist"
+                };
                 for (i, t) in tracks.iter().enumerate().filter(|(_, t)| t.is_music()) {
-                    for artist in t.artists() {
+                    let names = if album_artists {
+                        vec![crate::album_artist_of(t)]
+                    } else {
+                        t.artists()
+                    };
+                    for artist in names {
                         let entry =
                             artists
                                 .entry(artist)
@@ -279,7 +299,7 @@ impl Catalog {
                 artists.sort_by_cached_key(|(artist, _)| artist_key(artist));
                 for (artist, (i, albums, _)) in artists {
                     let mut item =
-                        Item::new(display_or_unknown(artist), format!("artist:{artist}"))
+                        Item::new(display_or_unknown(artist), format!("{prefix}:{artist}"))
                             .with_secondary(crate::components::count(
                                 albums.len(),
                                 "album",
@@ -371,11 +391,31 @@ impl Catalog {
                 if m.screen == Screen::Album {
                     ids.sort_by_key(|(_, t)| (t.disc, t.track, t.filename.as_str()));
                 }
+                // An album opened from a genre shows that genre's songs and
+                // offers the whole album at the end (#50).
+                let whole = crate::album_parts(&m.navigation.filter)
+                    .filter(|(_, _, genre)| genre.is_some() && m.screen == Screen::Album)
+                    .map(|(artist, album, genre)| {
+                        let key = format!("album:{artist}\u{1f}{album}");
+                        let total = tracks
+                            .iter()
+                            .filter(|t| t.is_music() && track_matches(t, &key))
+                            .count();
+                        (key, total, genre.unwrap_or_default())
+                    })
+                    .filter(|(_, total, _)| *total > ids.len());
                 if matches!(m.screen, Screen::Album | Screen::Artist) {
                     if let Some(Row::Item(item)) = self.rows.first_mut() {
+                        let songs = match &whole {
+                            Some((_, total, genre)) => format!(
+                                "{} · {} of {total} songs",
+                                if genre.is_empty() { "No Genre" } else { genre },
+                                ids.len()
+                            ),
+                            None => crate::components::count(ids.len(), "song", "songs"),
+                        };
                         item.secondary = format!(
-                            "{} · {}",
-                            crate::components::count(ids.len(), "song", "songs"),
+                            "{songs} · {}",
                             crate::components::time(ids.iter().map(|(_, t)| t.duration_ms).sum())
                         );
                     }
@@ -406,6 +446,9 @@ impl Catalog {
                     } else {
                         self.rows.push(Row::Track(i));
                     }
+                }
+                if let Some((key, total, _)) = whole {
+                    self.push(Item::new(format!("Show All {total} Songs"), key));
                 }
             }
             _ => {}

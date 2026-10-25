@@ -35,6 +35,10 @@ pub(crate) struct Scene<'a> {
     pub opacity: f32,
     /// Draws Reborn's own version of the current screen (`native` parts).
     pub native: Option<&'a dyn Fn(&mut Canvas)>,
+    /// Where the row's `{label}` text ends: a right-aligned `{detail}` of the
+    /// same row may use the room up to it (a long value, such as the song Up
+    /// Next names, is not cut to its box when the label leaves room; #60).
+    pub label_end: std::cell::Cell<Option<f32>>,
 }
 
 /// A sheet or dialog: its copy, choices and focus.
@@ -337,7 +341,7 @@ impl Scene<'_> {
                     .min(count.saturating_sub(rows));
                 let mut items = self.ui.visible_rows(m, self.tracks, start, rows);
                 if m.screen == Screen::Home {
-                    let counts = self.ui.library_counts(self.tracks);
+                    let counts = self.ui.library_counts(m, self.tracks);
                     for item in &mut items {
                         let n = match item.key.as_str() {
                             "artists" => counts[0],
@@ -667,7 +671,14 @@ fn element(c: &mut Canvas, s: &Scene, el: &El, ox: f32, oy: f32, row: Option<&Ro
                 fonts: &s.skin.fonts,
                 tracking: *tracking,
             };
-            let b = at(*b, ox, oy);
+            let mut b = at(*b, ox, oy);
+            let only = |var: Var| matches!(text.as_slice(), [Seg::Var(v)] if *v == var);
+            if row.is_some() && *lines <= 1 && only(Var::Detail) && matches!(align, Align::Right) {
+                if let Some(end) = s.label_end.get().filter(|end| *end + 12. < b.x) {
+                    b.w += b.x - (end + 12.);
+                    b.x = end + 12.;
+                }
+            }
             let color = s.paint(*paint);
             let pitch = if *line > 0. { *line } else { w.line() };
             let shown = if *lines > 1 {
@@ -689,6 +700,9 @@ fn element(c: &mut Canvas, s: &Scene, el: &El, ox: f32, oy: f32, row: Option<&Ro
                     Align::Center => b.x + (b.w - width) / 2.,
                     Align::Right => b.x + b.w - width,
                 };
+                if row.is_some() && only(Var::Label) {
+                    s.label_end.set(Some(x + width));
+                }
                 w.draw(c, x.round(), cy + w.mid(), l, color);
             }
         }
@@ -830,6 +844,7 @@ fn element(c: &mut Canvas, s: &Scene, el: &El, ox: f32, oy: f32, row: Option<&Ro
                     current: *source == ListSource::Rows && s.row_current(item),
                 };
                 let mark = c.draw.len();
+                s.label_end.set(None);
                 let template = if r.focused { focused } else { plain };
                 nodes(c, s, template, b.x, b.y + i as f32 * row_h, Some(&r));
                 if r.focused && c.draw.len() > mark {

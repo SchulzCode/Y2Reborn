@@ -70,7 +70,7 @@ pub fn focus_target_count(quads: &[Quad]) -> usize {
 }
 
 /// Library size stamp and the artist, album and song counts for it.
-type CountsCache = Option<((usize, usize), [usize; 4])>;
+type CountsCache = Option<((usize, usize), reborn_core::ArtistsList, [usize; 4])>;
 /// Library identity, album filter key and its detail line.
 type DetailCache = Option<((usize, usize), String, String)>;
 
@@ -950,11 +950,13 @@ impl Ui {
         None
     }
 
-    /// Artists, albums and songs in the library, recounted only when it changes.
-    pub(crate) fn library_counts(&self, tracks: &[Track]) -> [usize; 4] {
+    /// Artists, albums and songs in the library, recounted only when it or
+    /// Customize > Artists changes.
+    pub(crate) fn library_counts(&self, m: &AppModel, tracks: &[Track]) -> [usize; 4] {
         let stamp = crate::library_stamp(tracks);
-        if let Some((seen, counts)) = *self.counts.borrow() {
-            if seen == stamp {
+        let list = m.settings.artists_list;
+        if let Some((seen, seen_list, counts)) = *self.counts.borrow() {
+            if seen == stamp && seen_list == list {
                 return counts;
             }
         }
@@ -963,13 +965,17 @@ impl Ui {
         let mut genres = std::collections::BTreeSet::new();
         let mut songs = 0;
         for t in tracks.iter().filter(|t| t.is_music()) {
-            artists.extend(t.artists());
+            if list == reborn_core::ArtistsList::AlbumArtists {
+                artists.insert(album_artist_of(t));
+            } else {
+                artists.extend(t.artists());
+            }
             albums.insert((t.album.as_str(), t.album_artist.as_str()));
             genres.extend(t.genres());
             songs += 1;
         }
         let counts = [artists.len(), albums.len(), songs, genres.len()];
-        *self.counts.borrow_mut() = Some((stamp, counts));
+        *self.counts.borrow_mut() = Some((stamp, list, counts));
         counts
     }
 
@@ -1354,7 +1360,6 @@ impl Ui {
                 Item::new("Repeat", "cycle_repeat").with_secondary(repeat_label(m.settings.repeat)),
                 self.favorite_row(m, tracks, self.current_index(m, tracks)),
                 Item::new("Add to Playlist…", "add_playlist"),
-                Item::new("Save Queue as Playlist", "save_queue"),
                 Item::new("Go to Album", "go_album"),
                 Item::new("Go to Artist", "go_artist"),
             ];
@@ -1382,16 +1387,18 @@ impl Ui {
             .and_then(|key| key.strip_prefix("track:"))
             .and_then(|i| i.parse::<usize>().ok())
         {
+            // Every song menu reads the same (8.36): Play Next, Add to Queue,
+            // what this list can change, keep it, go to it, then many songs.
             let mut rows = vec![
                 Item::new("Play Next", "play_next"),
                 Item::new("Add to Queue", "add_queue"),
-                Item::new("Add to Playlist…", "add_playlist"),
                 self.favorite_row(m, tracks, Some(index)),
+                Item::new("Add to Playlist…", "add_playlist"),
                 Item::new("Go to Album", "go_album"),
                 Item::new("Go to Artist", "go_artist"),
             ];
             if Self::selects(m.screen) {
-                rows.insert(3, Item::new("Select Songs…", "select_songs"));
+                rows.push(Item::new("Select Songs…", "select_songs"));
             }
             return rows;
         }
@@ -1580,6 +1587,16 @@ impl Ui {
             }
             None => vec![],
         }
+    }
+
+    /// Focus the open menu's row with `key` (previews pick rows by name, so
+    /// a menu's order can change under them); false when it has none.
+    pub fn focus_menu_row(&self, m: &mut AppModel, tracks: &[Track], key: &str) -> bool {
+        let at = self.modal_rows(m, tracks).iter().position(|r| r.key == key);
+        if let Some(at) = at {
+            m.navigation.modal_focus = at;
+        }
+        at.is_some()
     }
 
     pub(crate) fn modal_rows_public(&self, m: &AppModel, tracks: &[Track]) -> Vec<Item> {
@@ -1807,7 +1824,8 @@ impl Ui {
             return self.modal_action(m, tracks);
         }
         if m.screen == Screen::NowPlaying && m.current().is_some() {
-            // Select on Now Playing opens its options; the wheel is volume.
+            // Select on Now Playing opens its options; the wheel is volume
+            // (or seeks: Customize > Now Playing Wheel).
             Self::open_modal(m, Modal::ContextMenu);
             m.navigation.context_target = Some(0);
             return Effect::None;
@@ -1864,7 +1882,16 @@ impl Ui {
     fn wheel(&mut self, m: &mut AppModel, tracks: &[Track], suggested: i32) -> Effect {
         let direction = suggested.signum();
         if m.navigation.modal.is_none() && m.screen == Screen::NowPlaying && m.current().is_some() {
-            return Effect::AdjustVolume(WHEEL_VOLUME_STEP * direction as i8);
+            // Customize > Now Playing Wheel (#34): Seek moves through the song
+            // as holding Previous/Next does, small steps first. A station has
+            // no place to move to: its wheel stays the volume.
+            let seek = m.settings.now_playing_wheel == reborn_core::NowPlayingWheel::Seek
+                && !m.current().is_some_and(Track::is_radio);
+            return if seek {
+                Effect::Seek(i64::from(direction))
+            } else {
+                Effect::AdjustVolume(WHEEL_VOLUME_STEP * direction as i8)
+            };
         }
         // The country list (≈240) scrolls as fast as a long library list.
         let accelerate = m.navigation.modal.is_none()
@@ -2216,7 +2243,10 @@ impl Ui {
             }
             Screen::Albums => Self::go(m, Screen::Album, key),
             Screen::Folders if !key.starts_with("track:") => Self::go(m, Screen::Folders, key),
-            Screen::Artist if key.starts_with("album:") => Self::go(m, Screen::Album, key),
+            // An album, or on a genre's album its whole tracklist (#50).
+            Screen::Artist | Screen::Album if key.starts_with("album:") => {
+                Self::go(m, Screen::Album, key)
+            }
             Screen::Search if key.starts_with("artist:") => Self::go(m, Screen::Artist, key),
             Screen::Search if key.starts_with("album:") => Self::go(m, Screen::Album, key),
             Screen::Search => return self.play_track(m, tracks, key),
@@ -2467,10 +2497,9 @@ impl Ui {
             "screen_off_buttons" => {
                 Effect::SetScreenOffButtons(m.settings.screen_off_buttons.next())
             }
-            "album_view" => Effect::SetAlbumView(match m.settings.album_view {
-                reborn_core::AlbumView::CoverFlow => reborn_core::AlbumView::Grid,
-                reborn_core::AlbumView::Grid => reborn_core::AlbumView::CoverFlow,
-            }),
+            "album_view" => Effect::SetAlbumView(m.settings.album_view.next()),
+            "artists_list" => Effect::SetArtistsList(m.settings.artists_list.next()),
+            "now_playing_wheel" => Effect::SetNowPlayingWheel(m.settings.now_playing_wheel.next()),
             "crossfade" => Effect::SetCrossfade(match m.settings.crossfade_ms {
                 0 => 3_000,
                 3_000 => 6_000,
@@ -3079,6 +3108,9 @@ impl Ui {
                 .unwrap_or(Effect::None),
             "queue_next" => Self::entry_of(m, &source_key)
                 .map(|id| Effect::QueueEntriesNext(vec![id]))
+                .unwrap_or(Effect::None),
+            "queue_last" => Self::entry_of(m, &source_key)
+                .map(|id| Effect::QueueEntriesLast(vec![id]))
                 .unwrap_or(Effect::None),
             "queue_move" => {
                 if let Some(id) = Self::entry_of(m, &source_key) {
@@ -3747,6 +3779,11 @@ fn display_or_unknown(value: &str) -> &str {
         value
     }
 }
+/// Customize > Cover Flow is on: Albums and Audiobooks show their covers in
+/// a row (8.36; Albums only before).
+pub(crate) fn cover_flow(m: &AppModel) -> bool {
+    m.settings.album_view == reborn_core::AlbumView::CoverFlow
+}
 /// An artist tag as shown: names joined by ";" read with commas (#40).
 fn names_or_unknown(value: &str) -> std::borrow::Cow<'_, str> {
     if value.is_empty() {
@@ -3771,16 +3808,21 @@ fn track_matches(track: &Track, filter: &str) -> bool {
         return track.artist == value
             || (track.artist.contains(value) && track.artists().contains(&value));
     }
-    if let Some(value) = filter.strip_prefix("genre:") {
-        // One of its genres (#40), or the whole tag as before the split.
-        return track.genre == value
-            || (track.genre.contains(value) && track.genres().contains(&value));
+    if let Some(value) = filter.strip_prefix("albumartist:") {
+        return album_artist_of(track) == value;
     }
-    if let Some(value) = filter.strip_prefix("album:") {
-        if let Some((artist, album)) = value.split_once('\u{1f}') {
-            return track.album_artist == artist && track.album == album;
-        }
-        return track.album == value;
+    if let Some(value) = filter.strip_prefix("genre:") {
+        return in_genre(track, value);
+    }
+    if filter.starts_with("album:") {
+        return match album_parts(filter) {
+            Some((artist, album, genre)) => {
+                track.album_artist == artist
+                    && track.album == album
+                    && genre.is_none_or(|g| in_genre(track, g))
+            }
+            None => filter.strip_prefix("album:") == Some(track.album.as_str()),
+        };
     }
     if let Some(value) = filter.strip_prefix("folder:") {
         return track
@@ -3790,17 +3832,45 @@ fn track_matches(track: &Track, filter: &str) -> bool {
     }
     true
 }
+/// One of the song's genres (#40), or its whole tag as before the split.
+fn in_genre(track: &Track, value: &str) -> bool {
+    track.genre == value || (track.genre.contains(value) && track.genres().contains(&value))
+}
+/// The album artist a song is listed under when Artists shows album artists
+/// (Customize > Artists): its album artist, else its first artist.
+pub(crate) fn album_artist_of(track: &Track) -> &str {
+    if track.album_artist.is_empty() {
+        track.artists()[0]
+    } else {
+        &track.album_artist
+    }
+}
+/// An album filter: "album:ARTIST\u{1f}ALBUM", and opened from a genre
+/// "\u{1f}genre:GENRE" after it (only that genre's songs, #50).
+pub(crate) fn album_parts(filter: &str) -> Option<(&str, &str, Option<&str>)> {
+    let mut parts = filter.strip_prefix("album:")?.splitn(3, '\u{1f}');
+    let artist = parts.next()?;
+    let album = parts.next()?;
+    Some((
+        artist,
+        album,
+        parts.next().and_then(|g| g.strip_prefix("genre:")),
+    ))
+}
+/// The artist an Artist page shows, from its filter.
+pub(crate) fn artist_of_filter(filter: &str) -> Option<&str> {
+    filter
+        .strip_prefix("artist:")
+        .or_else(|| filter.strip_prefix("albumartist:"))
+}
 /// What Up Next calls a collection played from the screen showing it.
 pub(crate) fn source_label(m: &AppModel) -> String {
     let filter = &m.navigation.filter;
     match m.screen {
-        Screen::Album => filter
-            .strip_prefix("album:")
-            .and_then(|f| f.split_once('\u{1f}'))
-            .map(|(_, album)| display_or_unknown(album).to_owned())
+        Screen::Album => album_parts(filter)
+            .map(|(_, album, _)| display_or_unknown(album).to_owned())
             .unwrap_or_else(|| "Album".into()),
-        Screen::Artist => filter
-            .strip_prefix("artist:")
+        Screen::Artist => artist_of_filter(filter)
             .map(|artist| display_or_unknown(artist).to_owned())
             .unwrap_or_else(|| "Artist".into()),
         Screen::Search => format!("Search “{}”", filter.trim()),

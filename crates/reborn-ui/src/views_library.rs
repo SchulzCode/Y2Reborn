@@ -176,7 +176,7 @@ pub fn browse(
         return empty(c, ui, m, interactive);
     }
     match m.screen {
-        Screen::Albums if m.settings.album_view == reborn_core::AlbumView::CoverFlow => {
+        Screen::Albums | Screen::Audiobooks if crate::cover_flow(m) => {
             crate::views_coverflow::albums(c, ui, m, tracks, interactive)
         }
         Screen::Albums => albums_grid(c, ui, m, tracks, interactive),
@@ -485,20 +485,21 @@ fn album_page(
         if selected {
             components::focus_row(c, 10., y + 1., WIDTH - 20., 50.);
         }
-        let number = song.map_or(index.saturating_sub(1), |t| {
-            if t.track > 0 {
+        // Songs carry their number; "Show All 12 Songs" (#50) none.
+        if let Some(t) = song {
+            let number = if t.track > 0 {
                 t.track as usize
             } else {
                 index - 1
-            }
-        });
-        c.text_mid_center(
-            34.,
-            y + 26.,
-            &number.to_string(),
-            Face::R11,
-            if selected { color::TEXT } else { color::DIM },
-        );
+            };
+            c.text_mid_center(
+                34.,
+                y + 26.,
+                &number.to_string(),
+                Face::R11,
+                if selected { color::TEXT } else { color::DIM },
+            );
+        }
         let playing = song.is_some_and(|t| is_current(m, t));
         let face = if selected { Face::S15 } else { Face::R15 };
         let tint = if playing { accent } else { color::TEXT };
@@ -587,7 +588,10 @@ fn artist_page(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interact
             108.,
             70.,
             350.,
-            &crate::names_or_unknown(&t.artist),
+            // The artist the page is for, not its first song's whole tag.
+            crate::display_or_unknown(
+                crate::artist_of_filter(&m.navigation.filter).unwrap_or(&t.artist),
+            ),
             Face::S25,
             color::TEXT,
         );

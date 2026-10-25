@@ -177,9 +177,8 @@ fn layout_keys(m: &AppModel, page: Option<&Page>, empty: bool) -> &'static [&'st
     match m.screen {
         Screen::NowPlaying if m.current().is_some() => &["now_playing"],
         Screen::Home => &["home", "list"],
-        Screen::Albums if m.settings.album_view == reborn_core::AlbumView::CoverFlow && !empty => {
-            &["cover_flow"]
-        }
+        // Customize > Cover Flow: albums and audiobooks alike (8.36).
+        Screen::Albums | Screen::Audiobooks if crate::cover_flow(m) && !empty => &["cover_flow"],
         Screen::Albums => &["albums", "list"],
         Screen::Artists => &["artists", "list"],
         Screen::Genres => &["genres", "list"],
@@ -335,6 +334,7 @@ fn skinned(ui: &Ui, skin: &Skin, m: &AppModel, tracks: &[Track], has_art: bool) 
                 message: None,
                 opacity: 1.,
                 native: Some(&native),
+                label_end: Default::default(),
             };
             skin::draw_layout(&mut c, &scene, layout);
         }
@@ -362,6 +362,7 @@ fn skinned_overlays(c: &mut Canvas, ui: &Ui, skin: &Skin, m: &AppModel, tracks: 
         message,
         opacity,
         native: None,
+        label_end: Default::default(),
     };
     // A sheet or dialog: (title, body, rows, focus, danger, is a dialog).
     let mut sheet: Option<(String, String, Vec<Item>, usize, bool, bool)> = None;

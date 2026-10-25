@@ -308,34 +308,39 @@ impl Ui {
         let Some(index) = Self::entry_of(m, key).and_then(|id| m.entry_index(id)) else {
             return vec![];
         };
-        let clear_queue = Item::new("Clear Queue", "clear_queued");
-        let clear_upcoming = Item::new("Clear Upcoming", "clear_queue");
+        // The song playing holds what acts on the whole list.
         if index == m.queue_position {
             let mut rows = vec![
                 Item::new("Add to Playlist…", "add_playlist"),
                 Item::new("Go to Album", "go_album"),
                 Item::new("Go to Artist", "go_artist"),
+                Item::new("Save Up Next as Playlist…", "save_queue"),
             ];
             if m.queued_count() > 0 {
-                rows.push(clear_queue);
+                rows.push(Item::new("Clear Queue", "clear_queued"));
             }
             if m.queue_position + 1 < m.queue.len() {
-                rows.push(clear_upcoming);
+                rows.push(Item::new("Clear Up Next", "clear_queue"));
             }
             return rows;
         }
+        // A song to come: the order every song menu has (8.36). Play Next or
+        // Add to Queue is left out where it would not move the song.
         let queued = m.is_queued(m.queue_entry_ids[index]);
         let mut rows = vec![];
         if !(queued && index == m.queue_position + 1) {
             rows.push(Item::new("Play Next", "queue_next"));
         }
+        if !(queued && index + 1 == m.source_start()) {
+            rows.push(Item::new("Add to Queue", "queue_last"));
+        }
         rows.extend([
             Item::new("Move", "queue_move"),
             Item::new("Remove from Queue", "queue_remove"),
-            Item::new("Select Songs…", "select_songs"),
             Item::new("Add to Playlist…", "add_playlist"),
             Item::new("Go to Album", "go_album"),
-            if queued { clear_queue } else { clear_upcoming },
+            Item::new("Go to Artist", "go_artist"),
+            Item::new("Select Songs…", "select_songs"),
         ]);
         rows
     }
@@ -395,6 +400,7 @@ impl Ui {
         let mut rows = if m.screen == Screen::Queue {
             vec![
                 Item::new("Play Next", "sel_next"),
+                Item::new("Add to Queue", "sel_queue"),
                 Item::new("Remove from Queue", "sel_remove"),
                 Item::new("Add to Playlist…", "sel_playlist"),
             ]
@@ -457,6 +463,9 @@ impl Ui {
         let effect = match menu_key {
             "sel_next" if m.screen == Screen::Queue => {
                 Effect::QueueEntriesNext(self.chosen_entries(m))
+            }
+            "sel_queue" if m.screen == Screen::Queue => {
+                Effect::QueueEntriesLast(self.chosen_entries(m))
             }
             "sel_remove" => Effect::QueueRemoveEntries(self.chosen_entries(m)),
             "sel_next" => Effect::PlayNextCollection(self.chosen_songs(m, tracks)),
@@ -565,7 +574,7 @@ impl Ui {
     /// A whole album, artist, genre, folder or the search's songs: its rows
     /// get Play, Shuffle, Play Next, Add to Queue and Add to Playlist.
     pub(crate) fn group_key(key: &str) -> bool {
-        ["album:", "artist:", "genre:", "folder:"]
+        ["album:", "artist:", "albumartist:", "genre:", "folder:"]
             .iter()
             .any(|p| key.starts_with(p))
             || key == crate::catalog::SEARCH_PLAY_ALL
@@ -614,8 +623,8 @@ impl Ui {
         if key == crate::catalog::SEARCH_PLAY_ALL {
             return format!("Search “{}”", m.navigation.filter.trim());
         }
-        if let Some(album) = key.strip_prefix("album:") {
-            let album = album.split_once('\u{1f}').map_or(album, |(_, a)| a);
+        if let Some(plain) = key.strip_prefix("album:") {
+            let album = crate::album_parts(key).map_or(plain, |(_, a, _)| a);
             return display_or_unknown(album).to_owned();
         }
         if let Some(folder) = key.strip_prefix("folder:") {

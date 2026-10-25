@@ -80,6 +80,8 @@ One component per idea; screen code must not draw its own variant.
 | Hints | No permanent hint lines. Hold-Select actions are listed in the item's menu. The keyboard's Cancel and Done keys are the only instructions it needs. |
 | Rows | Title plus at most one secondary line of facts a listener uses (artist, album count, country · genre). No codec, bitrate, rank, free space or internal state in lists. |
 | Words | American English, Title Case for titles and labels, sentence case for secondary lines. |
+| Menus (8.36) | Menus hold actions on the item; preferences live in Customize. Every song and collection menu lists its shared actions in one order: Play, Shuffle · Play Next, Add to Queue · what this place changes (Move, Remove from …) · Add to Favorites, Add to Playlist… · Go to Album, Go to Artist · Select Songs…. A row that would not change anything is left out. No new row without removing one (test `every_menu_lists_its_shared_actions_in_one_order`). |
+| Values | A row's value uses the room its label leaves and ends in "…" (sheets, and skins' right-aligned `{detail}` up to the end of `{label}`). |
 
 ## Screen changes
 
@@ -393,3 +395,37 @@ session saved ≈820 bytes per queued song on every song change.
   Toasts confirm ("Plays next", "12 songs added to queue", "2 songs removed").
 * **Now Playing:** a NEXT line under the status icons; its menu's Up Next row names the next
   song. Previews `17`–`17f`, `18c`, `10b`.
+
+## One menu order, Customize choices (Beta 8.36, owner request 2026-10-25)
+
+The owner asked that new features not bloat menus and that the UI work the same way
+everywhere, with labels that mean what they say. Rules added to *Rules*: menus hold actions,
+Customize holds preferences, one order for shared actions, no growth without removing a row.
+
+* **Song menus** (Songs, an album, an artist page, search, playlists' songs, Up Next):
+  Play Next, Add to Queue, [Move, Remove from …], [Add to Favorites], Add to Playlist…,
+  Go to Album, Go to Artist, [Select Songs…]. Select Songs moved to the end; Up Next gained
+  **Add to Queue** (`Effect::QueueEntriesLast`, the end of your queue as everywhere else;
+  for chosen songs too) and Go to Artist; Play Next / Add to Queue are left out where they
+  would not move the song.
+* **Up Next's song playing** holds what acts on the whole list: Add to Playlist…, Go to Album,
+  Go to Artist, **Save Up Next as Playlist…** (moved from Now Playing, which has 8 rows now),
+  Clear Queue, **Clear Up Next** (was "Clear Upcoming"). Other rows no longer carry Clear.
+* **Playlists** (hold on a playlist): Play, Shuffle, Play Next, Add to Queue, Rename,
+  Duplicate, Delete Playlist — as an album.
+* **Customize** (each row names what it changes; Select steps the value): Home Menu ›,
+  **Cover Flow** On/Off (was Album View Cover Flow/Grid; now Albums *and* Audiobooks),
+  **Artists** All/Album Artists (#41: `albumartist:` filter, a compilation is one artist,
+  `album_artist_of` falls back to the first artist), **Now Playing Wheel** Volume/Seek (#34:
+  Seek steps as holding Previous/Next does; stations keep volume; the volume buttons always
+  change the volume), Wrap Around, When Screen Off.
+* **An album opened from a genre** (#50) shows that genre's songs (`album:` filters carry
+  `\u{1f}genre:G`; the row plays what it opens), its header says "Jazz · 2 of 3 songs", and a
+  last row **Show All 3 Songs** opens the whole album. No setting.
+* **Values fit their row:** the Now Playing menu's Up Next row names the whole next song when
+  the label leaves room (#60); skins get the same through `{detail}`.
+* **Artist page** shows the artist it is for (not its first song's whole tag).
+
+Previews `51c-customize`, `09b-album-from-genre`, `17e`–`17h`, `b2-audiobooks` (Cover Flow).
+Haptics (#28) is not part of this: Linux does not drive the vibration motor yet (PMIC VIBR).
+

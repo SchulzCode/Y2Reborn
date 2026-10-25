@@ -658,19 +658,34 @@ pub fn action_sheet(c: &mut Canvas, title: &str, subtitle: &str, rows: &[SheetRo
             focus_row_on(c, x + 8., ry, w - 16., row_h - 3., 1);
         }
         let ink = if row.enabled { color::TEXT } else { color::DIM };
+        let face = if selected { Face::S15 } else { Face::R15 };
+        // The value takes the room the label leaves (Up Next names the whole
+        // next song, #60), never running into it.
+        let room = w - 44.;
+        let detail = if row.detail.is_empty() {
+            String::new()
+        } else {
+            text::fit(
+                Face::R11,
+                row.detail,
+                (room - text::width(face, row.label) - 24.).max(room * 0.25),
+            )
+        };
+        let label_room =
+            room - text::width(Face::R11, &detail) - if detail.is_empty() { 0. } else { 16. };
         c.text_mid(
             x + 22.,
             ry + (row_h - 3.) / 2.,
-            w - 150.,
+            label_room,
             row.label,
-            if selected { Face::S15 } else { Face::R15 },
+            face,
             ink,
         );
-        if !row.detail.is_empty() {
+        if !detail.is_empty() {
             c.text_mid_right(
                 x + w - 22.,
                 ry + (row_h - 3.) / 2.,
-                row.detail,
+                &detail,
                 Face::R11,
                 color::MUTED,
             );

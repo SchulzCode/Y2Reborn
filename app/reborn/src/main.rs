@@ -2919,6 +2919,14 @@ impl Runtime {
                 self.model.settings.album_view = view;
                 self.checkpoint();
             }
+            Effect::SetNowPlayingWheel(wheel) => {
+                self.model.settings.now_playing_wheel = wheel;
+                self.checkpoint();
+            }
+            Effect::SetArtistsList(list) => {
+                self.model.settings.artists_list = list;
+                self.checkpoint();
+            }
             Effect::SetWrapAround(wrap) => {
                 self.model.settings.wrap_around = wrap;
                 self.checkpoint();
@@ -3038,6 +3046,18 @@ impl Runtime {
                         "Plays next".to_owned()
                     } else {
                         format!("{moved} songs play next")
+                    });
+                }
+            }
+            Effect::QueueEntriesLast(ids) => {
+                let moved = self.model.entries_last(&ids);
+                if moved > 0 {
+                    self.upcoming_changed();
+                    self.checkpoint();
+                    self.ui.flash(if moved == 1 {
+                        "Added to queue".to_owned()
+                    } else {
+                        format!("{moved} songs added to queue")
                     });
                 }
             }

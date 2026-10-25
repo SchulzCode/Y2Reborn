@@ -1264,7 +1264,7 @@ fn wheel_one_detent_is_one_step_outside_long_library_lists() {
 }
 
 #[test]
-fn customize_holds_wrap_around_home_menu_and_album_view() {
+fn customize_holds_how_reborn_behaves() {
     let mut ui = radios();
     let mut m = app(Screen::Settings);
     let tracks = m.library.tracks.clone();
@@ -1277,11 +1277,38 @@ fn customize_holds_wrap_around_home_menu_and_album_view() {
     assert_eq!(
         keys,
         [
-            "wrap_around",
-            "screen_off_buttons",
             "home_menu",
-            "album_view"
+            "album_view",
+            "artists_list",
+            "now_playing_wheel",
+            "wrap_around",
+            "screen_off_buttons"
         ]
+    );
+    let labels: Vec<String> = ui.rows(&m, &tracks).into_iter().map(|r| r.label).collect();
+    assert_eq!(
+        labels,
+        [
+            "Home Menu",
+            "Cover Flow",
+            "Artists",
+            "Now Playing Wheel",
+            "Wrap Around",
+            "When Screen Off"
+        ]
+    );
+    assert_eq!(row(&ui, &m, "artists_list").unwrap().secondary, "All");
+    assert_eq!(
+        select_key(&mut ui, &mut m, "artists_list"),
+        Effect::SetArtistsList(reborn_core::ArtistsList::AlbumArtists)
+    );
+    assert_eq!(
+        row(&ui, &m, "now_playing_wheel").unwrap().secondary,
+        "Volume"
+    );
+    assert_eq!(
+        select_key(&mut ui, &mut m, "now_playing_wheel"),
+        Effect::SetNowPlayingWheel(reborn_core::NowPlayingWheel::Seek)
     );
     assert_eq!(
         row(&ui, &m, "screen_off_buttons").unwrap().secondary,
@@ -1930,8 +1957,8 @@ fn queue_context_follows_its_occurrence_and_closes_when_it_vanishes() {
     let id = m.navigation.context_key.clone().unwrap();
     m.queue.swap(3, 4);
     m.queue_entry_ids.swap(3, 4);
-    // Play Next, Move, Remove from Queue: the entry where it is now.
-    m.navigation.modal_focus = 2;
+    // Play Next, Add to Queue, Move, Remove from Queue: the entry where it is now.
+    m.navigation.modal_focus = 3;
     assert_eq!(
         ui.model_action(&mut m, Action::Select),
         Effect::QueueRemove(4)
@@ -2685,7 +2712,7 @@ fn genres_open_their_albums_then_all_songs_or_one_album() {
     );
     assert_eq!(genres[0].secondary, "2 albums · 6 songs");
     assert_eq!(genres[1].key, "genre:");
-    assert_eq!(ui.library_counts(&tracks)[3], 2);
+    assert_eq!(ui.library_counts(&m, &tracks)[3], 2);
     // Jazz -> its albums, headed by All Songs.
     let mut ui = ui;
     ui.action(&mut m, &tracks, Action::Select);
@@ -2712,7 +2739,8 @@ fn genres_open_their_albums_then_all_songs_or_one_album() {
     m.navigation.focus = 3;
     ui.action(&mut m, &tracks, Action::Select);
     assert_eq!(m.screen, Screen::Album);
-    assert!(m.navigation.filter.ends_with("Album 1"));
+    // Opened from the genre: that genre's songs of it (#50).
+    assert!(m.navigation.filter.ends_with("Album 1\u{1f}genre:Jazz"));
     // Back, then Shuffle -> the genre's six songs, shuffled.
     ui.action(&mut m, &tracks, Action::Back);
     m.navigation.focus = 1;
@@ -2763,7 +2791,8 @@ fn albums_use_cover_flow_by_default_and_the_grid_by_setting() {
     let mut m = app(Screen::Customize);
     let rows = ui.rows(&m, &tracks);
     m.navigation.focus = rows.iter().position(|r| r.key == "album_view").unwrap();
-    assert_eq!(rows[m.navigation.focus].secondary, "Cover Flow");
+    assert_eq!(rows[m.navigation.focus].label, "Cover Flow");
+    assert_eq!(rows[m.navigation.focus].secondary, "On");
     assert_eq!(
         ui.action(&mut m, &tracks, Action::Select),
         Effect::SetAlbumView(reborn_core::AlbumView::Grid)
@@ -3680,7 +3709,10 @@ fn deleting_a_playlist_asks_first_and_favorites_cannot_be_deleted() {
         .into_iter()
         .map(|r| r.label)
         .collect();
-    assert_eq!(options, ["Play Next", "Add to Queue", "Duplicate"]);
+    assert_eq!(
+        options,
+        ["Play", "Shuffle", "Play Next", "Add to Queue", "Duplicate"]
+    );
     ui.model_action(&mut m, Action::Back);
     m.navigation.focus = 3;
     ui.model_action(&mut m, Action::ContextMenu);
@@ -4904,4 +4936,285 @@ fn albums_artists_genres_and_search_results_queue_as_a_whole() {
         }
         other => panic!("{other:?}"),
     }
+}
+
+/// A menu's labels; the menu closes again.
+fn menu_labels(ui: &mut Ui, m: &mut AppModel) -> Vec<String> {
+    ui.model_action(m, Action::ContextMenu);
+    let tracks = m.library.tracks.clone();
+    let labels = ui
+        .modal_rows_public(m, &tracks)
+        .into_iter()
+        .map(|r| r.label)
+        .collect();
+    ui.model_action(m, Action::Back);
+    labels
+}
+
+#[test]
+fn every_menu_lists_its_shared_actions_in_one_order() {
+    // 8.36: play it, queue it, what this place changes, keep it, go to it,
+    // then many songs at once; the same everywhere.
+    const ORDER: [&str; 12] = [
+        "Play",
+        "Shuffle",
+        "Play Next",
+        "Add to Queue",
+        "Move",
+        "Remove from Queue",
+        "Remove from Playlist",
+        "Add to Favorites",
+        "Add to Playlist…",
+        "Go to Album",
+        "Go to Artist",
+        "Select Songs…",
+    ];
+    let in_order = |menu: &[String], place: &str| {
+        let ranks: Vec<usize> = menu
+            .iter()
+            .filter_map(|l| ORDER.iter().position(|o| o == l))
+            .collect();
+        assert!(ranks.windows(2).all(|w| w[0] < w[1]), "{place}: {menu:?}");
+    };
+    let mut ui = radios();
+    let mut m = app(Screen::Tracks);
+    m.navigation.focus = 1;
+    let songs = menu_labels(&mut ui, &mut m);
+    assert_eq!(
+        songs,
+        [
+            "Play Next",
+            "Add to Queue",
+            "Add to Favorites",
+            "Add to Playlist…",
+            "Go to Album",
+            "Go to Artist",
+            "Select Songs…"
+        ]
+    );
+    // Up Next: a song to come, then the song playing.
+    let mut m = app(Screen::Queue);
+    m.navigation.focus = 3;
+    let coming = menu_labels(&mut ui, &mut m);
+    assert_eq!(
+        coming,
+        [
+            "Play Next",
+            "Add to Queue",
+            "Move",
+            "Remove from Queue",
+            "Add to Playlist…",
+            "Go to Album",
+            "Go to Artist",
+            "Select Songs…"
+        ]
+    );
+    m.navigation.focus = 0;
+    let playing = menu_labels(&mut ui, &mut m);
+    assert_eq!(
+        playing,
+        [
+            "Add to Playlist…",
+            "Go to Album",
+            "Go to Artist",
+            "Save Up Next as Playlist…",
+            "Clear Up Next"
+        ]
+    );
+    // Now Playing leaves the whole list to Up Next.
+    let mut m = app(Screen::NowPlaying);
+    let now = menu_labels(&mut ui, &mut m);
+    assert_eq!(now.len(), 8, "{now:?}");
+    assert!(!now.iter().any(|l| l.contains("as Playlist")));
+    // An album, a playlist and a playlist's song.
+    let mut m = app(Screen::Albums);
+    m.settings.album_view = reborn_core::AlbumView::Grid;
+    let album = menu_labels(&mut ui, &mut m);
+    assert_eq!(album[..2], ["Play", "Shuffle"]);
+    let (mut pui, mut pm) = playlists_app();
+    pm.navigation.focus = 3;
+    let playlist = menu_labels(&mut pui, &mut pm);
+    assert_eq!(
+        playlist[..4],
+        ["Play", "Shuffle", "Play Next", "Add to Queue"]
+    );
+    for (menu, place) in [
+        (&songs, "songs"),
+        (&coming, "up next"),
+        (&playing, "playing"),
+        (&now, "now playing"),
+        (&album, "album"),
+        (&playlist, "playlist"),
+    ] {
+        in_order(menu, place);
+    }
+}
+
+#[test]
+fn up_next_adds_to_your_queue_as_every_other_list_does() {
+    let mut ui = radios();
+    let mut m = app(Screen::Queue);
+    // The song playing, the source's heading, then queue index 1 at row 2.
+    m.navigation.focus = 3;
+    let id = m.queue_entry_ids[2];
+    assert_eq!(
+        menu_select(&mut ui, &mut m, "queue_last"),
+        Effect::QueueEntriesLast(vec![id])
+    );
+    // Chosen songs too.
+    let mut m = app(Screen::Queue);
+    m.navigation.focus = 2;
+    menu_select(&mut ui, &mut m, "select_songs");
+    ui.model_action(&mut m, Action::WheelClockwise(1));
+    ui.model_action(&mut m, Action::Select);
+    assert_eq!(
+        menu_select(&mut ui, &mut m, "sel_queue"),
+        Effect::QueueEntriesLast(vec![m.queue_entry_ids[1], m.queue_entry_ids[2]])
+    );
+    // Your only queued song can go neither first nor last: neither is offered.
+    let mut m = app(Screen::Queue);
+    let tracks = m.library.tracks.clone();
+    m.entries_next(&[m.queue_entry_ids[4]]);
+    ui.normalize(&mut m, &tracks);
+    m.navigation.focus = 2;
+    let menu = menu_labels(&mut ui, &mut m);
+    assert_eq!(menu[0], "Move", "{menu:?}");
+}
+
+#[test]
+fn the_now_playing_wheel_seeks_when_customize_says_so() {
+    let mut ui = radios();
+    let mut m = app(Screen::NowPlaying);
+    assert!(matches!(
+        ui.model_action(&mut m, Action::WheelClockwise(1)),
+        Effect::AdjustVolume(_)
+    ));
+    m.settings.now_playing_wheel = reborn_core::NowPlayingWheel::Seek;
+    // As holding Previous/Next: one step a detent, the player sizes it.
+    assert_eq!(
+        ui.model_action(&mut m, Action::WheelClockwise(3)),
+        Effect::Seek(1)
+    );
+    assert_eq!(
+        ui.model_action(&mut m, Action::WheelCounterClockwise(1)),
+        Effect::Seek(-1)
+    );
+    // A station has no place to move to: the wheel stays the volume.
+    m.queue[0].source_id = reborn_core::RADIO_SOURCE.into();
+    assert!(matches!(
+        ui.model_action(&mut m, Action::WheelClockwise(1)),
+        Effect::AdjustVolume(_)
+    ));
+}
+
+#[test]
+fn artists_can_list_album_artists_only() {
+    // Y2Linux #41: a compilation is one artist, guests are not listed.
+    let tagged = |screen| {
+        let mut m = app(screen);
+        m.library.tracks[1].artist = "Élodie · Μουσική · Музыка · 音楽 feat. Kelis".into();
+        m.library.tracks[2].album_artist = String::new();
+        m.library.tracks[2].artist = "Solo".into();
+        for (t, artist) in m.library.tracks[6..].iter_mut().zip(["A", "B", "C"]) {
+            t.album_artist = "Various Artists".into();
+            t.artist = artist.into();
+        }
+        m
+    };
+    let ui = radios();
+    let keys = |m: &AppModel| -> Vec<String> {
+        ui.rows(m, &m.library.tracks)
+            .into_iter()
+            .map(|r| r.key)
+            .collect()
+    };
+    let mut m = tagged(Screen::Artists);
+    assert!(keys(&m).contains(&"artist:Kelis".to_owned()));
+    assert!(keys(&m).contains(&"artist:B".to_owned()));
+    m.settings.artists_list = reborn_core::ArtistsList::AlbumArtists;
+    assert_eq!(
+        keys(&m),
+        [
+            "albumartist:Élodie · Μουσική · Музыка · 音楽",
+            "albumartist:Solo",
+            "albumartist:Various Artists"
+        ]
+    );
+    assert_eq!(ui.library_counts(&m, &m.library.tracks)[0], 3);
+    // Its page: Play, then the compilation once.
+    let mut m = tagged(Screen::Artist);
+    m.navigation.filter = "albumartist:Various Artists".into();
+    let rows = ui.rows(&m, &m.library.tracks);
+    assert_eq!(rows.len(), 2);
+    assert!(rows[0].secondary.starts_with("3 songs"));
+    assert_eq!(source_label(&m), "Various Artists");
+}
+
+#[test]
+fn an_album_opened_from_a_genre_shows_that_genres_songs_and_offers_the_rest() {
+    // Y2Linux #50: songs 1-2 of the album are Jazz, song 3 is Rock.
+    let tagged = |screen| {
+        let mut m = app(screen);
+        for (t, genre) in m.library.tracks.iter_mut().zip(["Jazz", "Jazz", "Rock"]) {
+            t.genre = genre.into();
+        }
+        m
+    };
+    let mut ui = radios();
+    let mut m = tagged(Screen::Albums);
+    m.settings.album_view = reborn_core::AlbumView::Grid;
+    m.navigation.filter = "genre:Jazz".into();
+    let tracks = m.library.tracks.clone();
+    let rows = ui.rows(&m, &tracks);
+    let at = rows.iter().position(|r| r.label == "Album 0").unwrap();
+    // What the row plays is what it opens: the genre's two songs.
+    m.navigation.focus = at;
+    match menu_select(&mut ui, &mut m, "group_play") {
+        Effect::PlayCollection { members, .. } => assert_eq!(members, [0, 1]),
+        other => panic!("{other:?}"),
+    }
+    let mut m = tagged(Screen::Albums);
+    m.settings.album_view = reborn_core::AlbumView::Grid;
+    m.navigation.filter = "genre:Jazz".into();
+    m.navigation.focus = at;
+    ui.action(&mut m, &tracks, Action::Select);
+    assert_eq!(m.screen, Screen::Album);
+    let rows = ui.rows(&m, &tracks);
+    let labels: Vec<&str> = rows.iter().map(|r| r.label.as_str()).collect();
+    assert_eq!(
+        labels,
+        ["Play", "Shuffle", "Song 0", "Song 1", "Show All 3 Songs"]
+    );
+    assert!(rows[0].secondary.starts_with("Jazz · 2 of 3 songs"));
+    assert_eq!(source_label(&m), "Album 0");
+    // The last row opens the whole album.
+    m.navigation.focus = 4;
+    ui.action(&mut m, &tracks, Action::Select);
+    assert_eq!(m.screen, Screen::Album);
+    let rows = ui.rows(&m, &tracks);
+    assert_eq!(rows.len(), 5, "Play, Shuffle and its three songs");
+    assert!(!rows.iter().any(|r| r.label.starts_with("Show All")));
+    ui.action(&mut m, &tracks, Action::Back);
+    assert!(m.navigation.filter.ends_with("genre:Jazz"));
+}
+
+#[test]
+fn audiobooks_use_cover_flow_with_albums() {
+    let ui = radios();
+    let mut m = app(Screen::Audiobooks);
+    with_book(&mut m);
+    for t in m.library.tracks.iter_mut().filter(|t| t.book) {
+        t.artwork = true;
+    }
+    let tracks = m.library.tracks.clone();
+    let flow = ui.draw(&m, &tracks, false);
+    assert!(flow.iter().filter(|q| q.warp.is_some()).count() >= 2);
+    assert_eq!(crate::focus_target_count(&flow), 1);
+    // Its lines: the title and its progress; songs and length are an album's.
+    let text = drawn_text(&flow);
+    assert!(text.contains("Momo"), "{text}");
+    assert!(!text.contains("songs ·"), "{text}");
+    m.settings.album_view = reborn_core::AlbumView::Grid;
+    let list = ui.draw(&m, &tracks, false);
+    assert!(list.iter().all(|q| q.warp.is_none()));
 }

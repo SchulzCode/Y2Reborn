@@ -171,9 +171,8 @@ impl AppModel {
         }
     }
 
-    /// The chosen entries (none of them playing) go to the top of your
-    /// queue, together, in their Up Next order; how many moved.
-    pub fn entries_next(&mut self, ids: &[QueueEntryId]) -> usize {
+    /// The chosen entries still to come, in their Up Next order.
+    fn chosen_entries(&self, ids: &[QueueEntryId]) -> Vec<usize> {
         let mut indices: Vec<usize> = ids
             .iter()
             .filter_map(|id| self.entry_index(*id))
@@ -181,18 +180,44 @@ impl AppModel {
             .collect();
         indices.sort_unstable();
         indices.dedup();
-        let start = self.queue_position + 1;
-        let mut order: Vec<usize> = (0..start).collect();
-        order.extend(&indices);
-        order.extend((start..self.queue.len()).filter(|i| !indices.contains(i)));
-        for &i in &indices {
+        indices
+    }
+
+    /// The chosen entries become your queued songs, in `order`.
+    fn queue_entries(&mut self, indices: &[usize], order: &[usize]) -> usize {
+        for &i in indices {
             let id = self.queue_entry_ids[i];
             if !self.is_queued(id) {
                 self.queue_queued.push(id);
             }
         }
-        self.permute(&order);
+        self.permute(order);
         indices.len()
+    }
+
+    /// Play Next in Up Next: the chosen entries (none of them playing) go to
+    /// the top of your queue, together, in their Up Next order; how many moved.
+    pub fn entries_next(&mut self, ids: &[QueueEntryId]) -> usize {
+        let indices = self.chosen_entries(ids);
+        let start = self.queue_position + 1;
+        let mut order: Vec<usize> = (0..start).collect();
+        order.extend(&indices);
+        order.extend((start..self.queue.len()).filter(|i| !indices.contains(i)));
+        self.queue_entries(&indices, &order)
+    }
+
+    /// Add to Queue in Up Next: the chosen entries go to the end of your
+    /// queue, together, in their Up Next order (as Add to Queue does
+    /// everywhere else); how many moved.
+    pub fn entries_last(&mut self, ids: &[QueueEntryId]) -> usize {
+        let indices = self.chosen_entries(ids);
+        let start = self.queue_position + 1;
+        let source = self.source_start();
+        let mut order: Vec<usize> = (0..start).collect();
+        order.extend((start..source).filter(|i| !indices.contains(i)));
+        order.extend(&indices);
+        order.extend((source..self.queue.len()).filter(|i| !indices.contains(i)));
+        self.queue_entries(&indices, &order)
     }
 
     /// Clear your queue (the songs you queued that have not played).
@@ -610,6 +635,22 @@ mod tests {
         assert_eq!(upcoming(&m), ["s3", "s5", "s2", "s6"]);
         assert!(m.clear_queued());
         assert_eq!(upcoming(&m), ["s2", "s6"]);
+    }
+
+    #[test]
+    fn add_to_queue_in_up_next_moves_songs_to_the_end_of_your_queue() {
+        let mut m = album(6);
+        assert_eq!(m.entries_next(&[m.queue_entry_ids[2]]), 1);
+        assert_eq!(upcoming(&m), ["s3", "s2", "s4", "s5", "s6"]);
+        // After your queued s3, before the rest of the album, in Up Next order.
+        let ids = vec![m.queue_entry_ids[5], m.queue_entry_ids[3]];
+        assert_eq!(m.entries_last(&ids), 2);
+        assert_eq!(upcoming(&m), ["s3", "s4", "s6", "s2", "s5"]);
+        assert_eq!(m.queued_count(), 3);
+        // A queued song moves to the end of your queue; the song playing never.
+        let s3 = m.queue_entry_ids[1];
+        assert_eq!(m.entries_last(&[s3, m.current_entry_id().unwrap()]), 1);
+        assert_eq!(upcoming(&m), ["s4", "s6", "s3", "s2", "s5"]);
     }
 
     #[test]

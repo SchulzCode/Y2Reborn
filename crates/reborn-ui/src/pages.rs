@@ -81,8 +81,8 @@ fn home(m: &AppModel, tracks: &[Track]) -> Vec<Item> {
 }
 
 /// Music: the library's lists, each with how much it holds.
-fn music(ui: &Ui, tracks: &[Track]) -> Vec<Item> {
-    let [artists, albums, songs, genres] = ui.library_counts(tracks);
+fn music(ui: &Ui, m: &AppModel, tracks: &[Track]) -> Vec<Item> {
+    let [artists, albums, songs, genres] = ui.library_counts(m, tracks);
     let counted = |n: usize, one: &str, many: &str| {
         if n == 0 {
             String::new()
@@ -131,7 +131,7 @@ fn disabled(mut item: Item, enabled: bool) -> Item {
 pub fn page(ui: &Ui, m: &AppModel, tracks: &[Track]) -> Page {
     match m.screen {
         Screen::Home => Page::rows(home(m, tracks)),
-        Screen::Music => Page::rows(music(ui, tracks)),
+        Screen::Music => Page::rows(music(ui, m, tracks)),
         Screen::HomeMenu => Page::rows(
             std::iter::once(
                 row("Audiobooks", "home_audiobooks", "")
@@ -205,15 +205,22 @@ pub fn page(ui: &Ui, m: &AppModel, tracks: &[Track]) -> Page {
             Page::rows(rows)
         }
         // Beta 8.18: how Reborn behaves, apart from how the screen looks.
+        // Each row names what it changes; Select steps its value (8.36).
         Screen::Customize => Page::rows(vec![
+            row("Home Menu", "home_menu", home_summary(m)).with_kind(RowKind::Chevron),
+            row("Cover Flow", "album_view", m.settings.album_view.label()),
+            row("Artists", "artists_list", m.settings.artists_list.label()),
+            row(
+                "Now Playing Wheel",
+                "now_playing_wheel",
+                m.settings.now_playing_wheel.label(),
+            ),
             row("Wrap Around", "wrap_around", m.settings.wrap_around.label()),
             row(
                 "When Screen Off",
                 "screen_off_buttons",
                 m.settings.screen_off_buttons.label(),
             ),
-            row("Home Menu", "home_menu", home_summary(m)).with_kind(RowKind::Chevron),
-            row("Album View", "album_view", m.settings.album_view.label()),
         ]),
         Screen::TimeZone => Page::rows(crate::time_zone::rows(ui, m)),
         Screen::DateTime => {
@@ -1375,7 +1382,7 @@ fn storage(ui: &Ui, m: &AppModel) -> Page {
     };
     // How much music there is (Beta 7.5: no longer a row of About & Updates
     // that led here).
-    let songs = ui.library_counts(&m.library.tracks)[2];
+    let songs = ui.library_counts(m, &m.library.tracks)[2];
     page = page.with_rows(vec![disabled(
         row(
             "Scan for Music",

@@ -539,6 +539,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             m.navigation.focus = 1;
         }
     );
+    // 8.36 (#50): an album opened from a genre, its other songs a row away.
+    case!(
+        "09b-album-from-genre",
+        at(
+            Screen::Album,
+            "album:Marlowe\u{1f}Slow Light\u{1f}genre:Jazz"
+        ),
+        move |ui, m| {
+            ui.accent = teal;
+            if let Some(t) = m.library.tracks.iter_mut().find(|t| t.title == "Dust") {
+                t.genre = "Blues".into();
+            }
+            m.navigation.focus = 4;
+        }
+    );
     case!("09-album", at(Screen::Album, album), move |ui, m| {
         ui.accent = teal;
         m.navigation.focus = 3;
@@ -642,9 +657,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     case!("17c-up-next-moving", at(Screen::Queue, ""), move |ui, m| {
         ui.accent = orange;
         up_next(ui, m, Some("first_source"));
-        // Move (the first of the menu on a song of the album is Play Next).
         ui.model_action(m, Action::ContextMenu);
-        m.navigation.modal_focus = 1;
+        let tracks = m.library.tracks.clone();
+        assert!(ui.focus_menu_row(m, &tracks, "queue_move"));
         ui.model_action(m, Action::Select);
         // One detent up: into your queue.
         let id = m.queue_entry_ids[m.source_start()];
@@ -661,10 +676,33 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             up_next(ui, m, Some("first_source"));
             // Select Songs…, then the next song too.
             ui.model_action(m, Action::ContextMenu);
-            m.navigation.modal_focus = 3;
+            let tracks = m.library.tracks.clone();
+            assert!(ui.focus_menu_row(m, &tracks, "select_songs"));
             ui.model_action(m, Action::Select);
             ui.model_action(m, Action::WheelClockwise(1));
             ui.model_action(m, Action::Select);
+        }
+    );
+    // 8.36: the song playing holds what acts on the whole list.
+    case!(
+        "17g-up-next-playing-menu",
+        at(Screen::Queue, ""),
+        move |ui, m| {
+            ui.accent = orange;
+            up_next(ui, m, None);
+            ui.model_action(m, Action::ContextMenu);
+        }
+    );
+    // 8.36 (#60): Up Next names the whole next song when the row has room.
+    case!(
+        "17h-now-playing-menu-next",
+        at(Screen::NowPlaying, ""),
+        move |ui, m| {
+            let next = m.queue_position + 1;
+            if let Some(t) = m.queue.get_mut(next) {
+                t.title = "Fields of Tomorrow (Extended Night Version)".into();
+            }
+            ui.model_action(m, Action::ContextMenu);
         }
     );
     case!("17e-up-next-menu", at(Screen::Queue, ""), move |ui, m| {
@@ -679,7 +717,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             ui.accent = orange;
             up_next(ui, m, Some("first_source"));
             ui.model_action(m, Action::ContextMenu);
-            m.navigation.modal_focus = 3;
+            let tracks = m.library.tracks.clone();
+            assert!(ui.focus_menu_row(m, &tracks, "select_songs"));
             ui.model_action(m, Action::Select);
             ui.model_action(m, Action::WheelClockwise(1));
             ui.model_action(m, Action::Select);
@@ -699,7 +738,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             ui.accent = teal;
             m.navigation.focus = 2;
             ui.model_action(m, Action::ContextMenu);
-            m.navigation.modal_focus = 3;
+            let tracks = m.library.tracks.clone();
+            assert!(ui.focus_menu_row(m, &tracks, "select_songs"));
             ui.model_action(m, Action::Select);
             ui.model_action(m, Action::WheelClockwise(1));
             ui.model_action(m, Action::WheelClockwise(1));

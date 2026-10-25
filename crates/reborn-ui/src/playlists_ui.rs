@@ -419,7 +419,10 @@ impl Ui {
             .and_then(|i| i.parse::<usize>().ok())
             .and_then(|i| self.playlists.lists.get(i))
         {
+            // As an album's: Play and Shuffle first (8.36).
             let mut rows = vec![
+                Item::new("Play", "pl_play"),
+                Item::new("Shuffle", "pl_shuffle"),
                 Item::new("Play Next", "pl_next"),
                 Item::new("Add to Queue", "pl_queue"),
             ];
@@ -470,6 +473,15 @@ impl Ui {
         {
             let members = self.playable(tracks, &p);
             return Some(match menu {
+                "pl_play" | "pl_shuffle" if !members.is_empty() => {
+                    Self::go(m, Screen::NowPlaying, "");
+                    Effect::PlayCollection {
+                        selected: members[0],
+                        members,
+                        shuffle: menu == "pl_shuffle",
+                        source: p.name.clone(),
+                    }
+                }
                 "pl_next" if !members.is_empty() => {
                     Self::close_modal(m);
                     Effect::PlayNextCollection(members)

@@ -148,7 +148,8 @@ pub fn albums(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interacti
             Face::R13,
             color::MUTED,
         );
-        if row.key != "all_songs" && row.key != "shuffle:collection" {
+        // An album's songs and length; a book's progress is its own line.
+        if row.key.starts_with("album:") {
             c.text_center(
                 240.,
                 312. + Face::R11.mid_offset(),

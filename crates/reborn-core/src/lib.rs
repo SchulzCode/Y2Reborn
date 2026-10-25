@@ -1112,9 +1112,15 @@ pub struct Settings {
     /// Backlight level in percent of the panel maximum.
     #[serde(default = "default_brightness")]
     pub brightness: u8,
-    /// How Albums presents its covers.
+    /// How Albums and Audiobooks present their covers.
     #[serde(default)]
     pub album_view: AlbumView,
+    /// What the wheel does on Now Playing (Beta 8.36).
+    #[serde(default)]
+    pub now_playing_wheel: NowPlayingWheel,
+    /// Who Artists lists (Beta 8.36).
+    #[serde(default)]
+    pub artists_list: ArtistsList,
     /// Whether lists continue at the other end (Beta 8.18; Menus by default).
     #[serde(default)]
     pub wrap_around: WrapAround,
@@ -1187,19 +1193,75 @@ pub const HOME_PINNABLE: [(&str, &str); 5] = [
     ("genres", "Genres"),
     ("folders", "Folders"),
 ];
+/// How Albums and Audiobooks show their covers: Customize > Cover Flow.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum AlbumView {
+    /// Cover Flow On.
     #[default]
     CoverFlow,
-    /// The plain album list, labelled "List" (saved as "grid").
+    /// Cover Flow Off: the plain lists (saved as "grid").
     Grid,
 }
 impl AlbumView {
     pub fn label(self) -> &'static str {
         match self {
-            Self::CoverFlow => "Cover Flow",
-            Self::Grid => "List",
+            Self::CoverFlow => "On",
+            Self::Grid => "Off",
+        }
+    }
+    pub fn next(self) -> Self {
+        match self {
+            Self::CoverFlow => Self::Grid,
+            Self::Grid => Self::CoverFlow,
+        }
+    }
+}
+/// What the wheel does on Now Playing: Customize > Now Playing Wheel. The
+/// volume buttons always change the volume.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum NowPlayingWheel {
+    #[default]
+    Volume,
+    /// It moves through the song as holding Previous/Next does.
+    Seek,
+}
+impl NowPlayingWheel {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Volume => "Volume",
+            Self::Seek => "Seek",
+        }
+    }
+    pub fn next(self) -> Self {
+        match self {
+            Self::Volume => Self::Seek,
+            Self::Seek => Self::Volume,
+        }
+    }
+}
+/// Who Artists lists: Customize > Artists.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ArtistsList {
+    /// Every artist of every song, guests too (#38).
+    #[default]
+    All,
+    /// The album artists only (#41): a compilation is one entry.
+    AlbumArtists,
+}
+impl ArtistsList {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::All => "All",
+            Self::AlbumArtists => "Album Artists",
+        }
+    }
+    pub fn next(self) -> Self {
+        match self {
+            Self::All => Self::AlbumArtists,
+            Self::AlbumArtists => Self::All,
         }
     }
 }
@@ -1301,6 +1363,8 @@ impl Default for Settings {
             repeat: RepeatMode::Off,
             brightness: default_brightness(),
             album_view: AlbumView::CoverFlow,
+            now_playing_wheel: NowPlayingWheel::Volume,
+            artists_list: ArtistsList::All,
             wrap_around: WrapAround::Menus,
             screen_off_buttons: ScreenOffButtons::Buttons,
             audiobooks_on_home: true,
@@ -1592,6 +1656,8 @@ pub enum Effect {
     SetBalance(i8),
     SetGapless(bool),
     SetAlbumView(AlbumView),
+    SetNowPlayingWheel(NowPlayingWheel),
+    SetArtistsList(ArtistsList),
     SetWrapAround(WrapAround),
     SetScreenOffButtons(ScreenOffButtons),
     /// Play the audiobook with this key.
@@ -1630,6 +1696,8 @@ pub enum Effect {
     QueueRemoveEntries(Vec<QueueEntryId>),
     /// These Up Next entries go to the top of your queue, together.
     QueueEntriesNext(Vec<QueueEntryId>),
+    /// These Up Next entries go to the end of your queue, together.
+    QueueEntriesLast(Vec<QueueEntryId>),
     /// Clear your queue (the songs you queued).
     ClearQueued,
     /// Clear everything after the song playing.
