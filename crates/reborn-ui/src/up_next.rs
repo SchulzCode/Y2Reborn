@@ -202,9 +202,8 @@ impl Ui {
         };
         let song = |index: usize| {
             let t = &m.queue[index];
-            let id = m.queue_entry_ids.get(index).map_or(index as u64, |v| v.0);
-            let mut item = Item::new(track_title(t), format!("queue:{id}"))
-                .with_secondary(display_or_unknown(&t.artist));
+            let mut item = Item::new(track_title(t), Self::entry_key(m, index))
+                .with_secondary(crate::names_or_unknown(&t.artist));
             item.art = self.library_index(tracks, t);
             item
         };
@@ -215,7 +214,7 @@ impl Ui {
             Row::History(lib) => {
                 let t = &tracks[lib];
                 let mut item = Item::new(track_title(t), format!("hist:{lib}"))
-                    .with_secondary(display_or_unknown(&t.artist));
+                    .with_secondary(crate::names_or_unknown(&t.artist));
                 item.art = Some(lib);
                 item
             }
@@ -234,6 +233,12 @@ impl Ui {
         })
     }
 
+    /// The Up Next key of queue index `index`.
+    pub(crate) fn entry_key(m: &AppModel, index: usize) -> String {
+        let id = m.queue_entry_ids.get(index).map_or(index as u64, |v| v.0);
+        format!("queue:{id}")
+    }
+
     /// The queue entry an Up Next key names.
     pub(crate) fn entry_of(m: &AppModel, key: &str) -> Option<QueueEntryId> {
         let id = key.strip_prefix("queue:")?.parse::<u64>().ok()?;
@@ -250,6 +255,40 @@ impl Ui {
         let now = self.up_next(m, tracks).now_row();
         m.navigation.focus = now;
         m.navigation.scroll = now;
+        self.up_next_focus.replace(None);
+    }
+
+    /// The focus stays on its song when the rows move under it (#32): Play
+    /// Next, a song ending or a removal adds and moves rows and headings, and
+    /// the old index could land on a heading, which sent the focus to the top.
+    /// A focus the wheel moved is left alone.
+    pub(crate) fn keep_up_next_focus(&self, m: &mut AppModel, tracks: &[Track]) {
+        let Some((row, key)) = self.up_next_focus.borrow().clone() else {
+            return;
+        };
+        if row != m.navigation.focus {
+            return;
+        }
+        let layout = self.up_next(m, tracks);
+        let found = if let Some(id) = Self::entry_of(m, &key) {
+            m.entry_index(id).and_then(|index| layout.row_of(index))
+        } else if let Some(lib) = key
+            .strip_prefix("hist:")
+            .and_then(|v| v.parse::<usize>().ok())
+        {
+            layout
+                .history
+                .iter()
+                .rposition(|&i| i == lib)
+                .map(|at| at + 1)
+        } else {
+            None
+        };
+        if let Some(found) = found.filter(|&found| found != row) {
+            m.navigation.focus = found;
+            let heights = self.search_heights(m, tracks);
+            m.navigation.scroll = crate::views_search::window(&heights, found, m.navigation.scroll);
+        }
     }
 
     /// The menu of an Up Next row (hold Select).
@@ -651,7 +690,7 @@ impl Ui {
         };
         Some((
             track_title(song).to_owned(),
-            display_or_unknown(&song.artist).to_owned(),
+            crate::names_or_unknown(&song.artist).into_owned(),
         ))
     }
 

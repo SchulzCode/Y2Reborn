@@ -37,7 +37,9 @@ pub fn output_label(output: &AudioOutput) -> String {
     }
 }
 
-/// A stable identity for the cover shared by every track of one album.
+/// A stable identity for the cover shared by every track of one album. A song
+/// without an album is its own cover (#43): songs of one folder or one artist
+/// can each carry a different picture.
 pub fn art_key(track: &Track) -> u64 {
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
     let mut feed = |bytes: &[u8]| {
@@ -48,15 +50,9 @@ pub fn art_key(track: &Track) -> u64 {
         hash ^= 0xff;
         hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
     };
-    if track.album.is_empty() && track.album_artist.is_empty() {
-        feed(
-            track
-                .path
-                .parent()
-                .map(|p| p.to_string_lossy().into_owned())
-                .unwrap_or_default()
-                .as_bytes(),
-        );
+    if track.album.is_empty() {
+        feed(track.source_id.as_bytes());
+        feed(track.path.to_string_lossy().as_bytes());
     } else {
         feed(track.album.as_bytes());
         feed(if track.album_artist.is_empty() {

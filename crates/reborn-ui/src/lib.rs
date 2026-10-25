@@ -447,6 +447,9 @@ pub struct Ui {
     up_next_cache: RefCell<up_next::Cache>,
     /// The Up Next entry being moved with the wheel.
     queue_moving: std::cell::Cell<Option<reborn_core::QueueEntryId>>,
+    /// Up Next's focused row and its key as last seen: the focus follows
+    /// that song when the rows move under it.
+    up_next_focus: RefCell<Option<(usize, String)>>,
     /// Select Songs: the rows chosen on one list.
     pub selection: Option<Selection>,
     /// The playing position as last reported, and when: Now Playing moves
@@ -546,17 +549,27 @@ impl Ui {
     pub fn normalize(&self, m: &mut AppModel, tracks: &[Track]) {
         let count = self.row_count(m, tracks);
         m.navigation.focus = m.navigation.focus.min(count.saturating_sub(1));
+        if m.screen == Screen::Queue {
+            self.keep_up_next_focus(m, tracks);
+        }
         if count > 0
             && !self
                 .row_at(m, tracks, m.navigation.focus)
                 .is_some_and(|r| r.enabled)
         {
-            m.navigation.focus = (0..count)
+            // The nearest row that takes the focus, below first.
+            let focus = m.navigation.focus;
+            m.navigation.focus = (focus..count)
+                .chain((0..focus).rev())
                 .find(|i| self.row_at(m, tracks, *i).is_some_and(|r| r.enabled))
                 .unwrap_or(0);
         }
         if m.screen == Screen::Queue {
             self.follow_moving(m, tracks);
+            self.up_next_focus.replace(
+                self.row_at(m, tracks, m.navigation.focus)
+                    .map(|r| (m.navigation.focus, r.key)),
+            );
         }
         if m.navigation.modal.is_some() {
             let rows = self.modal_rows(m, tracks);
@@ -952,7 +965,7 @@ impl Ui {
         for t in tracks.iter().filter(|t| t.is_music()) {
             artists.extend(t.artists());
             albums.insert((t.album.as_str(), t.album_artist.as_str()));
-            genres.insert(t.genre.as_str());
+            genres.extend(t.genres());
             songs += 1;
         }
         let counts = [artists.len(), albums.len(), songs, genres.len()];
@@ -3353,7 +3366,7 @@ impl Ui {
                 let mut item = r.item(tracks);
                 item.secondary = match r {
                     catalog::Row::SearchSong(i) => {
-                        format!("Song · {}", display_or_unknown(&tracks[*i].artist))
+                        format!("Song · {}", names_or_unknown(&tracks[*i].artist))
                     }
                     _ if item.key.starts_with("artist:") => format!("Artist · {}", item.secondary),
                     _ if item.key.starts_with("album:") => format!("Album · {}", item.secondary),
@@ -3734,6 +3747,14 @@ fn display_or_unknown(value: &str) -> &str {
         value
     }
 }
+/// An artist tag as shown: names joined by ";" read with commas (#40).
+fn names_or_unknown(value: &str) -> std::borrow::Cow<'_, str> {
+    if value.is_empty() {
+        "Unknown".into()
+    } else {
+        reborn_core::joined_names(value)
+    }
+}
 /// Identifies one published library: a new scan publishes a new list, so
 /// caches built from the songs (search, playlists, catalog) start again.
 pub(crate) fn library_stamp(tracks: &[Track]) -> (usize, usize) {
@@ -3751,7 +3772,9 @@ fn track_matches(track: &Track, filter: &str) -> bool {
             || (track.artist.contains(value) && track.artists().contains(&value));
     }
     if let Some(value) = filter.strip_prefix("genre:") {
-        return track.genre == value;
+        // One of its genres (#40), or the whole tag as before the split.
+        return track.genre == value
+            || (track.genre.contains(value) && track.genres().contains(&value));
     }
     if let Some(value) = filter.strip_prefix("album:") {
         if let Some((artist, album)) = value.split_once('\u{1f}') {

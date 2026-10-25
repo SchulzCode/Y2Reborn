@@ -208,14 +208,14 @@ impl Scene<'_> {
                 .map(|t| crate::views_playing::lines(self.ui, t).2)
                 .unwrap_or_default(),
             Var::AlbumArtist => track(|t| {
-                crate::display_or_unknown(if t.album_artist.is_empty() {
+                crate::names_or_unknown(if t.album_artist.is_empty() {
                     &t.artist
                 } else {
                     &t.album_artist
                 })
-                .to_owned()
+                .into_owned()
             }),
-            Var::Genre => track(|t| t.genre.clone()),
+            Var::Genre => track(|t| reborn_core::joined_names(&t.genre).into_owned()),
             Var::Elapsed => t
                 .map(|_| components::time(m.position_ms))
                 .unwrap_or_default(),
@@ -384,9 +384,11 @@ impl Scene<'_> {
         }
     }
 
-    fn row_current(&self, item: &Item, index: usize) -> bool {
+    fn row_current(&self, item: &Item) -> bool {
+        // Up Next's rows include headings and the history (8.33), so its row
+        // index is not the queue position (#60).
         if self.m.screen == Screen::Queue {
-            return index == self.m.queue_position;
+            return item.key == Ui::entry_key(self.m, self.m.queue_position);
         }
         row_track(item, self.tracks).is_some_and(|(_, t)| is_current(self.m, t))
     }
@@ -825,7 +827,7 @@ fn element(c: &mut Canvas, s: &Scene, el: &El, ox: f32, oy: f32, row: Option<&Ro
                     index,
                     count,
                     focused: focus == Some(index),
-                    current: *source == ListSource::Rows && s.row_current(item, index),
+                    current: *source == ListSource::Rows && s.row_current(item),
                 };
                 let mark = c.draw.len();
                 let template = if r.focused { focused } else { plain };

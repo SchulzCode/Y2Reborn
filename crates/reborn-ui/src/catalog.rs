@@ -228,18 +228,19 @@ impl Catalog {
             }
             Screen::Genres => {
                 let mut genres: BTreeMap<&str, GenreStats> = BTreeMap::new();
+                // Each genre of a joined tag is a genre of its own (#40).
                 for (i, t) in tracks.iter().enumerate().filter(|(_, t)| t.is_music()) {
-                    let entry = genres.entry(t.genre.as_str()).or_insert((
-                        i,
-                        BTreeSet::new(),
-                        0,
-                        t.artwork,
-                    ));
-                    entry.1.insert((t.album.as_str(), t.album_artist.as_str()));
-                    entry.2 += 1;
-                    if !entry.3 && t.artwork {
-                        entry.0 = i;
-                        entry.3 = true;
+                    for genre in t.genres() {
+                        let entry =
+                            genres
+                                .entry(genre)
+                                .or_insert((i, BTreeSet::new(), 0, t.artwork));
+                        entry.1.insert((t.album.as_str(), t.album_artist.as_str()));
+                        entry.2 += 1;
+                        if !entry.3 && t.artwork {
+                            entry.0 = i;
+                            entry.3 = true;
+                        }
                     }
                 }
                 // Untagged songs go last, under one honest name.
@@ -421,7 +422,7 @@ fn title_key(name: &str) -> (String, String) {
 }
 fn album_item(album: &str, artist: &str, index: usize, t: &Track) -> Item {
     let mut item = Item::new(display_or_unknown(album), album_filter(t)).with_secondary(
-        display_or_unknown(if artist.is_empty() { &t.artist } else { artist }),
+        crate::names_or_unknown(if artist.is_empty() { &t.artist } else { artist }),
     );
     item.art = Some(index);
     item
@@ -435,7 +436,7 @@ fn track_item(i: usize, t: &Track) -> Item {
         },
         format!("track:{i}"),
     )
-    .with_secondary(display_or_unknown(&t.artist));
+    .with_secondary(crate::names_or_unknown(&t.artist));
     item.art = Some(i);
     item
 }

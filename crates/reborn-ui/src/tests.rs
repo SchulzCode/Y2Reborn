@@ -2423,6 +2423,15 @@ fn covers_are_requested_while_missing_and_drawn_once_resident() {
     // Tracks of one album share one cover.
     assert_eq!(art_key(&tracks[0]), art_key(&tracks[1]));
     assert_ne!(art_key(&tracks[0]), art_key(&tracks[3]));
+    // Songs without an album, even of one folder and artist, keep their own (#43).
+    let loose = |name: &str| Track {
+        path: format!("/music/Singles/{name}.mp3").into(),
+        artist: "Artist".into(),
+        album_artist: "Artist".into(),
+        ..Default::default()
+    };
+    assert_ne!(art_key(&loose("One")), art_key(&loose("Two")));
+    assert_eq!(art_key(&loose("One")), art_key(&loose("One")));
     ui.set_resident_thumbs(keys);
     let quads = ui.draw(&m, &tracks, false);
     assert!(quads.iter().any(|q| matches!(q.tex, Tex::Thumb(_))));
@@ -4611,6 +4620,34 @@ fn a_collaboration_album_shows_once_under_each_of_its_artists() {
     assert_eq!(artist_filter(&m.library.tracks[1]), "artist:Calvin Harris");
 }
 
+#[test]
+fn joined_genres_split_and_joined_artists_read_with_commas() {
+    // Y2Linux #40: "Jazz;R&B" was a genre of its own, and song rows showed
+    // "Lauryn Hill;Mary J. Blige" as tagged.
+    let tagged = |screen| {
+        let mut m = app(screen);
+        for (t, genre) in m.library.tracks.iter_mut().zip(["Jazz;R&B", "Jazz", "R&B"]) {
+            t.genre = genre.into();
+        }
+        m.library.tracks[0].artist = "Lauryn Hill;Mary J. Blige".into();
+        m
+    };
+    let ui = radios();
+    let m = tagged(Screen::Genres);
+    let rows = ui.rows(&m, &m.library.tracks);
+    let jazz = rows.iter().find(|r| r.key == "genre:Jazz").unwrap();
+    assert!(jazz.secondary.ends_with("2 songs"), "{}", jazz.secondary);
+    assert!(rows.iter().any(|r| r.key == "genre:R&B"));
+    assert!(!rows.iter().any(|r| r.key.contains(';')));
+    let mut m = tagged(Screen::Tracks);
+    m.navigation.filter = "genre:R&B".into();
+    let rows = ui.rows(&m, &m.library.tracks);
+    let song = rows.iter().find(|r| r.key == "track:0").unwrap();
+    assert_eq!(song.secondary, "Lauryn Hill, Mary J. Blige");
+    assert!(rows.iter().any(|r| r.key == "track:2"));
+    assert!(!rows.iter().any(|r| r.key == "track:1"));
+}
+
 /// The search page rebuilt per keystroke on a 20 000-song library
 /// (`cargo test -p reborn-ui --release -- --ignored --nocapture search_page_speed`).
 #[test]
@@ -4724,6 +4761,42 @@ fn a_moved_song_follows_the_wheel_until_select_puts_it_down() {
     // Down again is an ordinary step now.
     ui.model_action(&mut m, Action::WheelClockwise(1));
     assert_eq!(m.navigation.focus, 4);
+}
+
+#[test]
+fn up_next_keeps_the_focused_song_when_rows_move_under_it() {
+    let mut ui = radios();
+    let mut m = app(Screen::Queue);
+    let tracks = m.library.tracks.clone();
+    let key = |ui: &Ui, m: &AppModel| ui.rows(m, &tracks)[m.navigation.focus].key.clone();
+    // The song playing, the source's heading, then its songs: the second one.
+    m.navigation.focus = 3;
+    ui.normalize(&mut m, &tracks);
+    let second = key(&ui, &m);
+    // Play Next puts it under a new Queue heading; the old row is now the
+    // source's heading, which used to send the focus to the top (#32).
+    let id = m.queue_entry_ids[2];
+    assert_eq!(m.entries_next(&[id]), 1);
+    ui.normalize(&mut m, &tracks);
+    assert_eq!(key(&ui, &m), second);
+    assert_eq!(m.navigation.focus, 2);
+    // The song ends: the focus stays on it, now the song playing.
+    m.step(1);
+    ui.normalize(&mut m, &tracks);
+    assert_eq!(key(&ui, &m), second);
+    // The wheel moves the focus as before.
+    ui.model_action(&mut m, Action::WheelClockwise(1));
+    assert_ne!(key(&ui, &m), second);
+    // A removed song leaves the focus nearby, not at the top.
+    let at = m.navigation.focus;
+    let gone = Ui::entry_of(&m, &key(&ui, &m)).unwrap();
+    m.remove_entries(&[gone]);
+    ui.normalize(&mut m, &tracks);
+    assert!(
+        m.navigation.focus + 1 >= at,
+        "{} from {at}",
+        m.navigation.focus
+    );
 }
 
 #[test]

@@ -170,7 +170,7 @@ pub fn now_playing(
             &format!(
                 "{}  ·  {}",
                 crate::track_title(next),
-                crate::display_or_unknown(&next.artist)
+                crate::names_or_unknown(&next.artist)
             ),
             Face::R13,
             color::MUTED,
@@ -441,7 +441,7 @@ pub(crate) fn lines(ui: &Ui, t: &Track) -> (String, String, String) {
         ),
         _ => (
             crate::track_title(t).to_owned(),
-            crate::display_or_unknown(&t.artist).to_owned(),
+            crate::names_or_unknown(&t.artist).into_owned(),
             crate::display_or_unknown(&t.album).to_owned(),
         ),
     }

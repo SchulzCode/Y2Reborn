@@ -3,7 +3,7 @@
 //! song with the wheel. Files are read and written by the player
 //! (`Effect::Playlist`); this module only decides and draws from what it has.
 
-use crate::{display_or_unknown, keyboard, playlist_index, track_title, Item, Ui};
+use crate::{keyboard, names_or_unknown, playlist_index, track_title, Item, Ui};
 use reborn_core::{
     playlist::{Playlist, PlaylistEdit, PlaylistEntry},
     sort::{sort_key, SortAs},
@@ -325,7 +325,7 @@ impl Ui {
                     let mut item = match song {
                         Some((t, track)) => {
                             let mut item = Item::new(track_title(track), format!("pl_entry:{i}"))
-                                .with_secondary(display_or_unknown(&track.artist));
+                                .with_secondary(names_or_unknown(&track.artist));
                             item.art = Some(t);
                             if !track.online {
                                 item.secondary = "Not available · SD card removed".into();

@@ -50,7 +50,7 @@ pub fn home(
         );
         let sub = format!(
             "{}  ·  {} / {}",
-            crate::display_or_unknown(&t.artist),
+            crate::names_or_unknown(&t.artist),
             components::time(m.position_ms),
             components::time(t.duration_ms)
         );
@@ -456,7 +456,7 @@ fn album_page(
                 144.,
                 98.,
                 310.,
-                crate::display_or_unknown(artist),
+                &crate::names_or_unknown(artist),
                 Face::R15,
                 color::TEXT,
             );
@@ -587,7 +587,7 @@ fn artist_page(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interact
             108.,
             70.,
             350.,
-            crate::display_or_unknown(&t.artist),
+            &crate::names_or_unknown(&t.artist),
             Face::S25,
             color::TEXT,
         );

@@ -1857,7 +1857,7 @@ fn track_info(m: &AppModel, tracks: &[Track]) -> Page {
         .unwrap_or("");
     let mut page = Page::default()
         .fact("Title", crate::track_title(t))
-        .fact("Artist", crate::display_or_unknown(&t.artist))
+        .fact("Artist", crate::names_or_unknown(&t.artist))
         .fact("Album", crate::display_or_unknown(&t.album))
         .fact("Length", crate::components::time(t.duration_ms));
     if !format.is_empty() {

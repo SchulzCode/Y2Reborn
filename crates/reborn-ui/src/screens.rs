@@ -692,7 +692,7 @@ pub(crate) fn context_song(ui: &Ui, m: &AppModel, tracks: &[Track]) -> (Option<S
     match song {
         Some(t) => (
             Some(crate::track_title(t).to_owned()),
-            crate::display_or_unknown(&t.artist).to_owned(),
+            crate::names_or_unknown(&t.artist).into_owned(),
         ),
         None => (None, String::new()),
     }

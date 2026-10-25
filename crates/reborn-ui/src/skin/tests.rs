@@ -487,3 +487,35 @@ fn display_fonts_can_carry_only_ascii_and_text_can_be_lowercased() {
         .unwrap_err()
         .contains("normal, upper or lower"));
 }
+
+#[test]
+fn up_next_marks_the_song_playing_not_the_row_at_the_play_position() {
+    // A marker beside the row playing; the history and headings come first (#60).
+    let screens = LIST.replace(
+        r#""row": [{"type": "text""#,
+        r#""row": [{"type": "rect", "if": "current", "x": 400, "y": 0, "w": 10, "h": 40, "color": "accent"},
+                   {"type": "text""#,
+    );
+    let ui = skinned(compile_test(&screens).unwrap());
+    let tracks = library(8);
+    let mut m = model(Screen::Queue);
+    m.queue = tracks[2..8].to_vec();
+    m.queue_entry_ids = (0..6).map(|i| reborn_core::QueueEntryId(100 + i)).collect();
+    m.queue_position = 1;
+    m.history = tracks[..2]
+        .iter()
+        .map(|t| reborn_core::queue::HistoryEntry {
+            source_id: t.source_id.clone(),
+            path: t.path.clone(),
+        })
+        .collect();
+    m.navigation.focus = 0;
+    let marks: Vec<f32> = ui
+        .draw(&m, &tracks, false)
+        .iter()
+        .filter(|q| q.x == 400. && q.w == 10.)
+        .map(|q| q.y)
+        .collect();
+    // The History heading, its two songs, then the song playing: row 3.
+    assert_eq!(marks, vec![30. + 3. * 40.]);
+}
