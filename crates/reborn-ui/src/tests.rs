@@ -1606,7 +1606,11 @@ fn library_search_counts_while_typing_and_lists_artists_albums_songs() {
     let mut m = app(Screen::Home);
     m.library.tracks[4].title = "Beat It".into();
     m.library.tracks[4].artist = "Michael Jackson".into();
-    assert_eq!(select_key(&mut ui, &mut m, "search"), Effect::None);
+    // The playlists are searched too: they are read if they were not yet.
+    assert!(matches!(
+        select_key(&mut ui, &mut m, "search"),
+        Effect::Playlist(_)
+    ));
     {
         let k = ui.keyboard.as_mut().unwrap();
         k.text = "bea".into();
@@ -3384,13 +3388,22 @@ fn the_search_page_previews_while_typing_and_folds_the_keys_into_its_results() {
     assert!(ui.keyboard.is_none());
     assert_eq!(m.screen, Screen::Search);
     assert_eq!(m.navigation.filter, "Élo");
-    // Back leaves the search page.
+    // Back goes up one level (#44): from the results to typing, with the
+    // text; from the keys' top row out of the search.
     ui.model_action(&mut m, Action::Back);
-    assert_eq!(m.screen, Screen::Home);
-    // A new search cancelled leaves it at once; the last search comes back
-    // with the keys next time.
-    select_key(&mut ui, &mut m, "search");
+    assert_eq!(m.screen, Screen::Search);
     assert_eq!(ui.keyboard.as_ref().unwrap().text, "Élo");
+    assert_eq!(
+        ui.keyboard.as_ref().unwrap().row,
+        0,
+        "the keys rise on their top row"
+    );
+    ui.model_action(&mut m, Action::Back);
+    assert!(ui.keyboard.is_none());
+    assert_eq!(m.screen, Screen::Home);
+    // A search left is not offered again: the next one starts empty.
+    select_key(&mut ui, &mut m, "search");
+    assert_eq!(ui.keyboard.as_ref().unwrap().text, "");
     ui.model_action(&mut m, Action::Home);
     assert!(ui.keyboard.is_none());
     assert_eq!(m.screen, Screen::Home);
@@ -3409,25 +3422,25 @@ fn the_search_page_lists_each_kind_under_a_heading_with_play_all() {
     assert!(!rows[1].enabled);
     let songs = keys.iter().position(|k| *k == "heading:songs").unwrap();
     assert_eq!(keys[songs + 1], "search_play_all");
-    let found = rows.len() - 4;
-    assert_eq!(
-        rows[songs + 1].secondary,
-        format!("{} songs", rows.len() - songs - 2)
-    );
+    // Nine songs: the first four, then See All for the rest (#44).
+    assert_eq!(rows[songs + 1].secondary, "9 songs");
+    assert_eq!(rows.last().unwrap().key, "search_all:songs");
+    assert_eq!(rows.last().unwrap().label, "See All 9 Songs");
+    let shown: Vec<usize> = rows[songs + 2..rows.len() - 1]
+        .iter()
+        .map(|r| r.key["track:".len()..].parse().unwrap())
+        .collect();
+    assert_eq!(shown.len(), crate::catalog::SECTION_PREVIEW);
     assert!(rows[0].secondary.ends_with("songs"), "{:?}", rows[0]);
-    assert_eq!(ui.search_summary(&m, &tracks).1, found);
-    // Play All plays the songs found, in the page's order.
+    // Play All plays every song found, in the page's order.
     m.navigation.focus = songs + 1;
     match ui.model_action(&mut m, Action::Select) {
         Effect::PlayCollection {
             members, shuffle, ..
         } => {
             assert!(!shuffle);
-            let shown: Vec<usize> = rows[songs + 2..]
-                .iter()
-                .map(|r| r.key["track:".len()..].parse().unwrap())
-                .collect();
-            assert_eq!(members, shown);
+            assert_eq!(members.len(), 9);
+            assert_eq!(members[..shown.len()], shown[..]);
         }
         other => panic!("{other:?}"),
     }
@@ -5270,4 +5283,78 @@ fn audiobooks_use_cover_flow_with_albums() {
     m.settings.album_view = reborn_core::AlbumView::Grid;
     let list = ui.draw(&m, &tracks, false);
     assert!(list.iter().all(|q| q.warp.is_none()));
+}
+
+#[test]
+fn see_all_shows_one_kind_of_result_and_back_returns_to_all_of_them() {
+    // Y2Reborn #44: long results need no scrolling past kinds not wanted.
+    let mut ui = Ui::default();
+    let mut m = app(Screen::Search);
+    let tracks = m.library.tracks.clone();
+    m.navigation.filter = "song".into();
+    ui.normalize(&mut m, &tracks);
+    let rows = ui.rows(&m, &tracks);
+    let see_all = rows
+        .iter()
+        .position(|r| r.key == "search_all:songs")
+        .unwrap();
+    m.navigation.focus = see_all;
+    ui.model_action(&mut m, Action::Select);
+    assert_eq!(m.screen, Screen::Search);
+    assert_eq!(screens::screen_title(&m), "Songs");
+    let rows = ui.rows(&m, &tracks);
+    let keys: Vec<&str> = rows.iter().map(|r| r.key.as_str()).collect();
+    // No field, the heading, Play All, all nine songs; no See All.
+    assert_eq!(keys[..2], ["heading:songs", "search_play_all"]);
+    assert_eq!(rows.len(), 2 + 9);
+    assert!(!keys.iter().any(|k| k.starts_with("search_all:")));
+    // A song here still queues every song found.
+    m.navigation.focus = 5;
+    match ui.model_action(&mut m, Action::Select) {
+        Effect::PlayCollection { members, .. } => assert_eq!(members.len(), 9),
+        other => panic!("{other:?}"),
+    }
+    // Back: all the results again, not the keys.
+    m.screen = Screen::Search;
+    m.navigation.filter = "song".into();
+    m.navigation.focus = see_all;
+    ui.model_action(&mut m, Action::Select);
+    ui.model_action(&mut m, Action::Back);
+    assert!(ui.keyboard.is_none());
+    assert_eq!(m.navigation.filter, "song");
+    assert_eq!(m.navigation.focus, see_all);
+}
+
+#[test]
+fn playlists_are_found_by_name_and_open_or_play_from_the_results() {
+    let (mut ui, mut m) = playlists_app();
+    let tracks = m.library.tracks.clone();
+    m.screen = Screen::Search;
+    m.navigation.filter = "road".into();
+    let rows = ui.rows(&m, &tracks);
+    let keys: Vec<&str> = rows.iter().map(|r| r.key.as_str()).collect();
+    assert_eq!(keys[1], "heading:playlists");
+    let at = keys
+        .iter()
+        .position(|k| k.starts_with("playlist:"))
+        .unwrap();
+    assert_eq!(rows[at].label, "Road Trip");
+    assert!(
+        rows[0].secondary.contains("1 playlist"),
+        "{}",
+        rows[0].secondary
+    );
+    // Hold Select: the playlist's own menu.
+    m.navigation.focus = at;
+    let menu = menu_labels(&mut ui, &mut m);
+    assert_eq!(menu[..4], ["Play", "Shuffle", "Play Next", "Add to Queue"]);
+    // Select opens it; Back returns to the results.
+    ui.model_action(&mut m, Action::Select);
+    assert_eq!(m.screen, Screen::Playlist);
+    assert!(m.navigation.filter.ends_with("Road Trip.m3u8"));
+    ui.model_action(&mut m, Action::Back);
+    assert_eq!(
+        (m.screen, m.navigation.filter.as_str()),
+        (Screen::Search, "road")
+    );
 }

@@ -439,3 +439,19 @@ minutes change, also while paused. Skins get `{sleep}` and `"if": "sleep"`; ever
 "Headphone Jack · Sleeps in 23 min" on its output line (`build_skins.py` `add_sleep`), and the `moon` icon.
 No menu row added. Previews `14c-now-playing-sleep`, `14d-sleep-timer-picker`.
 
+## Search: one level at a time, short sections, playlists (Beta 8.37, Y2Reborn #44)
+
+* **Back goes up one level:** in the results Back raises the keys with the text (as Edit Search);
+  in the keys Back moves up a row and on the top row leaves the search (`keyboard::Outcome::Leave`;
+  before it went into the results). The wheel or Done/hold Select still folds the keys into the results.
+* **A new search starts empty** (`library_query` removed); a result opened and Back keeps the search.
+* **Playlists** are a section after Albums, matched by name like books (`Catalog::playlists`, refreshed
+  by the playlists' generation; search reads them if Playlists never did). Select opens the playlist,
+  hold Select gives its menu.
+* **Short sections:** on the whole page each section shows its first `SECTION_PREVIEW` (4) results
+  and **See All N …** (`search_all:<section>`), which opens that section alone (filter
+  `query\u{1f}section`, titled by the section, sliding like a page); Back returns to all results.
+  Play All and a song's queue take every song found (`Catalog::search_songs`), not only those shown.
+
+Previews `71f-search-see-all`, `71g-search-songs-alone`, `71h-search-playlist`.
+

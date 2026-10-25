@@ -894,6 +894,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             ui.model_action(m, Action::WheelClockwise(1));
         }
     });
+    // 8.36 (#44): a long search, its sections short with See All; then the
+    // songs alone (a playlist among the results: 71h, with the playlists).
+    case!("71f-search-see-all", at(Screen::Search, "a"), |ui, m| {
+        for _ in 0..7 {
+            ui.model_action(m, Action::WheelClockwise(1));
+        }
+    });
+    case!(
+        "71g-search-songs-alone",
+        at(Screen::Search, "a\u{1f}songs"),
+        |ui, m| {
+            ui.model_action(m, Action::WheelClockwise(1));
+        }
+    );
     case!("71c-search-field", at(Screen::Search, "north"), |_, m| m
         .navigation
         .focus =
@@ -1683,6 +1697,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         m.settings.music_directory = "/media/internal/music".into();
         ui.playlists.set_lists(lists());
     };
+    case!(
+        "71h-search-playlist",
+        at(Screen::Search, "road"),
+        move |ui, m| {
+            playlists_setup(ui, m);
+            m.navigation.focus = 2;
+        }
+    );
     case!("80-playlists", at(Screen::Playlists, ""), move |ui, m| {
         playlists_setup(ui, m);
         m.navigation.focus = 2;

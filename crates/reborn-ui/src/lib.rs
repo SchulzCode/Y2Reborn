@@ -395,9 +395,9 @@ pub struct Ui {
             (playlists_ui::FactsKey, std::rc::Rc<playlists_ui::Facts>),
         >,
     >,
-    /// The last station and library searches, offered again when reopened.
+    /// The last station search, offered again when reopened (a library
+    /// search starts empty, #44).
     radio_query: String,
-    library_query: String,
     catalog: std::cell::RefCell<catalog::Catalog>,
     /// Accent colour taken from the current cover (0 = the default accent).
     pub accent: u32,
@@ -1152,7 +1152,7 @@ impl Ui {
 
     pub fn collection_track<'a>(&self, m: &AppModel, tracks: &'a [Track]) -> Option<&'a Track> {
         let mut catalog = self.catalog.borrow_mut();
-        catalog.ensure(m, tracks);
+        self.ensure_catalog(&mut catalog, m, tracks);
         catalog
             .rows
             .iter()
@@ -1161,9 +1161,31 @@ impl Ui {
     pub fn invalidate_catalog(&self) {
         self.catalog.borrow_mut().clear();
     }
+    /// The catalog for this screen, with the playlists the search looks
+    /// through as Playlists lists them (refreshed when they change).
+    fn ensure_catalog(&self, c: &mut catalog::Catalog, m: &AppModel, tracks: &[Track]) {
+        let generation = self.playlists.generation();
+        if m.screen == Screen::Search && c.playlists_generation != Some(generation) {
+            let items = self
+                .playlists
+                .lists
+                .iter()
+                .enumerate()
+                .map(|(i, p)| {
+                    let facts = self.facts(tracks, p);
+                    let mut item = Item::new(&p.name, format!("playlist:{i}"))
+                        .with_secondary(playlists_ui::summary(p.entries.len(), facts.ms));
+                    item.art = facts.mosaic.first().copied();
+                    item
+                })
+                .collect();
+            c.set_playlists(generation, items);
+        }
+        c.ensure(m, tracks);
+    }
     fn catalog_rows(&self, m: &AppModel, tracks: &[Track]) -> Vec<Item> {
         let mut c = self.catalog.borrow_mut();
-        c.ensure(m, tracks);
+        self.ensure_catalog(&mut c, m, tracks);
         c.rows.iter().map(|r| r.item(tracks)).collect()
     }
     pub(crate) fn track_rows_page(
@@ -1174,7 +1196,7 @@ impl Ui {
         limit: usize,
     ) -> Vec<Item> {
         let mut c = self.catalog.borrow_mut();
-        c.ensure(m, tracks);
+        self.ensure_catalog(&mut c, m, tracks);
         c.rows
             .iter()
             .skip(offset)
@@ -1185,7 +1207,7 @@ impl Ui {
     pub(crate) fn row_count(&self, m: &AppModel, tracks: &[Track]) -> usize {
         if Self::is_catalog(m.screen) {
             let mut c = self.catalog.borrow_mut();
-            c.ensure(m, tracks);
+            self.ensure_catalog(&mut c, m, tracks);
             c.rows.len()
         } else if m.screen == Screen::Queue {
             self.up_next(m, tracks).len()
@@ -1373,7 +1395,10 @@ impl Ui {
         if key == Some("selection") {
             return self.selection_menu(m);
         }
-        if matches!(m.screen, Screen::Playlists | Screen::Playlist) {
+        // A playlist, also among search results (#44).
+        if matches!(m.screen, Screen::Playlists | Screen::Playlist)
+            || key.is_some_and(|k| k.starts_with("playlist:"))
+        {
             return self.playlist_context_rows(m, key.unwrap_or(""));
         }
         if let Some(book) = key
@@ -1830,6 +1855,15 @@ impl Ui {
                 return Effect::None;
             }
             Action::Back => {
+                // The search's results: Back goes up one level, to typing
+                // (#44); one section alone (See All) back to all of them.
+                if m.screen == Screen::Search
+                    && m.navigation.modal.is_none()
+                    && catalog::search_parts(&m.navigation.filter).1.is_none()
+                {
+                    self.open_library_search(m, tracks);
+                    return Effect::None;
+                }
                 Self::back(m);
                 return Effect::None;
             }
@@ -2246,6 +2280,11 @@ impl Ui {
         }
         if key == "search" || key == catalog::SEARCH_FIELD {
             self.open_library_search(m, tracks);
+            // The playlists are searched too: read them if not yet.
+            if !self.playlists.loaded && !self.playlists.loading {
+                self.playlists.loading = true;
+                return Effect::Playlist(Box::new(reborn_core::PlaylistRequest::Refresh));
+            }
             return Effect::None;
         }
         if key == catalog::SEARCH_PLAY_ALL {
@@ -2280,6 +2319,23 @@ impl Ui {
             // An album, or on a genre's album its whole tracklist (#50).
             Screen::Artist | Screen::Album if key.starts_with("album:") => {
                 Self::go(m, Screen::Album, key)
+            }
+            // See All: that section alone, Back returns (#44).
+            Screen::Search if key.starts_with(catalog::SEARCH_SEE_ALL) => {
+                let (query, _) = catalog::search_parts(&m.navigation.filter);
+                let section = &key[catalog::SEARCH_SEE_ALL.len()..];
+                let filter = format!("{query}\u{1f}{section}");
+                Self::go(m, Screen::Search, filter);
+            }
+            Screen::Search if key.starts_with("playlist:") => {
+                let path = key
+                    .strip_prefix("playlist:")
+                    .and_then(|i| i.parse::<usize>().ok())
+                    .and_then(|i| self.playlists.lists.get(i))
+                    .map(|p| p.path.to_string_lossy().into_owned());
+                if let Some(path) = path {
+                    Self::go(m, Screen::Playlist, path);
+                }
             }
             Screen::Search if key.starts_with("artist:") => Self::go(m, Screen::Artist, key),
             Screen::Search if key.starts_with("album:") => Self::go(m, Screen::Album, key),
@@ -2591,8 +2647,12 @@ impl Ui {
         if matches!(m.screen, Screen::Album | Screen::Search | Screen::Tracks) {
             // The page's own order (album, search results, Songs A to Z),
             // not library order: Next plays the row below (Y2Reborn #21).
+            // The search: every song found, also those See All would show.
             let mut c = self.catalog.borrow_mut();
-            c.ensure(m, tracks);
+            self.ensure_catalog(&mut c, m, tracks);
+            if m.screen == Screen::Search {
+                return c.search_songs.clone();
+            }
             return c.rows.iter().filter_map(catalog::Row::track).collect();
         }
         tracks
@@ -2966,7 +3026,9 @@ impl Ui {
         let station = source_key
             .strip_prefix("station:")
             .and_then(|value| value.parse::<usize>().ok());
-        if matches!(m.screen, Screen::Playlists | Screen::Playlist) {
+        if matches!(m.screen, Screen::Playlists | Screen::Playlist)
+            || source_key.starts_with("playlist:")
+        {
             if let Some(effect) = self.playlist_context_action(m, tracks, &source_key, menu_key) {
                 return effect;
             }
@@ -3199,6 +3261,12 @@ impl Ui {
                 self.fold_search(m, tracks);
                 Effect::None
             }
+            // Back from the search's top row: out of the search (#44).
+            Outcome::Leave => {
+                self.keyboard = None;
+                Self::back(m);
+                Effect::None
+            }
             Outcome::Cancel => {
                 let k = self.keyboard.take();
                 // The search: back to the search being edited, else out of
@@ -3309,18 +3377,18 @@ impl Ui {
     }
 
     /// Open the search with its keys up: on the search page with its text
-    /// (Cancel gives it back), else the search page with the last search.
-    /// The search index is built here (once per library), not on the first
-    /// letter.
+    /// (Cancel gives it back), else a new, empty search (#44: a search
+    /// left is not offered again). The search index is built here (once per
+    /// library), not on the first letter.
     fn open_library_search(&mut self, m: &mut AppModel, tracks: &[Track]) {
         let k = if m.screen == Screen::Search {
-            let text = m.navigation.filter.clone();
+            let text = catalog::search_parts(&m.navigation.filter).0.to_owned();
             let mut k = keyboard::Keyboard::new(keyboard::Purpose::LibrarySearch, text.clone());
             k.restore = Some(text);
             k
         } else {
-            Self::go(m, Screen::Search, self.library_query.clone());
-            keyboard::Keyboard::new(keyboard::Purpose::LibrarySearch, self.library_query.clone())
+            Self::go(m, Screen::Search, "");
+            keyboard::Keyboard::new(keyboard::Purpose::LibrarySearch, "")
         };
         self.keyboard = Some(k);
         self.folding.borrow_mut().take();
@@ -3330,21 +3398,22 @@ impl Ui {
     /// The search's text changed: the page under the keys searches it, and
     /// the field counts what it finds.
     pub(crate) fn search_typed(&mut self, m: &mut AppModel, tracks: &[Track]) {
-        let Some(k) = self.keyboard.as_mut() else {
+        let Some(text) = self.keyboard.as_ref().map(|k| k.text.clone()) else {
             return;
         };
-        m.navigation.filter = k.text.clone();
+        m.navigation.filter = text.clone();
         m.navigation.focus = 0;
         m.navigation.scroll = 0;
-        let mut catalog = self.catalog.borrow_mut();
-        catalog.ensure(m, tracks);
-        let blank = k.text.trim().is_empty();
-        k.found = if blank { 0 } else { catalog.found };
-        k.note = if blank {
-            String::new()
-        } else {
-            catalog.summary.clone()
+        let (found, summary) = {
+            let mut catalog = self.catalog.borrow_mut();
+            self.ensure_catalog(&mut catalog, m, tracks);
+            (catalog.found, catalog.summary.clone())
         };
+        let blank = text.trim().is_empty();
+        if let Some(k) = self.keyboard.as_mut() {
+            k.found = if blank { 0 } else { found };
+            k.note = if blank { String::new() } else { summary };
+        }
     }
 
     /// Fold the search's keys away: the page lists everything found with
@@ -3354,12 +3423,11 @@ impl Ui {
             return;
         };
         let text = k.text.trim().to_owned();
-        self.library_query = text.clone();
         m.navigation.filter = text;
         m.navigation.scroll = 0;
         m.navigation.focus = {
             let mut catalog = self.catalog.borrow_mut();
-            catalog.ensure(m, tracks);
+            self.ensure_catalog(&mut catalog, m, tracks);
             catalog
                 .rows
                 .iter()
@@ -3422,7 +3490,7 @@ impl Ui {
                 .collect();
         }
         let mut catalog = self.catalog.borrow_mut();
-        catalog.ensure(m, tracks);
+        self.ensure_catalog(&mut catalog, m, tracks);
         catalog
             .rows
             .iter()
@@ -3433,7 +3501,7 @@ impl Ui {
     /// What the search found, in words, and how many results.
     pub(crate) fn search_summary(&self, m: &AppModel, tracks: &[Track]) -> (String, usize) {
         let mut catalog = self.catalog.borrow_mut();
-        catalog.ensure(m, tracks);
+        self.ensure_catalog(&mut catalog, m, tracks);
         (catalog.summary.clone(), catalog.found)
     }
 
@@ -3441,7 +3509,7 @@ impl Ui {
     /// preview above the keys, where there are no headings.
     pub(crate) fn search_preview(&self, m: &AppModel, tracks: &[Track], n: usize) -> Vec<Item> {
         let mut catalog = self.catalog.borrow_mut();
-        catalog.ensure(m, tracks);
+        self.ensure_catalog(&mut catalog, m, tracks);
         catalog
             .rows
             .iter()
@@ -3488,8 +3556,12 @@ impl Ui {
         {
             let mut seen = self.seen.borrow_mut();
             if let Some((screen, filter, depth, old)) = seen.take() {
-                // Typing changes the search page's text, not the page.
-                let moved = screen != here.0 || (filter != here.1 && screen != Screen::Search);
+                // Typing changes the search page's text, not the page; a
+                // section shown alone (See All) is a page of its own.
+                let section = |f: &str| catalog::search_parts(f).1;
+                let moved = screen != here.0
+                    || (filter != here.1 && screen != Screen::Search)
+                    || (screen == Screen::Search && section(&filter) != section(&here.1));
                 // Cover Flow's cover flight is its own transition.
                 if moved && !m.screen_off && self.transition.get().is_none() && !old.is_empty() {
                     *self.slide.borrow_mut() = Some(Slide {
@@ -3926,7 +3998,7 @@ pub(crate) fn source_label(m: &AppModel) -> String {
         Screen::Artist => artist_of_filter(filter)
             .map(|artist| display_or_unknown(artist).to_owned())
             .unwrap_or_else(|| "Artist".into()),
-        Screen::Search => format!("Search “{}”", filter.trim()),
+        Screen::Search => format!("Search “{}”", catalog::search_parts(filter).0.trim()),
         Screen::Tracks => match filter.strip_prefix("genre:") {
             Some("") => "No Genre".into(),
             Some(genre) => genre.to_owned(),

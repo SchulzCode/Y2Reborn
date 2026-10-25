@@ -157,6 +157,8 @@ pub enum Outcome {
     Cancel,
     /// Library search: fold the keys away into the results.
     Browse,
+    /// Library search: Back from the top row leaves the search (#44).
+    Leave,
 }
 
 /// Results visible at once above the live keyboard.
@@ -281,8 +283,13 @@ impl Keyboard {
     pub fn action(&mut self, action: Action) -> Outcome {
         // Up from the top row goes on into the results above the keys, and
         // the wheel browses them; with nothing found Up wraps to Done.
+        // Back is up a row; from the top row it leaves the search, one level
+        // up as Back is everywhere (#44).
+        if self.live() && self.row == 0 && action == Action::Back {
+            return Outcome::Leave;
+        }
         if self.live() && self.found > 0 {
-            let up = self.row == 0 && matches!(action, Action::NavigateUp | Action::Back);
+            let up = self.row == 0 && action == Action::NavigateUp;
             if up
                 || matches!(
                     action,
@@ -913,9 +920,10 @@ mod tests {
         assert_eq!(k.action(Action::WheelClockwise(1)), Outcome::Stay);
         k.row = 0;
         k.found = 5;
-        // Results: Up (or Back) from the top row goes on into them…
+        // Results: Up from the top row goes on into them; Back there leaves
+        // the search, one level up (#44)…
         assert_eq!(k.action(Action::NavigateUp), Outcome::Browse);
-        assert_eq!(k.action(Action::Back), Outcome::Browse);
+        assert_eq!(k.action(Action::Back), Outcome::Leave);
         // …a lower row only moves up…
         k.row = 2;
         assert_eq!(k.action(Action::NavigateUp), Outcome::Stay);

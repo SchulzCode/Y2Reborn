@@ -18,6 +18,8 @@ use reborn_core::{AppModel, Track};
 pub(crate) const TOP: f32 = 38.;
 pub(crate) const VIEW_H: f32 = HEIGHT - TOP;
 const FIELD_ROW: f32 = 44.;
+/// "See All 24 Songs": a text row under a section's first results.
+const SEE_ALL_ROW: f32 = 44.;
 pub(crate) const HEADING_ROW: f32 = 28.;
 pub(crate) const ROW: f32 = 53.;
 
@@ -25,6 +27,7 @@ pub(crate) fn row_height(kind: SearchKind) -> f32 {
     match kind {
         SearchKind::Field => FIELD_ROW,
         SearchKind::Heading => HEADING_ROW,
+        SearchKind::SeeAll => SEE_ALL_ROW,
         SearchKind::PlayAll | SearchKind::Result => ROW,
     }
 }
@@ -52,10 +55,11 @@ pub(crate) fn window(heights: &[f32], focus: usize, scroll: usize) -> usize {
 
 pub fn page(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interactive: bool) {
     let accent = ui.accent();
+    // "Search", or the section shown alone (See All).
     let title = if ui.selecting(m).is_some() {
         ui.list_title(m)
     } else {
-        "Search".into()
+        crate::screens::screen_title(m)
     };
     components::status_bar(c, ui, m, &title, true);
     let heights = ui.search_heights(m, tracks);
@@ -107,9 +111,14 @@ pub fn page(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interactive
                         WIDTH - 24.,
                         keyboard::FIELD_H,
                     ),
-                    &m.navigation.filter,
+                    crate::catalog::search_parts(&m.navigation.filter).0,
                     // Nothing found: the page says so below.
-                    if m.navigation.filter.trim().is_empty() || found == 0 {
+                    if crate::catalog::search_parts(&m.navigation.filter)
+                        .0
+                        .trim()
+                        .is_empty()
+                        || found == 0
+                    {
                         ""
                     } else {
                         &summary
@@ -131,12 +140,38 @@ pub fn page(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interactive
                 c.icon(Icon::Play, 39., y + 26., 20., color::TEXT);
                 lines(c, &row.label, &row.secondary, y, 0., selected, color::TEXT);
             }
+            SearchKind::SeeAll => {
+                if selected {
+                    components::focus_row(c, 10., y + 1., WIDTH - 24., SEE_ALL_ROW - 3.);
+                }
+                let mid = y + (SEE_ALL_ROW - 3.) / 2. + 1.;
+                c.text_mid(
+                    20.,
+                    mid,
+                    360.,
+                    &row.label,
+                    if selected { Face::S15 } else { Face::R15 },
+                    accent,
+                );
+                c.icon(Icon::Chevron, WIDTH - 44., mid, 16., color::DIM);
+            }
             SearchKind::Result => {
                 if selected {
                     components::focus_row(c, 10., y + 1., WIDTH - 24., ROW - 3.);
                 }
                 let art = row.art.and_then(|i| tracks.get(i).map(|t| (i, t)));
-                cover(c, ui, art, 20., y + 7., 38.);
+                // Playlists as Playlists shows them: Favorites a heart.
+                let favorites = row
+                    .key
+                    .strip_prefix("playlist:")
+                    .and_then(|i| i.parse::<usize>().ok())
+                    .and_then(|i| ui.playlists.lists.get(i))
+                    .is_some_and(|p| crate::playlists_ui::is_favorites(&p.path));
+                if favorites {
+                    components::icon_tile(c, 20., y + 7., 38., 9., 0xFF5A7AFF, Icon::HeartOn, 20.);
+                } else {
+                    cover(c, ui, art, 20., y + 7., 38.);
+                }
                 if row.key.starts_with("artist:") {
                     components::round_cover(c, 20., y + 7., 38., selected);
                 }
@@ -182,7 +217,12 @@ pub fn page(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interactive
         offset,
         row_h: ROW,
     });
-    if !m.navigation.filter.trim().is_empty() && found == 0 {
+    if !crate::catalog::search_parts(&m.navigation.filter)
+        .0
+        .trim()
+        .is_empty()
+        && found == 0
+    {
         components::empty_state(
             c,
             150.,
@@ -207,6 +247,7 @@ fn row_kind(key: &str, enabled: bool) -> SearchKind {
     match key {
         crate::catalog::SEARCH_FIELD => SearchKind::Field,
         crate::catalog::SEARCH_PLAY_ALL => SearchKind::PlayAll,
+        k if k.starts_with(crate::catalog::SEARCH_SEE_ALL) => SearchKind::SeeAll,
         _ if !enabled => SearchKind::Heading,
         _ => SearchKind::Result,
     }

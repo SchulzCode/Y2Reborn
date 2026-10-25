@@ -712,7 +712,11 @@ pub fn screen_title(m: &AppModel) -> String {
         Screen::Genres => "Genres".into(),
         Screen::Artists => "Artists".into(),
         Screen::Tracks => "Songs".into(),
-        Screen::Search => "Search".into(),
+        // One section alone (See All): its name.
+        Screen::Search => crate::catalog::search_parts(&m.navigation.filter)
+            .1
+            .map_or("Search", crate::catalog::Section::name)
+            .into(),
         Screen::Folders => {
             if m.navigation.filter.is_empty() {
                 "Folders".into()

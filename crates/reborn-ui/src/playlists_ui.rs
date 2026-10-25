@@ -56,6 +56,10 @@ pub(crate) type FactsKey = ((u64, i64), usize, (usize, usize));
 pub(crate) type RowsKey = (Screen, String, u64, usize, usize, Option<(usize, usize)>);
 
 impl PlaylistsView {
+    /// Bumped whenever the lists change.
+    pub(crate) fn generation(&self) -> u64 {
+        self.generation
+    }
     pub fn set_lists(&mut self, mut lists: Vec<Playlist>) {
         lists.sort_by_cached_key(|p| (!is_favorites(&p.path), sort_key(&p.name, SortAs::Title)));
         self.lists = lists;
