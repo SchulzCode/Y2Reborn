@@ -1,6 +1,15 @@
 # Current Reborn state on the Y2
 
-## 1.0.0-beta.8.36 — Y2Linux 1.0 Beta 8.36 (Baseline 138), 2026-10-25 (latest): issue fixes, one menu order
+## 1.0.0-beta.8.37 — Y2Linux 1.0 Beta 8.37 (Baseline 144), 2026-10-25 (latest): sleep timer, search, scrolling
+
+Published as `baseline-144` (Reborn `69232c2`, sequence 10200). Sleep timer picker (`Modal::SleepTimer`,
+`SLEEP_MINUTES` 5 min to 3 h, `minutes_label`; skins `{sleep}`, `"if": "sleep"`, icon `moon`, every shipped skin's
+output line), search (#44: `keyboard::Outcome::Leave`, empty start, `Catalog::playlists`, sections of
+`SECTION_PREVIEW` with `search_all:<section>`, `Catalog::search_songs`), the playlist page's focus, and one way of
+scrolling: headers stay, only lists scroll ([Product UI v4](ui/REBORN-PRODUCT-UI-V4.md), last sections).
+Device-checked on the owner's player.
+
+## 1.0.0-beta.8.36 — Y2Linux 1.0 Beta 8.36 (Baseline 138), 2026-10-25: issue fixes, one menu order
 
 Published as `baseline-138` (Reborn `92b9c9a`; fixes `d340263`, redesign `92b9c9a`; sequence 10050). Fixes from the
 GitHub issues: `art_key` gives a song without an album its own cover (#43); skins mark Up Next's playing row by queue

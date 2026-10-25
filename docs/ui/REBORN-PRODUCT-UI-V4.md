@@ -81,6 +81,7 @@ One component per idea; screen code must not draw its own variant.
 | Rows | Title plus at most one secondary line of facts a listener uses (artist, album count, country · genre). No codec, bitrate, rank, free space or internal state in lists. |
 | Words | American English, Title Case for titles and labels, sentence case for secondary lines. |
 | Menus (8.36) | Menus hold actions on the item; preferences live in Customize. Every song and collection menu lists its shared actions in one order: Play, Shuffle · Play Next, Add to Queue · what this place changes (Move, Remove from …) · Add to Favorites, Add to Playlist… · Go to Album, Go to Artist · Select Songs…. A row that would not change anything is left out. No new row without removing one (test `every_menu_lists_its_shared_actions_in_one_order`). |
+| Scrolling (8.37) | Headers stay; only lists scroll. The focus moves through the rows in view; the list moves one row when the focus reaches an edge, with the list glide. Album, playlist and audiobook headers, Display's brightness card and the search field stay put while the list under them scrolls (`components::header_list_*`, `views_search::search_first`, `Ui::group_window`). |
 | Values | A row's value uses the room its label leaves and ends in "…" (sheets, and skins' right-aligned `{detail}` up to the end of `{label}`). |
 
 ## Screen changes
@@ -454,4 +455,17 @@ No menu row added. Previews `14c-now-playing-sleep`, `14d-sleep-timer-picker`.
   Play All and a song's queue take every song found (`Catalog::search_songs`), not only those shown.
 
 Previews `71f-search-see-all`, `71g-search-songs-alone`, `71h-search-playlist`.
+
+## One way of scrolling (Beta 8.37, owner request)
+
+The playlist page lost its focus below the screen (its header stayed until the sixth song while showing three);
+the owner then asked for one way of scrolling everywhere and, after trying a header that scrolled away with its
+list, chose: **headers stay, only the list scrolls**. Album, playlist and audiobook pages keep their header and
+scroll the songs or chapters under it (three rows and the next one's top; the list is drawn first, the header over
+it, so a row gliding up passes under it). Display keeps the brightness card over its rows; the search keeps its field
+over the results (a section alone has none). Settings pages keep their rows until the focus reaches an edge
+(`Ui::group_window`, their own memory: the rows that fit under a page's text differ) and glide. Up Next and the long
+lists were already so. The artist page keeps its sideways row of albums. Tests
+`a_page_header_stays_and_its_list_scrolls_one_row_at_a_time`, `a_playlist_page_keeps_the_focused_song_on_screen`,
+`settings_pages_keep_their_rows_until_the_focus_reaches_an_edge`.
 

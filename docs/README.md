@@ -1,6 +1,6 @@
 # Reborn documentation
 
-Reborn 1.0.0-beta.8.36 is the player in **Y2Linux 1.0 Beta 8.36** (Baseline 138, 2026-10-25, tag `baseline-138`), built
+Reborn 1.0.0-beta.8.37 is the player in **Y2Linux 1.0 Beta 8.37** (Baseline 144, 2026-10-25, tag `baseline-144`), built
 with Rust 1.99. Start with [current Reborn state](CURRENT_REBORN_STATE.md), the
 [Product UI v4](ui/REBORN-PRODUCT-UI-V4.md) design and the paired
 [Y2Linux state](https://github.com/SchulzCode/Y2Linux/blob/main/docs/CURRENT_PLATFORM_STATE.md).
