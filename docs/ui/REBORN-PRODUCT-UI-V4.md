@@ -469,3 +469,12 @@ lists were already so. The artist page keeps its sideways row of albums. Tests
 `a_page_header_stays_and_its_list_scrolls_one_row_at_a_time`, `a_playlist_page_keeps_the_focused_song_on_screen`,
 `settings_pages_keep_their_rows_until_the_focus_reaches_an_edge`.
 
+## The live wave (Beta 8.38, owner request)
+
+The progress wave on Now Playing (and now Home's card) is drawn as one ribbon: points every 2 px with averaged
+normals, a 2.6-px core and a 1-px edge on each side fading to transparent through the quad's corner colours — edge
+anti-aliasing without MSAA, and no beading because the pieces share their joints. It moves with the music
+(`Levels`: bass, mids, highs, 0..1): height 0.35 + 0.85 × loudness (typical music as tall as before, loud up to about
+a third more), bass swells it, highs ripple it; without levels (nothing measured) it waves as before. Not a spectrum
+visualizer (the owner: "not yet"). Previews `14e-now-playing-loud`, `14f-now-playing-quiet`.
+

@@ -1,6 +1,14 @@
 # Current Reborn state on the Y2
 
-## 1.0.0-beta.8.37 — Y2Linux 1.0 Beta 8.37 (Baseline 144), 2026-10-25 (latest): sleep timer, search, scrolling
+## 1.0.0-beta.8.38 — Y2Linux 1.0 Beta 8.38 (Baseline 146), 2026-10-25 (latest): Bluetooth pause, live wave
+
+Published as `baseline-146` (Reborn `6c37d9f`; F43 `990443f`; sequence 10310). On Bluetooth, `Runtime::pause`
+releases the sink and Play reopens at the position (BlueALSA in-place resumes stayed silent with AirPods Pro 2,
+ledger F43). The playing wave (`components::wave_progress`) is an anti-aliased ribbon whose height and ripple follow
+`Levels` (bass, mids, highs) measured in the audio thread before the volume (`app/reborn/src/meter.rs`, timed by the
+sink delay; `Playback::heard`, `Ui::set_heard`, smoothed by `Ui::wave_levels`); Home's card shows it too.
+
+## 1.0.0-beta.8.37 — Y2Linux 1.0 Beta 8.37 (Baseline 144), 2026-10-25: sleep timer, search, scrolling
 
 Published as `baseline-144` (Reborn `69232c2`, sequence 10200). Sleep timer picker (`Modal::SleepTimer`,
 `SLEEP_MINUTES` 5 min to 3 h, `minutes_label`; skins `{sleep}`, `"if": "sleep"`, icon `moon`, every shipped skin's
