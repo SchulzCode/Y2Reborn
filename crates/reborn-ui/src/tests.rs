@@ -613,6 +613,15 @@ fn the_sleep_timer_is_picked_with_the_wheel_and_shows_on_now_playing() {
         crate::sleep_choice_label(SleepChoice::EndOfItem, true),
         "End of Chapter"
     );
+    // Long times read in hours on Now Playing too, not "120 min".
+    m.sleep_timer = Some(reborn_core::SleepTimer {
+        choice: SleepChoice::Minutes(120),
+        until: Some(Instant::now() + Duration::from_secs(119 * 60 + 30)),
+        item: m.sleep_item(),
+    });
+    let text = drawn_text(&ui.draw(&m, &tracks, false));
+    assert!(text.contains("Sleeps in 2 h"), "{text}");
+    assert_eq!(crate::minutes_label(119), "1 h 59 min");
 }
 
 #[test]

@@ -1568,8 +1568,9 @@ impl Ui {
                             SleepChoice::EndOfItem => ("sleep_set:end".to_owned(), "On".to_owned()),
                             SleepChoice::Minutes(n) => (
                                 format!("sleep_set:{n}"),
-                                sleep_minutes_left(m)
-                                    .map_or_else(String::new, |l| format!("{l} min left")),
+                                sleep_minutes_left(m).map_or_else(String::new, |l| {
+                                    format!("{} left", minutes_label(l))
+                                }),
                             ),
                         };
                         // The running choice says so, a timed one how long it has left.
@@ -3948,10 +3949,7 @@ pub(crate) fn sleep_label(m: &AppModel, book: bool) -> String {
         Some(t) => match (t.choice, t.until) {
             (reborn_core::SleepChoice::EndOfItem, _) if book => "End of Chapter".into(),
             (reborn_core::SleepChoice::EndOfItem, _) => "End of Song".into(),
-            (_, Some(until)) => {
-                let left = until.saturating_duration_since(Instant::now()).as_secs();
-                format!("{} min", left.div_ceil(60).max(1))
-            }
+            (_, Some(_)) => minutes_label(sleep_minutes_left(m).unwrap_or(1)),
             _ => "Off".into(),
         },
     }
@@ -3963,11 +3961,16 @@ pub(crate) fn sleep_choice_label(choice: reborn_core::SleepChoice, book: bool) -
         reborn_core::SleepChoice::Off => "Off".into(),
         reborn_core::SleepChoice::EndOfItem if book => "End of Chapter".into(),
         reborn_core::SleepChoice::EndOfItem => "End of Song".into(),
-        reborn_core::SleepChoice::Minutes(n) => match (n / 60, n % 60) {
-            (0, m) => format!("{m} min"),
-            (h, 0) => format!("{h} h"),
-            (h, m) => format!("{h} h {m} min"),
-        },
+        reborn_core::SleepChoice::Minutes(n) => minutes_label(u64::from(n)),
+    }
+}
+
+/// Minutes as a sleep timer says them: "45 min", "2 h", "1 h 59 min".
+pub(crate) fn minutes_label(minutes: u64) -> String {
+    match (minutes / 60, minutes % 60) {
+        (0, m) => format!("{m} min"),
+        (h, 0) => format!("{h} h"),
+        (h, m) => format!("{h} h {m} min"),
     }
 }
 
