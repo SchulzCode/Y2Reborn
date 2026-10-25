@@ -2006,10 +2006,17 @@ impl Runtime {
         self.playback_hints.clear();
         // A file paused while it plays holds in place: resume is instant. A
         // station (live), a start in progress or a pending seek release.
+        // So does Bluetooth (F43, AirPods Pro 2 and others): a stream drained
+        // and prepared again inside BlueALSA stayed silent in the headphones,
+        // while a new stream (a skip) always played. Releasing the sink ends
+        // the stream as a phone's pause does, and Play opens a new one where
+        // the song was (about half a second).
+        let bluetooth = matches!(self.model.output, AudioOutput::Bluetooth(_));
         if self.model.playback == PlaybackState::Playing
             && self.pending_reconfiguration.is_none()
             && self.seek_until.is_none()
             && self.model.current().is_some_and(|t| !t.is_radio())
+            && !bluetooth
         {
             self.playback.hold(true);
             self.held_since = Some(Instant::now());
