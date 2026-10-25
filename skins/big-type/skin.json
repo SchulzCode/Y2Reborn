@@ -1362,7 +1362,19 @@
     "h": 28,
     "text": "{output}",
     "font": "small",
-    "color": "dim"
+    "color": "dim",
+    "if": "!sleep"
+   },
+   {
+    "type": "text",
+    "x": 16,
+    "y": 328,
+    "w": 448,
+    "h": 28,
+    "text": "{output} · {sleep}",
+    "font": "small",
+    "color": "dim",
+    "if": "sleep"
    },
    {
     "type": "icon",

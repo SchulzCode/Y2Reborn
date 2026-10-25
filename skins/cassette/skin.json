@@ -1721,7 +1721,20 @@
     "text": "{output}",
     "font": "small",
     "color": "dim",
-    "align": "center"
+    "align": "center",
+    "if": "!sleep"
+   },
+   {
+    "type": "text",
+    "x": 24,
+    "y": 328,
+    "w": 432,
+    "h": 28,
+    "text": "{output} · {sleep}",
+    "font": "small",
+    "color": "dim",
+    "align": "center",
+    "if": "sleep"
    },
    {
     "type": "icon",

@@ -1279,7 +1279,20 @@
     "text": "{output}",
     "font": "small",
     "color": "dim",
-    "case": "lower"
+    "case": "lower",
+    "if": "!sleep"
+   },
+   {
+    "type": "text",
+    "x": 20,
+    "y": 326,
+    "w": 440,
+    "h": 26,
+    "text": "{output} · {sleep}",
+    "font": "small",
+    "color": "dim",
+    "case": "lower",
+    "if": "sleep"
    },
    {
     "type": "icon",

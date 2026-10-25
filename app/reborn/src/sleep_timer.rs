@@ -46,8 +46,21 @@ impl Runtime {
     /// Every pass of the main loop: fade, pause when due.
     pub(crate) fn sleep_timer_tick(&mut self) {
         let Some(timer) = self.model.sleep_timer else {
+            self.sleep_minutes_shown = None;
             return;
         };
+        // Now Playing shows the minutes left: draw again when they change,
+        // also while paused (#29).
+        let minutes = timer.until.map(|until| {
+            until
+                .saturating_duration_since(Instant::now())
+                .as_secs()
+                .div_ceil(60)
+        });
+        if minutes != self.sleep_minutes_shown {
+            self.sleep_minutes_shown = minutes;
+            self.dirty.mark_render();
+        }
         let playing = matches!(
             self.model.playback,
             PlaybackState::Playing | PlaybackState::Buffering

@@ -589,6 +589,35 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             m.output = AudioOutput::Bluetooth("AA".into());
         }
     );
+    // 8.36 (#29): a sleep timer running, then its picker.
+    case!(
+        "14c-now-playing-sleep",
+        at(Screen::NowPlaying, ""),
+        move |ui, m| {
+            ui.accent = orange;
+            m.sleep_timer = Some(reborn_core::SleepTimer {
+                choice: reborn_core::SleepChoice::Minutes(45),
+                until: Some(std::time::Instant::now() + std::time::Duration::from_secs(23 * 60)),
+                item: m.sleep_item(),
+            });
+        }
+    );
+    case!(
+        "14d-sleep-timer-picker",
+        at(Screen::NowPlaying, ""),
+        move |ui, m| {
+            ui.accent = orange;
+            m.sleep_timer = Some(reborn_core::SleepTimer {
+                choice: reborn_core::SleepChoice::Minutes(45),
+                until: Some(std::time::Instant::now() + std::time::Duration::from_secs(23 * 60)),
+                item: m.sleep_item(),
+            });
+            ui.model_action(m, Action::ContextMenu);
+            let tracks = m.library.tracks.clone();
+            assert!(ui.focus_menu_row(m, &tracks, "sleep_timer"));
+            ui.model_action(m, Action::Select);
+        }
+    );
     case!(
         "14b-now-playing-all-options",
         at(Screen::NowPlaying, ""),

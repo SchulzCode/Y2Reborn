@@ -1742,7 +1742,19 @@
     "h": 22,
     "text": "{output}",
     "font": "detail",
-    "color": "lcd"
+    "color": "lcd",
+    "if": "!sleep"
+   },
+   {
+    "type": "text",
+    "x": 194,
+    "y": 256,
+    "w": 262,
+    "h": 22,
+    "text": "{output} · {sleep}",
+    "font": "detail",
+    "color": "lcd",
+    "if": "sleep"
    },
    {
     "type": "text",

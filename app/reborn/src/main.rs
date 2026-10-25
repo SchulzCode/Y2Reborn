@@ -224,6 +224,8 @@ struct Runtime {
     paused_at: Option<Instant>,
     /// The sleep timer has lowered the playback volume.
     sleep_fading: bool,
+    /// The sleep timer's minutes left as last drawn (they change on screen).
+    sleep_minutes_shown: Option<u64>,
     playback_hints: reborn_platform::workload::Hints,
     interaction_hints: reborn_platform::workload::Hints,
     model: AppModel,
@@ -4472,6 +4474,7 @@ fn run() -> Result<(), String> {
         shelf_written: Default::default(),
         paused_at: None,
         sleep_fading: false,
+        sleep_minutes_shown: None,
         playback_hints: reborn_platform::workload::Hints::default(),
         interaction_hints: reborn_platform::workload::Hints::default(),
         model,

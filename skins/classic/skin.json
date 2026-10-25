@@ -1061,7 +1061,20 @@
     "text": "{output}",
     "font": "body",
     "color": "muted",
-    "align": "center"
+    "align": "center",
+    "if": "!sleep"
+   },
+   {
+    "type": "text",
+    "x": 24,
+    "y": 310,
+    "w": 432,
+    "h": 40,
+    "text": "{output} · {sleep}",
+    "font": "body",
+    "color": "muted",
+    "align": "center",
+    "if": "sleep"
    },
    {
     "type": "icon",

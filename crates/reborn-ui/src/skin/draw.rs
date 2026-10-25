@@ -108,6 +108,7 @@ impl Scene<'_> {
             Flag::Gapless => s.gapless_enabled,
             Flag::Crossfade => s.crossfade_ms > 0,
             Flag::Normalise => s.replay_gain != reborn_core::ReplayGainMode::Off,
+            Flag::Sleep => m.sleep_timer.is_some(),
             Flag::HasStatus => self.page.and_then(|p| p.status.as_ref()).is_some(),
             Flag::HasClock => self.ui.clock(m).is_some(),
             Flag::Live => m.current().is_some_and(Track::is_radio),
@@ -280,6 +281,8 @@ impl Scene<'_> {
                 .map(|s| s.body.to_owned())
                 .unwrap_or_default(),
             Var::Skin => self.skin.name.clone(),
+            // "Sleeps in 23 min", "Sleeps after song", or nothing (#29).
+            Var::Sleep => crate::views_playing::sleep_note(m).unwrap_or_default(),
             Var::Playback => match (m.current(), m.playback) {
                 (None, _) => "Stopped",
                 (_, PlaybackState::Playing | PlaybackState::Buffering) => "Playing",

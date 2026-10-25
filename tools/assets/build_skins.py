@@ -424,6 +424,7 @@ class Skin:
             add_live(self.id, doc)
             add_keyboard(self.id, doc)
             add_heart(self.id, doc)
+        add_sleep(self.id, doc)
         (self.dir / "skin.json").write_text(json.dumps(doc, indent=1, ensure_ascii=False) + "\n")
 
 
@@ -584,6 +585,28 @@ def add_keyboard(sid, doc):
                 e["text"] = e["text"].replace("{screen}", "{sheet_title}")
             layout.append(e)
     doc["screens"]["keyboard"] = layout
+
+
+def add_sleep(sid, doc):
+    """A running sleep timer joins the output line (#29): "Headphone Jack ·
+    Sleeps in 23 min", as Reborn's own Now Playing says it."""
+    def walk(elements):
+        i = 0
+        while i < len(elements):
+            e = elements[i]
+            text = e.get("text", "")
+            if e.get("type") == "text" and "{output}" in text and "sleep" not in e.get("if", ""):
+                a, b = json.loads(json.dumps(e)), json.loads(json.dumps(e))
+                a["if"] = f"{e['if']} & !sleep" if "if" in e else "!sleep"
+                b["if"] = f"{e['if']} & sleep" if "if" in e else "sleep"
+                b["text"] = text.replace("{output}", "{output} · {sleep}")
+                elements[i:i + 1] = [a, b]
+                i += 2
+                continue
+            if "elements" in e:
+                walk(e["elements"])
+            i += 1
+    walk(doc["screens"]["now_playing"])
 
 
 HEART = "#FF5A7A"

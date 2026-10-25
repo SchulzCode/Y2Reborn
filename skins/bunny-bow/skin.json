@@ -1843,7 +1843,20 @@
     "text": "{output}",
     "font": "small",
     "color": "muted",
-    "align": "center"
+    "align": "center",
+    "if": "!sleep"
+   },
+   {
+    "type": "text",
+    "x": 162,
+    "y": 278,
+    "w": 298,
+    "h": 26,
+    "text": "{output} · {sleep}",
+    "font": "small",
+    "color": "muted",
+    "align": "center",
+    "if": "sleep"
    },
    {
     "type": "icon",

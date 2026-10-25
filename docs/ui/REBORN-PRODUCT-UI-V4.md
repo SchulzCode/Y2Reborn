@@ -429,3 +429,13 @@ Customize holds preferences, one order for shared actions, no growth without rem
 Previews `51c-customize`, `09b-album-from-genre`, `17e`–`17h`, `b2-audiobooks` (Cover Flow).
 Haptics (#28) is not part of this: Linux does not drive the vibration motor yet (PMIC VIBR).
 
+## Sleep timer lengths (Beta 8.37, Y2Reborn #29)
+
+Now Playing's *Sleep Timer* row opens a picker instead of stepping on each press: Off, End of Song (End of
+Chapter in a book), 5, 10, 15, 20, 30, 45 min, 1 h, 1 h 15, 1 h 30, 2 h, 2 h 30, 3 h (`SLEEP_MINUTES`).
+It opens on the timer set (else 30 min), marks it ("23 min left"), stops at its ends; Select starts it, Back
+leaves it as it was. Now Playing keeps "Sleeps in 23 min" opposite the output and now redraws it as the
+minutes change, also while paused. Skins get `{sleep}` and `"if": "sleep"`; every shipped skin shows
+"Headphone Jack · Sleeps in 23 min" on its output line (`build_skins.py` `add_sleep`), and the `moon` icon.
+No menu row added. Previews `14c-now-playing-sleep`, `14d-sleep-timer-picker`.
+

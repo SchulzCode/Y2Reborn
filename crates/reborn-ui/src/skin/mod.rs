@@ -217,6 +217,7 @@ pub(crate) enum Align {
 /// State a text element shows.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Var {
+    Sleep,
     Title,
     Artist,
     Album,
@@ -283,6 +284,7 @@ const VARS: &[(&str, Var, bool)] = &[
     ("sheet_body", Var::SheetBody, false),
     ("skin", Var::Skin, false),
     ("playback", Var::Playback, false),
+    ("sleep", Var::Sleep, false),
     ("label", Var::Label, true),
     ("detail", Var::Detail, true),
     ("number", Var::Number, true),
@@ -298,6 +300,7 @@ pub(crate) enum Seg {
 /// Yes/no state an element can depend on (`"if"`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Flag {
+    Sleep,
     Playing,
     Paused,
     HasTrack,
@@ -366,6 +369,7 @@ const FLAGS: &[(&str, Flag, bool)] = &[
     ("gapless", Flag::Gapless, false),
     ("crossfade", Flag::Crossfade, false),
     ("normalise", Flag::Normalise, false),
+    ("sleep", Flag::Sleep, false),
     ("has_status", Flag::HasStatus, false),
     ("has_clock", Flag::HasClock, false),
     ("live", Flag::Live, false),

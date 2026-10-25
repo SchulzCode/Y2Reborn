@@ -1556,6 +1556,32 @@ impl Ui {
                 .map(|gain| Item::new(format!("{gain:+} dB"), format!("eq_gain:{gain}")))
                 .collect(),
             Some(Modal::DateField(field)) => date_time::picker(self, m, field).0,
+            Some(Modal::SleepTimer) => {
+                use reborn_core::SleepChoice;
+                let set = m.sleep_timer.map(|t| t.choice);
+                let book = m.book_part().is_some();
+                SleepChoice::all()
+                    .into_iter()
+                    .map(|c| {
+                        let (key, running) = match c {
+                            SleepChoice::Off => ("sleep_set:off".to_owned(), String::new()),
+                            SleepChoice::EndOfItem => ("sleep_set:end".to_owned(), "On".to_owned()),
+                            SleepChoice::Minutes(n) => (
+                                format!("sleep_set:{n}"),
+                                sleep_minutes_left(m)
+                                    .map_or_else(String::new, |l| format!("{l} min left")),
+                            ),
+                        };
+                        // The running choice says so, a timed one how long it has left.
+                        let detail = if set == Some(c) {
+                            running
+                        } else {
+                            String::new()
+                        };
+                        Item::new(sleep_choice_label(c, book), key).with_secondary(detail)
+                    })
+                    .collect()
+            }
             Some(Modal::Confirm(action)) => {
                 let mut rows = vec![
                     Item::new("Cancel", "cancel"),
@@ -1627,6 +1653,10 @@ impl Ui {
                 );
             }
             Some(Modal::DateField(field)) => return date_time::picker_copy(field),
+            Some(Modal::SleepTimer) => (
+                "Sleep Timer",
+                "Turn the wheel to choose. Select starts it; Back cancels.",
+            ),
             Some(Modal::Confirm(action)) => confirm_copy(action),
             Some(Modal::PlaylistPicker) => ("Add to Playlist", "Songs are added at the end."),
             Some(Modal::ContextMenu) => {
@@ -1924,7 +1954,10 @@ impl Ui {
             return;
         }
         // A scale (an equalizer band's dB) never jumps from one end to the other.
-        let scale = matches!(m.navigation.modal, Some(Modal::EqBand(_)));
+        let scale = matches!(
+            m.navigation.modal,
+            Some(Modal::EqBand(_) | Modal::SleepTimer)
+        );
         let wraps = match m.settings.wrap_around {
             _ if scale => false,
             WrapAround::Off => false,
@@ -2746,6 +2779,18 @@ impl Ui {
                     .map(|gain_db| Effect::SetEqBandGain { index, gain_db })
                     .unwrap_or(Effect::None)
             }
+            Some(Modal::SleepTimer) => {
+                Self::close_modal(m);
+                match key.strip_prefix("sleep_set:") {
+                    Some("off") => Effect::SetSleepTimer(reborn_core::SleepChoice::Off),
+                    Some("end") => Effect::SetSleepTimer(reborn_core::SleepChoice::EndOfItem),
+                    Some(n) => n
+                        .parse()
+                        .map(|n| Effect::SetSleepTimer(reborn_core::SleepChoice::Minutes(n)))
+                        .unwrap_or(Effect::None),
+                    None => Effect::None,
+                }
+            }
             Some(Modal::DateField(field)) => {
                 Self::close_modal(m);
                 if let Some(n) = key.strip_prefix("date_value:").and_then(|s| s.parse().ok()) {
@@ -2850,11 +2895,18 @@ impl Ui {
             .or_else(|| self.row_at(m, tracks, target).map(|r| r.key))
             .unwrap_or_default();
         if menu_key == "sleep_timer" {
-            // The menu stays open: each press steps the timer on.
+            // A picker (#29): the wheel chooses, Select starts it, Back leaves
+            // the timer as it was. It opens on the timer set, else 30 min.
             let now = m
                 .sleep_timer
-                .map_or(reborn_core::SleepChoice::Off, |t| t.choice);
-            return Effect::SetSleepTimer(now.next());
+                .map_or(reborn_core::SleepChoice::Minutes(30), |t| t.choice);
+            let focus = reborn_core::SleepChoice::all()
+                .iter()
+                .position(|c| *c == now)
+                .unwrap_or(0);
+            Self::open_modal(m, Modal::SleepTimer);
+            m.navigation.modal_focus = focus;
+            return Effect::None;
         }
         if menu_key.starts_with("sel_") {
             return self.selection_effect(m, tracks, menu_key);
@@ -3903,6 +3955,32 @@ pub(crate) fn sleep_label(m: &AppModel, book: bool) -> String {
             _ => "Off".into(),
         },
     }
+}
+
+/// A sleep timer choice as the picker names it: "45 min", "1 h 15 min".
+pub(crate) fn sleep_choice_label(choice: reborn_core::SleepChoice, book: bool) -> String {
+    match choice {
+        reborn_core::SleepChoice::Off => "Off".into(),
+        reborn_core::SleepChoice::EndOfItem if book => "End of Chapter".into(),
+        reborn_core::SleepChoice::EndOfItem => "End of Song".into(),
+        reborn_core::SleepChoice::Minutes(n) => match (n / 60, n % 60) {
+            (0, m) => format!("{m} min"),
+            (h, 0) => format!("{h} h"),
+            (h, m) => format!("{h} h {m} min"),
+        },
+    }
+}
+
+/// The minutes a timed sleep has left, at least 1; none for the end of an item.
+pub(crate) fn sleep_minutes_left(m: &AppModel) -> Option<u64> {
+    let until = m.sleep_timer?.until?;
+    Some(
+        until
+            .saturating_duration_since(Instant::now())
+            .as_secs()
+            .div_ceil(60)
+            .max(1),
+    )
 }
 
 /// "1.25", "2", "0.75": a speed without trailing zeros.

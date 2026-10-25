@@ -175,6 +175,7 @@ Write `{name}` inside `text`:
 | `quality` | `LOSSLESS · 96 kHz`, `MP3 · 44.1 kHz` |
 | `output` | `Headphone Jack` or the Bluetooth device |
 | `playback` | `Playing`, `Paused`, `Stopped` |
+| `sleep` | a running sleep timer as Now Playing says it: `Sleeps in 23 min`, `Sleeps after song`; empty without one (Beta 8.37) |
 | `screen` | the screen's title (empty on Home) |
 | `battery` `volume` | numbers 0–100 |
 | `clock` | the time in the chosen time zone (`21:41`, or `9:41` where a 12-hour clock is usual); empty until the player's time is set |
@@ -194,7 +195,8 @@ Write `{name}` inside `text`:
 Anywhere: `playing`, `paused`, `has_track`, `has_art`, `shuffle`, `repeat`,
 `repeat_one`, `charging`, `battery_low`, `bluetooth`, `bluetooth_connected`,
 `wifi`, `wifi_connected`, `back` (not Home), `empty`, `error` (toast),
-`danger` (dialog), `eq`, `gapless`, `crossfade`, `normalise`, `has_status`,
+`danger` (dialog), `eq`, `gapless`, `crossfade`, `normalise`, `sleep` (a sleep
+timer runs), `has_status`,
 `has_clock` (the time is known; give the title less room), `live` (a
 station plays: `remaining` and `duration` read LIVE, the `progress` bar is full;
 hide the queue position), `favorite` (the song playing is in Favorites),
@@ -209,8 +211,8 @@ Inside list rows: `focused`, `disabled`, `toggle`, `on`, `check`, `checked`,
 `back chevron check close play pause prev next play_large pause_large
 prev_large next_large shuffle repeat repeat_one gapless eq normalise bluetooth
 wifi lock bolt folder note speaker headphones sd usb warning info sun drive
-power download refresh search vinyl person crossfade heart palette` (`palette` since
-Beta 7.5), and three that follow
+power download refresh search vinyl person crossfade heart palette moon` (`palette` since
+Beta 7.5, `moon` since Beta 8.37), and three that follow
 the state: `play_pause`, `play_pause_large`, `repeat_mode`.
 
 ## Limits and checks

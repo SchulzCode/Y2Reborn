@@ -579,6 +579,12 @@ def ic_sliders(p):
         p.ellipse(knob, y, 3.6)
 
 
+# The sleep timer running (Beta 8.36, #29): a crescent moon.
+def ic_moon(p):
+    p.ellipse(15, 16, 10.5)
+    p.ellipse(20.5, 11.5, 9.0, fill=0)
+
+
 ICONS = [
     ('back', 32, ic_back), ('chevron', 32, ic_chevron), ('check', 32, ic_check), ('close', 32, ic_close),
     ('play', 32, lambda p: ic_play(p, 32)), ('pause', 32, lambda p: ic_pause(p, 32)),
@@ -598,7 +604,7 @@ ICONS = [
     ('star', 32, ic_star), ('star_on', 32, ic_star_on), ('globe', 32, ic_globe),
     ('trend', 32, ic_trend), ('broadcast', 32, ic_broadcast),
     ('heart', 32, ic_heart), ('heart_on', 32, ic_heart_on), ('plus', 32, ic_plus),
-    ('palette', 32, ic_palette), ('sliders', 32, ic_sliders),
+    ('palette', 32, ic_palette), ('sliders', 32, ic_sliders), ('moon', 32, ic_moon),
 ]
 ARC_FRAMES = 48
 ARC_SIZE = 96

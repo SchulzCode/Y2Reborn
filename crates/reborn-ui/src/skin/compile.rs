@@ -293,6 +293,7 @@ pub(crate) const ICONS: &[(&str, Icon)] = &[
     ("gapless", Icon::Gapless),
     ("eq", Icon::Eq),
     ("normalise", Icon::Normalise),
+    ("moon", Icon::Moon),
     ("bluetooth", Icon::Bluetooth),
     ("wifi", Icon::Wifi),
     ("lock", Icon::Lock),

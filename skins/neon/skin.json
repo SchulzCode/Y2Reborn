@@ -1756,7 +1756,22 @@
     "color": "dim",
     "align": "center",
     "case": "upper",
-    "tracking": 2
+    "tracking": 2,
+    "if": "!sleep"
+   },
+   {
+    "type": "text",
+    "x": 30,
+    "y": 316,
+    "w": 420,
+    "h": 30,
+    "text": "{output} · {sleep}",
+    "font": "small",
+    "color": "dim",
+    "align": "center",
+    "case": "upper",
+    "tracking": 2,
+    "if": "sleep"
    },
    {
     "type": "icon",

@@ -148,7 +148,7 @@ fn select_key(ui: &mut Ui, m: &mut AppModel, key: &str) -> Effect {
 }
 
 /// The characters a frame draws, recovered from the glyph cells it samples.
-fn drawn_text(quads: &[reborn_graphics::Quad]) -> String {
+pub(crate) fn drawn_text(quads: &[reborn_graphics::Quad]) -> String {
     use reborn_graphics::Tex;
     let faces = [
         text::Face::R11,
@@ -535,7 +535,8 @@ fn now_playing_shows_the_chapter_the_book_and_what_is_left() {
 }
 
 #[test]
-fn the_sleep_timer_steps_from_the_hold_menu_and_shows_on_now_playing() {
+fn the_sleep_timer_is_picked_with_the_wheel_and_shows_on_now_playing() {
+    use reborn_core::SleepChoice;
     let mut ui = radios();
     let mut m = app(Screen::NowPlaying);
     let tracks = m.library.tracks.clone();
@@ -543,32 +544,75 @@ fn the_sleep_timer_steps_from_the_hold_menu_and_shows_on_now_playing() {
     let rows = ui.modal_rows_public(&m, &tracks);
     let at = rows.iter().position(|r| r.key == "sleep_timer").unwrap();
     assert_eq!(rows[at].secondary, "Off");
+    // #29: Select opens the lengths, on 30 min while the timer is off.
     m.navigation.modal_focus = at;
+    assert_eq!(ui.model_action(&mut m, Action::Select), Effect::None);
+    assert_eq!(m.navigation.modal, Some(Modal::SleepTimer));
+    let picker: Vec<String> = ui
+        .modal_rows_public(&m, &tracks)
+        .into_iter()
+        .map(|r| r.label)
+        .collect();
+    assert_eq!(
+        picker,
+        [
+            "Off",
+            "End of Song",
+            "5 min",
+            "10 min",
+            "15 min",
+            "20 min",
+            "30 min",
+            "45 min",
+            "1 h",
+            "1 h 15 min",
+            "1 h 30 min",
+            "2 h",
+            "2 h 30 min",
+            "3 h"
+        ]
+    );
+    assert_eq!(picker[m.navigation.modal_focus], "30 min");
+    // The wheel stops at the ends; Select starts the length chosen.
+    ui.model_action(&mut m, Action::WheelClockwise(1));
     assert_eq!(
         ui.model_action(&mut m, Action::Select),
-        Effect::SetSleepTimer(reborn_core::SleepChoice::Minutes(15))
+        Effect::SetSleepTimer(SleepChoice::Minutes(45))
     );
-    assert!(m.navigation.modal.is_some(), "the menu stays open");
+    assert_eq!(m.navigation.modal, None);
+    // Running: the picker opens on it and says how long it has left.
     m.sleep_timer = Some(reborn_core::SleepTimer {
-        choice: reborn_core::SleepChoice::Minutes(15),
+        choice: SleepChoice::Minutes(45),
         until: Some(Instant::now() + Duration::from_secs(14 * 60 + 30)),
         item: m.sleep_item(),
     });
+    ui.model_action(&mut m, Action::ContextMenu);
     assert_eq!(ui.modal_rows_public(&m, &tracks)[at].secondary, "15 min");
-    assert_eq!(
-        ui.model_action(&mut m, Action::Select),
-        Effect::SetSleepTimer(reborn_core::SleepChoice::Minutes(30))
-    );
-    ui.model_action(&mut m, Action::Back);
+    m.navigation.modal_focus = at;
+    ui.model_action(&mut m, Action::Select);
+    let rows = ui.modal_rows_public(&m, &tracks);
+    assert_eq!(rows[m.navigation.modal_focus].label, "45 min");
+    assert_eq!(rows[m.navigation.modal_focus].secondary, "15 min left");
+    // Back leaves it running.
+    assert_eq!(ui.model_action(&mut m, Action::Back), Effect::None);
+    assert_eq!(m.navigation.modal, None);
     let text = drawn_text(&ui.draw(&m, &tracks, false));
     assert!(text.contains("Sleeps in 15 min"), "{text}");
     m.sleep_timer = Some(reborn_core::SleepTimer {
-        choice: reborn_core::SleepChoice::EndOfItem,
+        choice: SleepChoice::EndOfItem,
         until: None,
         item: m.sleep_item(),
     });
     let text = drawn_text(&ui.draw(&m, &tracks, false));
     assert!(text.contains("Sleeps after song"), "{text}");
+    assert_eq!(
+        crate::sleep_choice_label(SleepChoice::Minutes(150), false),
+        "2 h 30 min"
+    );
+    assert_eq!(
+        crate::sleep_choice_label(SleepChoice::EndOfItem, true),
+        "End of Chapter"
+    );
 }
 
 #[test]

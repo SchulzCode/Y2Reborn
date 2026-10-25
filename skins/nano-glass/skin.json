@@ -1727,7 +1727,20 @@
     "text": "{output}",
     "font": "body",
     "color": "muted",
-    "align": "center"
+    "align": "center",
+    "if": "!sleep"
+   },
+   {
+    "type": "text",
+    "x": 24,
+    "y": 314,
+    "w": 432,
+    "h": 34,
+    "text": "{output} · {sleep}",
+    "font": "body",
+    "color": "muted",
+    "align": "center",
+    "if": "sleep"
    },
    {
     "type": "icon",

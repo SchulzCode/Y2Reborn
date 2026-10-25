@@ -519,3 +519,51 @@ fn up_next_marks_the_song_playing_not_the_row_at_the_play_position() {
     // The History heading, its two songs, then the song playing: row 3.
     assert_eq!(marks, vec![30. + 3. * 40.]);
 }
+
+#[test]
+fn skins_say_when_the_sleep_timer_runs() {
+    // #29: `{sleep}` and `"if": "sleep"`; every shipped skin joins it to its output line.
+    let screens = r##"{"now_playing": [
+  {"type": "text", "if": "!sleep", "x": 0, "y": 300, "w": 480, "h": 30, "text": "{output}"},
+  {"type": "text", "if": "sleep", "x": 0, "y": 300, "w": 480, "h": 30, "text": "{output} · {sleep}"}
+]}"##;
+    let ui = skinned(compile_test(screens).unwrap());
+    let tracks = library(4);
+    let mut m = model(Screen::NowPlaying);
+    m.queue = tracks.clone();
+    let text = |ui: &Ui, m: &AppModel| crate::tests::drawn_text(&ui.draw(m, &tracks, false));
+    assert!(!text(&ui, &m).contains("Sleeps"));
+    m.sleep_timer = Some(reborn_core::SleepTimer {
+        choice: reborn_core::SleepChoice::Minutes(30),
+        until: Some(std::time::Instant::now() + std::time::Duration::from_secs(9 * 60 + 10)),
+        item: m.sleep_item(),
+    });
+    assert!(
+        text(&ui, &m).contains("Sleeps in 10 min"),
+        "{}",
+        text(&ui, &m)
+    );
+    for json in [
+        include_str!("../../../../skins/big-type/skin.json"),
+        include_str!("../../../../skins/bunny-bow/skin.json"),
+        include_str!("../../../../skins/cassette/skin.json"),
+        include_str!("../../../../skins/classic/skin.json"),
+        include_str!("../../../../skins/mini-blue/skin.json"),
+        include_str!("../../../../skins/mini-gold/skin.json"),
+        include_str!("../../../../skins/mini-green/skin.json"),
+        include_str!("../../../../skins/mini-pink/skin.json"),
+        include_str!("../../../../skins/mini-silver/skin.json"),
+        include_str!("../../../../skins/nano-glass/skin.json"),
+        include_str!("../../../../skins/neon/skin.json"),
+        include_str!("../../../../skins/paper/skin.json"),
+        include_str!("../../../../skins/terminal/skin.json"),
+        include_str!("../../../../skins/walkman/skin.json"),
+        include_str!("../../../../skins/winamp/skin.json"),
+        include_str!("../../../../skins/zune/skin.json"),
+    ] {
+        assert!(
+            json.contains("{output} · {sleep}"),
+            "a shipped skin without the timer"
+        );
+    }
+}

@@ -1390,7 +1390,19 @@
     "h": 24,
     "text": "out: {output}_",
     "font": "small",
-    "color": "dim"
+    "color": "dim",
+    "if": "!sleep"
+   },
+   {
+    "type": "text",
+    "x": 16,
+    "y": 318,
+    "w": 448,
+    "h": 24,
+    "text": "out: {output} · {sleep}_",
+    "font": "small",
+    "color": "dim",
+    "if": "sleep"
    },
    {
     "type": "image",

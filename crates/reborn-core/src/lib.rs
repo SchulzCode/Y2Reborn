@@ -951,6 +951,8 @@ pub enum Modal {
     EqBand(usize),
     /// One field of Settings > Display > Date & Time.
     DateField(DateField),
+    /// The sleep timer's lengths (Beta 8.36, #29).
+    SleepTimer,
     Confirm(ConfirmAction),
     /// "Add to Playlist": the playlists, the last used first, and New.
     PlaylistPicker,
@@ -1527,7 +1529,7 @@ pub struct AppModel {
     pub sleep_timer: Option<SleepTimer>,
 }
 
-/// The sleep timer's choices, stepped through in Now Playing's menu.
+/// The sleep timer's choices, picked with the wheel from Now Playing's menu.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SleepChoice {
     Off,
@@ -1535,15 +1537,14 @@ pub enum SleepChoice {
     /// The end of the chapter (a book) or the song playing.
     EndOfItem,
 }
+/// The timed lengths in minutes (#29): short steps first, up to three hours.
+pub const SLEEP_MINUTES: [u16; 12] = [5, 10, 15, 20, 30, 45, 60, 75, 90, 120, 150, 180];
 impl SleepChoice {
-    /// Off, 15, 30, 45 and 60 minutes, the end of this chapter or song, off.
-    pub fn next(self) -> Self {
-        match self {
-            Self::Off => Self::Minutes(15),
-            Self::Minutes(m) if m < 60 => Self::Minutes(m + 15),
-            Self::Minutes(_) => Self::EndOfItem,
-            Self::EndOfItem => Self::Off,
-        }
+    /// The picker's rows: Off, the end of this song or chapter, the lengths.
+    pub fn all() -> Vec<Self> {
+        let mut all = vec![Self::Off, Self::EndOfItem];
+        all.extend(SLEEP_MINUTES.iter().map(|&m| Self::Minutes(m)));
+        all
     }
 }
 /// A running sleep timer: playback pauses at `until` (after a fade) or when
@@ -2449,25 +2450,19 @@ mod tests {
 mod sleep_timer_tests {
     use super::*;
     #[test]
-    fn the_sleep_timer_steps_through_its_choices_and_back_to_off() {
-        let mut choice = SleepChoice::Off;
-        let mut seen = vec![];
-        for _ in 0..7 {
-            choice = choice.next();
-            seen.push(choice);
-        }
+    fn the_sleep_timer_offers_off_the_end_of_the_item_and_lengths_to_three_hours() {
+        let all = SleepChoice::all();
+        assert_eq!(all.len(), 14);
         assert_eq!(
-            seen,
+            all[..3],
             [
-                SleepChoice::Minutes(15),
-                SleepChoice::Minutes(30),
-                SleepChoice::Minutes(45),
-                SleepChoice::Minutes(60),
-                SleepChoice::EndOfItem,
                 SleepChoice::Off,
-                SleepChoice::Minutes(15),
+                SleepChoice::EndOfItem,
+                SleepChoice::Minutes(5)
             ]
         );
+        assert_eq!(all.last(), Some(&SleepChoice::Minutes(180)));
+        assert!(SLEEP_MINUTES.windows(2).all(|w| w[0] < w[1]));
     }
 }
 
