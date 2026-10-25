@@ -450,6 +450,10 @@ pub struct Ui {
     /// Up Next's focused row and its key as last seen: the focus follows
     /// that song when the rows move under it.
     up_next_focus: RefCell<Option<(usize, String)>>,
+    /// The music's loudness as heard now (the player measures it) and the
+    /// smoothed levels the wave last showed, when.
+    heard: Option<Levels>,
+    shown_levels: RefCell<Option<(Levels, Instant)>>,
     /// A settings page's first row shown, as last drawn (its own window:
     /// the rows fit under its text differ from page to page).
     group_scroll: RefCell<Option<(Screen, String, usize)>>,
@@ -3487,6 +3491,32 @@ impl Ui {
                 .is_none()
     }
 
+    /// The music's levels as heard now (none while nothing plays).
+    pub fn set_heard(&mut self, levels: Option<Levels>) {
+        self.heard = levels;
+    }
+
+    /// The levels the wave shows this frame: they rise with the music at
+    /// once and fall back slowly, as a meter does; none without music.
+    pub(crate) fn wave_levels(&self) -> Option<Levels> {
+        let target = self.heard?;
+        let now = Instant::now();
+        let mut shown = self.shown_levels.borrow_mut();
+        let (last, at) = shown.unwrap_or((target, now));
+        let dt = now.duration_since(at).as_secs_f32().min(0.25);
+        let step = |from: f32, to: f32| {
+            let rate = if to > from { 18. } else { 4. };
+            from + (to - from) * (1. - (-rate * dt).exp())
+        };
+        let levels = Levels {
+            bass: step(last.bass, target.bass),
+            mid: step(last.mid, target.mid),
+            high: step(last.high, target.high),
+        };
+        *shown = Some((levels, now));
+        Some(levels)
+    }
+
     /// A settings page's first row shown: kept until the focus reaches an
     /// edge, as every list (8.37).
     pub(crate) fn group_window(
@@ -3971,6 +4001,15 @@ fn display_or_unknown(value: &str) -> &str {
         value
     }
 }
+/// The music's loudness in three bands as heard now, each 0 (silence) to 1
+/// (loud): the playing wave moves with it (Beta 8.38).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Levels {
+    pub bass: f32,
+    pub mid: f32,
+    pub high: f32,
+}
+
 /// Customize > Cover Flow is on: Albums and Audiobooks show their covers in
 /// a row (8.36; Albums only before).
 pub(crate) fn cover_flow(m: &AppModel) -> bool {

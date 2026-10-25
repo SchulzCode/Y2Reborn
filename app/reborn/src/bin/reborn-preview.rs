@@ -589,7 +589,32 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             m.output = AudioOutput::Bluetooth("AA".into());
         }
     );
-    // 8.36 (#29): a sleep timer running, then its picker.
+    // 8.38: the wave with loud music (bass and highs), and quiet music.
+    case!(
+        "14e-now-playing-loud",
+        at(Screen::NowPlaying, ""),
+        move |ui, _| {
+            ui.accent = orange;
+            ui.set_heard(Some(reborn_ui::Levels {
+                bass: 0.95,
+                mid: 0.9,
+                high: 0.8,
+            }));
+        }
+    );
+    case!(
+        "14f-now-playing-quiet",
+        at(Screen::NowPlaying, ""),
+        move |ui, _| {
+            ui.accent = orange;
+            ui.set_heard(Some(reborn_ui::Levels {
+                bass: 0.2,
+                mid: 0.25,
+                high: 0.1,
+            }));
+        }
+    );
+    // 8.37 (#29): a sleep timer running, then its picker.
     case!(
         "14c-now-playing-sleep",
         at(Screen::NowPlaying, ""),

@@ -216,6 +216,7 @@ pub fn now_playing(
         phase,
         amp,
         !radio,
+        ui.wave_levels(),
     );
     c.text_mid(
         x0,

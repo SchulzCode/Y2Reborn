@@ -224,6 +224,8 @@ pub struct Playback {
     sink_released: bool,
     state: Arc<Mutex<serde_json::Value>>,
     observer: Observer,
+    /// The music's loudness as the output plays it (the wave, Beta 8.38).
+    levels: crate::meter::Shared,
 }
 fn emit(tx: &SyncSender<PlaybackEvent>, e: Event) {
     let _ = tx.send(PlaybackEvent::Core(e));
@@ -876,6 +878,8 @@ impl Playback {
         let sink_volume = volume.clone();
         let balance = Arc::new(AtomicI8::new(0));
         let sink_balance = balance.clone();
+        let levels = crate::meter::Shared::default();
+        let mut meter = crate::meter::Meter::new(levels.clone());
         let hold = Arc::new(AtomicBool::new(false));
         let sink_hold = hold.clone();
         let upcoming = Arc::new(Mutex::new(None::<Upcoming>));
@@ -1734,6 +1738,13 @@ impl Playback {
                             Ok(n) => {
                                 gain.advance(n);
                                 if n > 0 {
+                                    let written = *offset + n * frame_bytes;
+                                    meter.measure(
+                                        &block.data[*offset..written.min(block.data.len())],
+                                        block.format,
+                                        block.rate,
+                                        s.delay(),
+                                    );
                                     *offset += n * block.format.bytes_per_frame();
                                     last_progress = Instant::now();
                                     if !started {
@@ -1850,7 +1861,12 @@ impl Playback {
             sink_released: true,
             state,
             observer: state_observer,
+            levels,
         })
+    }
+    /// The music's loudness as heard now (none while nothing plays).
+    pub fn heard(&self) -> Option<reborn_ui::Levels> {
+        crate::meter::heard_now(&self.levels)
     }
     /// What follows the song playing changed (a queue edit, the next song
     /// reached): the decoder of `generation` takes it without a restart.
@@ -2853,6 +2869,7 @@ mod tests {
             sink_released: false,
             state: Arc::new(Mutex::new(json!({}))),
             observer: log,
+            levels: Default::default(),
         };
         let start = Instant::now();
         let error = playback
@@ -2888,6 +2905,7 @@ mod tests {
             sink_released: false,
             state: Arc::new(Mutex::new(json!({}))),
             observer: log,
+            levels: Default::default(),
         };
         let start = Instant::now();
 

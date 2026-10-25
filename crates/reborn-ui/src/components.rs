@@ -436,6 +436,11 @@ pub fn slider(c: &mut Canvas, x: f32, cy: f32, w: f32, value: f32, lit: u32, kno
 /// rides on the first and the height breathes along the line; it tapers in
 /// at the start and settles into the knob. `phase` moves it while music
 /// plays; `amp` (pixels) eases to 0 when paused, which lays it flat.
+///
+/// Beta 8.38: it moves with the music (`levels`: louder is taller, bass
+/// swells it, highs ripple it; without levels it waves as before) and is
+/// drawn as one ribbon whose joints are shared, with edges that fade out
+/// over a pixel: smooth without MSAA, and no beading where pieces meet.
 #[allow(clippy::too_many_arguments)]
 pub fn wave_progress(
     c: &mut Canvas,
@@ -447,6 +452,7 @@ pub fn wave_progress(
     phase: f32,
     amp: f32,
     knob: bool,
+    levels: Option<crate::Levels>,
 ) {
     let head = x + (w * value.clamp(0., 1.)).round();
     if head < x + w {
@@ -462,76 +468,93 @@ pub fn wave_progress(
         }
         return;
     }
+    // Typical music (about -18 dB) waves as tall as before; loud passages
+    // up to a third more, quiet ones calmer.
+    let (scale, swell, sparkle) = match levels {
+        Some(l) => (
+            0.35 + 0.85 * (0.6 * l.mid + 0.4 * l.bass),
+            l.bass - 0.5,
+            0.08 + 0.22 * l.high,
+        ),
+        None => (1., 0., 0.22),
+    };
     let y = |px: f32| -> f32 {
         let s = px - x;
         let k = std::f32::consts::TAU / 34.;
         let main = (k * s - phase).sin() * 0.78;
-        let ripple = (2.3 * k * s + 1.7 - 1.6 * phase).sin() * 0.22;
-        let breathe = 0.88 + 0.12 * (s / 57. + 0.6 * phase).sin();
+        let ripple = (2.3 * k * s + 1.7 - 1.6 * phase).sin() * sparkle;
+        let breathe = 0.88 + 0.12 * (s / 57. + 0.6 * phase).sin() + 0.2 * swell;
         let smooth = |e: f32| {
             let e = e.clamp(0., 1.);
             e * e * (3. - 2. * e)
         };
         let taper = smooth(s / 10.) * smooth((head - px) / 14.);
-        cy + amp * taper * breathe * (main + ripple)
+        cy + amp * scale * taper * breathe * (main + ripple)
     };
-    let step = 3.;
+    // The curve every 2 px, with its normal at each point.
+    let mut points = vec![];
     let mut px = x;
     while px < head {
-        let nx = (px + step).min(head);
-        let (y0, y1) = (y(px), y(nx));
-        // A faint wider stroke under a solid core: soft edges without MSAA.
-        // Only the core overlaps at the joints (an opaque overlap is
-        // invisible; a translucent one would bead).
-        segment(c, px, y0, nx, y1, 5., crate::theme::fade(lit, 0.28), 0.);
-        segment(c, px, y0, nx, y1, 2.6, lit, 0.6);
-        px = nx;
+        points.push((px, y(px)));
+        px += 2.;
+    }
+    points.push((head, y(head)));
+    if points.len() < 2 {
+        return;
+    }
+    let normal = |i: usize| {
+        let (a, b) = (
+            points[i.saturating_sub(1)],
+            points[(i + 1).min(points.len() - 1)],
+        );
+        let (tx, ty) = (b.0 - a.0, b.1 - a.1);
+        let len = (tx * tx + ty * ty).sqrt().max(1e-3);
+        (-ty / len, tx / len)
+    };
+    let normals: Vec<(f32, f32)> = (0..points.len()).map(normal).collect();
+    let (core, feather) = (1.3, 1.0);
+    let clear = lit & !0xFF;
+    let at = |i: usize, d: f32| {
+        [
+            points[i].0 + normals[i].0 * d,
+            points[i].1 + normals[i].1 * d,
+        ]
+    };
+    for i in 0..points.len() - 1 {
+        let j = i + 1;
+        // The core, then a pixel fading out on either side of it.
+        for (outer, inner, colors) in [
+            (core, -core, [lit; 4]),
+            (core + feather, core, [clear, clear, lit, lit]),
+            (-core - feather, -core, [clear, clear, lit, lit]),
+        ] {
+            ribbon(
+                c,
+                [at(i, outer), at(j, outer), at(j, inner), at(i, inner)],
+                colors,
+            );
+        }
     }
     if knob {
         c.disc(head, cy, 6., color::TEXT);
     }
 }
 
-/// A straight stroke from (x0, y0) to (x1, y1), `thick` wide, `extend`
-/// longer at both ends so neighbouring strokes meet without a gap.
-#[allow(clippy::too_many_arguments)]
-fn segment(
-    c: &mut Canvas,
-    x0: f32,
-    y0: f32,
-    x1: f32,
-    y1: f32,
-    thick: f32,
-    color: u32,
-    extend: f32,
-) {
-    let (dx, dy) = (x1 - x0, y1 - y0);
-    let len = (dx * dx + dy * dy).sqrt();
-    if len < 0.01 || color & 0xFF == 0 {
-        return;
-    }
-    let (ux, uy) = (dx / len, dy / len);
-    let (x0, y0, x1, y1) = (
-        x0 - ux * extend,
-        y0 - uy * extend,
-        x1 + ux * extend,
-        y1 + uy * extend,
+/// One piece of a ribbon: a quad by its corners, coloured at each corner.
+fn ribbon(c: &mut Canvas, corners: [[f32; 2]; 4], colors: [u32; 4]) {
+    let xs = corners.map(|p| p[0]);
+    let ys = corners.map(|p| p[1]);
+    let (min_x, max_x) = (
+        xs.iter().copied().fold(f32::MAX, f32::min),
+        xs.iter().copied().fold(f32::MIN, f32::max),
     );
-    let (nx, ny) = (-uy * thick / 2., ux * thick / 2.);
-    let corners = [
-        [x0 - nx, y0 - ny],
-        [x1 - nx, y1 - ny],
-        [x1 + nx, y1 + ny],
-        [x0 + nx, y0 + ny],
-    ];
-    let (min_x, max_x) = (x0.min(x1) - thick, x0.max(x1) + thick);
-    let (min_y, max_y) = (y0.min(y1) - thick, y0.max(y1) + thick);
+    let (min_y, max_y) = (
+        ys.iter().copied().fold(f32::MAX, f32::min),
+        ys.iter().copied().fold(f32::MIN, f32::max),
+    );
     c.draw.push(reborn_graphics::Quad {
-        warp: Some(reborn_graphics::Warp {
-            corners,
-            colors: [color; 4],
-        }),
-        ..reborn_graphics::Quad::rect(min_x, min_y, max_x - min_x, max_y - min_y, color)
+        warp: Some(reborn_graphics::Warp { corners, colors }),
+        ..reborn_graphics::Quad::rect(min_x, min_y, max_x - min_x, max_y - min_y, colors[3])
     });
 }
 

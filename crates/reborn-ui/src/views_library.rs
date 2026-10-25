@@ -62,14 +62,28 @@ pub fn home(
             Face::R11,
             color::MUTED,
         );
-        components::slider(
+        // The playing wave, smaller, as on Now Playing (8.38).
+        let playing = matches!(m.playback, reborn_core::PlaybackState::Playing);
+        let amp = ui.ease("home:wave", None, if playing { 2.4 } else { 0. }, 6., 0.02);
+        if playing && amp > 0. {
+            ui.mark_live();
+        }
+        let phase = if ui.ui_motion {
+            crate::motion::phase(0.9)
+        } else {
+            0.
+        };
+        components::wave_progress(
             c,
             272.,
             313.,
             168.,
-            components::progress(m.position_ms, t.duration_ms),
+            components::progress(ui.shown_position(m), t.duration_ms),
             cover,
+            phase,
+            amp,
             false,
+            ui.wave_levels(),
         );
     } else {
         recently_added(c, ui, tracks);

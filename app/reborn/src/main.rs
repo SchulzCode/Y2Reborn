@@ -4,6 +4,7 @@ mod background;
 mod books;
 mod diagnostics;
 mod graphics_recovery;
+mod meter;
 mod performance;
 mod playback;
 mod playlists;
@@ -5883,6 +5884,11 @@ fn run() -> Result<(), String> {
             if let Some(g) = &rt.graphics {
                 rt.ui.set_resident_thumbs(g.resident_thumbs());
             }
+            // The playing wave moves with what is heard (Beta 8.38).
+            let heard = (rt.model.playback == PlaybackState::Playing)
+                .then(|| rt.playback.heard())
+                .flatten();
+            rt.ui.set_heard(heard);
             let mut draw = rt.ui.draw(&rt.model, &rt.model.library.tracks, rt.art);
             let layout_ms = frame_started.elapsed().as_secs_f64() * 1000.;
             if !first_frame_presented {
