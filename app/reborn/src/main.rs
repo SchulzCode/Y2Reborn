@@ -15,8 +15,8 @@ mod volume;
 use reborn_control::{Command, PlaybackAction, Response};
 use reborn_core::platform::{Fact, LowBattery};
 use reborn_core::{
-    AppModel, AudioOutput, Effect, Event, PlaybackState, QueueEntryId, RepeatMode, Screen, Source,
-    Track,
+    AppModel, AudioOutput, Effect, Event, PlaybackState, QueueEntryId, RepeatMode, Screen,
+    ShuffleMode, Source, Track,
 };
 use reborn_graphics::Renderer;
 use reborn_library::{Database, Scanner};
@@ -834,14 +834,14 @@ impl Runtime {
             self.send_bt_volume();
         }
     }
-    fn play_index(&mut self, index: usize, force_shuffle: bool) -> Result<(), String> {
+    fn play_index(&mut self, index: usize, shuffle: ShuffleMode) -> Result<(), String> {
         // The music library around the song; audiobook parts stay out of
         // it (Y2Linux #58), they play through Effect::PlayBook.
         let tracks = &self.model.library.tracks;
         let members = (0..tracks.len())
             .filter(|&i| i == index || tracks[i].is_music())
             .collect();
-        self.play_members(index, members, force_shuffle, "Songs".into())
+        self.play_members(index, members, shuffle, "Songs".into())
     }
 
     /// Internet radio requests from the Radio screens and Now Playing.
@@ -1236,7 +1236,7 @@ impl Runtime {
         &mut self,
         index: usize,
         members: Vec<usize>,
-        force_shuffle: bool,
+        shuffle: ShuffleMode,
         source: String,
     ) -> Result<(), String> {
         let online = self
@@ -1260,14 +1260,33 @@ impl Runtime {
             .iter()
             .position(|&member| member == index)
             .ok_or("selected track is not in the playback collection")?;
-        let use_shuffle = force_shuffle || self.model.settings.shuffle;
+        // A Shuffle row says how; a song or Play follows the setting.
+        let force_shuffle = shuffle != ShuffleMode::Off;
+        let mode = if force_shuffle {
+            shuffle
+        } else {
+            self.model.settings.shuffle_mode()
+        };
         // The source's own order, for Shuffle off later.
         let rank: std::collections::HashMap<usize, usize> = members
             .iter()
             .enumerate()
             .map(|(rank, &member)| (member, rank))
             .collect();
-        let (window, start) = if use_shuffle {
+        let (window, start) = if mode == ShuffleMode::Albums {
+            // Whole albums in random order; a picked song's album first,
+            // from that song on (Beta 8.39).
+            let picked = {
+                let refs: Vec<&Track> = members.iter().map(|&m| &tracks[m]).collect();
+                reborn_core::queue::album_shuffle(
+                    &refs,
+                    (!force_shuffle).then_some(selected_position),
+                    shuffle_seed(),
+                )
+            };
+            members = picked.into_iter().map(|p| members[p]).collect();
+            (0..members.len().min(reborn_core::MAX_QUEUE), 0)
+        } else if mode == ShuffleMode::Songs {
             if force_shuffle {
                 // A Shuffle row: any song may come first.
                 shuffle_from(&mut members, 0, shuffle_seed());
@@ -2392,8 +2411,8 @@ impl Runtime {
                 .commands
                 .try_send(wifi::Command::Disconnect)
                 .map_err(|e| e.to_string())?,
-            Effect::Play(index) => self.play_index(index, false)?,
-            Effect::PlayShuffled(index) => self.play_index(index, true)?,
+            Effect::Play(index) => self.play_index(index, ShuffleMode::Off)?,
+            Effect::PlayShuffled(index) => self.play_index(index, ShuffleMode::Songs)?,
             Effect::PlayCollection {
                 selected,
                 members,
@@ -2974,22 +2993,29 @@ impl Runtime {
                 self.model.settings.screen_off_buttons = mode;
                 self.checkpoint();
             }
-            Effect::SetShuffle(enabled) => {
-                self.model.settings.shuffle = enabled;
+            Effect::SetShuffle(mode) => {
+                let was = self.model.settings.shuffle_mode();
+                self.model.settings.set_shuffle_mode(mode);
                 // What plays now follows at once: its songs to come shuffle,
-                // or go back to their own order (your queue stays as it is).
+                // as songs or albums, or go back to their own order (your
+                // queue stays as it is).
                 let music = self.model.book.is_none()
                     && self.model.current().is_some_and(|t| !t.is_radio());
-                if music {
-                    let changed = if enabled {
-                        self.model.shuffle_source(shuffle_seed())
-                    } else {
-                        self.model.unshuffle_source()
+                if music && mode != was {
+                    let mut changed = was != ShuffleMode::Off && self.model.unshuffle_source();
+                    changed |= match mode {
+                        ShuffleMode::Off => false,
+                        ShuffleMode::Songs => self.model.shuffle_source(shuffle_seed()),
+                        ShuffleMode::Albums => self.model.shuffle_source_albums(shuffle_seed()),
                     };
                     if changed {
                         self.upcoming_changed();
                     }
                 }
+                self.checkpoint();
+            }
+            Effect::SetPlaylistSort(path, sort) => {
+                self.model.settings.set_playlist_sort(&path, sort);
                 self.checkpoint();
             }
             Effect::SetRepeat(mode) => {
@@ -5113,6 +5139,10 @@ fn run() -> Result<(), String> {
                     if let Err(e) = rt.effect(effect) {
                         rt.fail("ui", e)
                     }
+                    log.gauge(
+                        "ui_action_ms",
+                        action_started.elapsed().as_secs_f64() * 1000.,
+                    );
                     if performance.enabled() {
                         performance.record("state", json!({"action":action,"screen":rt.model.screen,"focus":rt.model.navigation.focus,"action_ms":action_started.elapsed().as_secs_f64()*1000.,"playback":rt.model.playback,"volume":rt.model.settings.volume}));
                     }
@@ -5891,6 +5921,7 @@ fn run() -> Result<(), String> {
             rt.ui.set_heard(heard);
             let mut draw = rt.ui.draw(&rt.model, &rt.model.library.tracks, rt.art);
             let layout_ms = frame_started.elapsed().as_secs_f64() * 1000.;
+            log.gauge("ui_layout_ms", layout_ms);
             if !first_frame_presented {
                 // The splash's bar completes while this first frame renders.
                 reborn_platform::contract::boot_milestone("ready");

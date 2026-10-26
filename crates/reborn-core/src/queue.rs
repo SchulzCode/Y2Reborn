@@ -8,7 +8,10 @@
 //! as a short history (`HistoryEntry`).
 use crate::{AppModel, QueueEntryId, RepeatMode, Track, MAX_QUEUE};
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, path::PathBuf};
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+};
 
 /// Songs kept in the history (Up Next, above the song playing).
 pub const MAX_HISTORY: usize = 50;
@@ -32,6 +35,63 @@ pub fn shuffle_from<T>(items: &mut [T], from: usize, mut seed: u64) {
         let j = from + ((u128::from(z) * span) >> 64) as usize;
         items.swap(i, j);
     }
+}
+
+/// Shuffle Albums (Beta 8.39): the songs as whole albums in random order,
+/// each album in its own order (disc, track, file name). An album is a
+/// folder (a `CD 2` or `Disc 1` folder folds into the one above it) and an
+/// album tag: folders keep apart albums of the same name, the tag the
+/// albums among a folder's loose songs. With `lead`, that song's album
+/// comes first, from that song on; its songs before it play last. Returns
+/// positions into `tracks`.
+pub fn album_shuffle<'a>(tracks: &[&'a Track], lead: Option<usize>, seed: u64) -> Vec<usize> {
+    // Each folder is looked at once, not once per song.
+    let mut folders: HashMap<&'a Path, usize> = HashMap::new();
+    let mut albums_folders: HashMap<&'a Path, usize> = HashMap::new();
+    let mut index: HashMap<(usize, &'a str), usize> = HashMap::new();
+    let mut groups: Vec<Vec<usize>> = vec![];
+    for (i, &t) in tracks.iter().enumerate() {
+        let parent = t.path.parent().unwrap_or(Path::new(""));
+        let folder = match folders.get(parent) {
+            Some(&folder) => folder,
+            None => {
+                let mut dir = parent;
+                while dir.components().count() > 1
+                    && dir
+                        .file_name()
+                        .is_some_and(|n| crate::books::subdivision(&n.to_string_lossy()))
+                {
+                    dir = dir.parent().unwrap_or(dir);
+                }
+                let next = albums_folders.len();
+                let folder = *albums_folders.entry(dir).or_insert(next);
+                folders.insert(parent, folder);
+                folder
+            }
+        };
+        let next = groups.len();
+        let group = *index.entry((folder, t.album.as_str())).or_insert(next);
+        if group == next {
+            groups.push(vec![]);
+        }
+        groups[group].push(i);
+    }
+    for group in &mut groups {
+        group.sort_by_cached_key(|&i| {
+            let t = tracks[i];
+            (t.disc, t.track, crate::sort::natural_key(&t.filename), i)
+        });
+    }
+    let first = lead.and_then(|l| groups.iter().position(|g| g.contains(&l)));
+    let mut last = vec![];
+    if let Some(at) = first {
+        let mut group = groups.remove(at);
+        let from = group.iter().position(|&i| Some(i) == lead).unwrap_or(0);
+        last = group.drain(..from).collect();
+        groups.insert(0, group);
+    }
+    shuffle_from(&mut groups, usize::from(first.is_some()), seed);
+    groups.into_iter().flatten().chain(last).collect()
 }
 
 impl AppModel {
@@ -362,6 +422,29 @@ impl AppModel {
         true
     }
 
+    /// Shuffle the source's songs still to come as whole albums (Shuffle
+    /// Albums turned on): the album playing goes on first.
+    pub fn shuffle_source_albums(&mut self, seed: u64) -> bool {
+        let start = self.source_start();
+        if self.queue.len() < start + 2 {
+            return false;
+        }
+        if self.queue_order.is_empty() {
+            self.queue_order = self.queue_entry_ids.clone();
+        }
+        let now = self.queue_position.min(self.queue.len() - 1);
+        let mut rest = vec![now];
+        rest.extend(start..self.queue.len());
+        let picked = {
+            let tracks: Vec<&Track> = rest.iter().map(|&i| &self.queue[i]).collect();
+            album_shuffle(&tracks, Some(0), seed)
+        };
+        let mut order: Vec<usize> = (0..start).collect();
+        order.extend(picked.into_iter().filter(|&p| p != 0).map(|p| rest[p]));
+        self.permute(&order);
+        true
+    }
+
     /// Back to the source's own order (Shuffle turned off): its songs still
     /// to come continue after the one it is at, the ones before follow.
     pub fn unshuffle_source(&mut self) -> bool {
@@ -551,6 +634,119 @@ mod tests {
             .iter()
             .map(|t| t.title.clone())
             .collect()
+    }
+
+    /// Song `id` of album `album` (its folder), track `n`.
+    fn album_song(id: i64, album: &str, n: u32) -> Track {
+        Track {
+            title: format!("{album}{n}"),
+            album: album.into(),
+            track: n,
+            path: format!("/m/{album}/{n:02} x.mp3").into(),
+            filename: format!("{n:02} x.mp3"),
+            ..song(id)
+        }
+    }
+    fn runs(titles: &[String]) -> Vec<String> {
+        let mut albums: Vec<String> = vec![];
+        for t in titles {
+            let album = t.trim_end_matches(char::is_numeric).to_string();
+            if albums.last() != Some(&album) {
+                albums.push(album);
+            }
+        }
+        albums
+    }
+
+    #[test]
+    fn shuffle_albums_keeps_each_album_whole_and_in_its_order() {
+        // Three albums, their songs mixed up as a playlist might hold them.
+        let songs: Vec<Track> = [
+            ("a", 2),
+            ("b", 1),
+            ("a", 1),
+            ("c", 1),
+            ("b", 2),
+            ("c", 2),
+            ("a", 3),
+        ]
+        .iter()
+        .enumerate()
+        .map(|(i, (album, n))| album_song(i as i64, album, *n))
+        .collect();
+        let refs: Vec<&Track> = songs.iter().collect();
+        let mut seen = std::collections::BTreeSet::new();
+        for seed in 0..32 {
+            let order = album_shuffle(&refs, None, seed);
+            let titles: Vec<String> = order.iter().map(|&i| songs[i].title.clone()).collect();
+            // Every song once; each album one run, in track order.
+            assert_eq!(order.len(), songs.len());
+            assert_eq!(runs(&titles).len(), 3, "{titles:?}");
+            for album in ["a", "b", "c"] {
+                let mine: Vec<&String> = titles.iter().filter(|t| t.starts_with(album)).collect();
+                let mut sorted = mine.clone();
+                sorted.sort();
+                assert_eq!(mine, sorted);
+            }
+            seen.insert(runs(&titles).join(""));
+        }
+        assert!(
+            seen.len() > 3,
+            "the albums come in different orders: {seen:?}"
+        );
+        // A picked song: its album from that song on, the others after, its
+        // songs before it last.
+        let picked = album_shuffle(&refs, Some(0), 7);
+        let titles: Vec<String> = picked.iter().map(|&i| songs[i].title.clone()).collect();
+        assert_eq!(&titles[..2], ["a2", "a3"]);
+        assert_eq!(titles.last().unwrap(), "a1");
+    }
+
+    #[test]
+    fn disc_folders_and_loose_songs_make_albums_by_folder_and_tag() {
+        let mut one = album_song(1, "x", 1);
+        one.path = "/m/Best Of/CD1/01 a.mp3".into();
+        let mut two = album_song(2, "x", 1);
+        two.disc = 2;
+        two.path = "/m/Best Of/CD 2/01 b.mp3".into();
+        // Same album name in another folder: another album.
+        let mut other = album_song(3, "x", 1);
+        other.path = "/m/Other/01 c.mp3".into();
+        let refs = [&one, &two, &other];
+        for seed in 0..16 {
+            let order = album_shuffle(&refs, None, seed);
+            let at = |id: usize| order.iter().position(|&i| i == id).unwrap();
+            assert_eq!(at(1), at(0) + 1, "CD 2 follows CD 1");
+        }
+    }
+
+    #[test]
+    fn shuffle_albums_on_keeps_the_album_playing_then_mixes_the_rest() {
+        let songs: Vec<Track> = ["a", "b", "c", "d"]
+            .iter()
+            .flat_map(|album| (1..=3).map(move |n| (album, n)))
+            .enumerate()
+            .map(|(i, (album, n))| album_song(i as i64, album, n))
+            .collect();
+        let mut m = AppModel::default();
+        m.replace_queue(songs, 0).unwrap();
+        m.set_source("Folder", None);
+        m.step(1); // a2 playing
+        m.queue_last(vec![song(99)]).unwrap();
+        assert!(m.shuffle_source_albums(5));
+        let next = upcoming(&m);
+        assert_eq!(
+            &next[..2],
+            ["s99", "a3"],
+            "your queue, then the album playing"
+        );
+        assert_eq!(
+            runs(&next[2..]).len(),
+            3,
+            "the other albums whole: {next:?}"
+        );
+        assert!(m.unshuffle_source());
+        assert_eq!(upcoming(&m)[..3], ["s99", "a3", "b1"]);
     }
 
     #[test]

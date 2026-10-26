@@ -2,8 +2,10 @@
 //! on the song playing, the history is a scroll up), then your queue, then
 //! the rest of what plays, each part under a heading. Rows are made one at a
 //! time from the queue (it holds up to 5 000 songs).
-use crate::{display_or_unknown, track_title, Effect, Item, Selection, Ui};
-use reborn_core::{Action, AppModel, QueueEntryId, Screen, Track};
+use crate::{
+    catalog::folder_play_order, display_or_unknown, track_title, Effect, Item, Selection, Ui,
+};
+use reborn_core::{Action, AppModel, QueueEntryId, Screen, ShuffleMode, Track};
 use std::{collections::HashMap, ops::Range};
 
 /// A row of Up Next.
@@ -580,14 +582,20 @@ impl Ui {
             || key == crate::catalog::SEARCH_PLAY_ALL
     }
 
-    pub(crate) fn group_menu() -> Vec<Item> {
-        vec![
+    pub(crate) fn group_menu(key: &str) -> Vec<Item> {
+        let mut rows = vec![
             Item::new("Play", "group_play"),
             Item::new("Shuffle", "group_shuffle"),
             Item::new("Play Next", "group_next"),
             Item::new("Add to Queue", "group_queue"),
             Item::new("Add to Playlist…", "group_playlist"),
-        ]
+        ];
+        // Many albums: each whole, in random order (one album has nothing
+        // to mix).
+        if !key.starts_with("album:") {
+            rows.insert(2, Item::new("Shuffle Albums", "group_shuffle_albums"));
+        }
+        rows
     }
 
     /// A group's songs in its own order (an album by disc and track).
@@ -601,8 +609,10 @@ impl Ui {
             .filter(|(_, t)| crate::track_matches(t, key))
             .map(|(i, _)| i)
             .collect();
-        if key.starts_with("folder:") {
-            members.sort_by(|a, b| tracks[*a].path.cmp(&tracks[*b].path));
+        if let Some(folder) = key.strip_prefix("folder:") {
+            // As Folders shows them: in each folder its folders first, then
+            // its songs, both by name (Beta 8.39).
+            members = folder_play_order(std::path::Path::new(folder), tracks, &members);
         } else {
             members.sort_by_cached_key(|&i| {
                 let t = &tracks[i];
@@ -654,12 +664,16 @@ impl Ui {
         let source = Self::group_label(m, key);
         Self::close_modal(m);
         match menu_key {
-            "group_play" | "group_shuffle" => {
+            "group_play" | "group_shuffle" | "group_shuffle_albums" => {
                 Self::go(m, Screen::NowPlaying, "");
                 Effect::PlayCollection {
                     selected: first,
                     members,
-                    shuffle: menu_key == "group_shuffle",
+                    shuffle: match menu_key {
+                        "group_shuffle" => ShuffleMode::Songs,
+                        "group_shuffle_albums" => ShuffleMode::Albums,
+                        _ => ShuffleMode::Off,
+                    },
                     source,
                 }
             }

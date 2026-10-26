@@ -578,6 +578,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         at(Screen::Folders, "folder:/media/internal/music"),
         |_, m| m.navigation.focus = 1
     );
+    // A folder's songs by file name (Beta 8.39).
+    case!(
+        "13b-folder-songs",
+        at(
+            Screen::Folders,
+            "folder:/media/internal/music/Émilie & the Northern Lights/A Landscape in Sound"
+        ),
+        |_, m| m.navigation.focus = 1
+    );
     // Playing
     case!(
         "14-now-playing",

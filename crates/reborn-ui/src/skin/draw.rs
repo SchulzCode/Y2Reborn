@@ -85,6 +85,7 @@ impl Scene<'_> {
             Flag::HasTrack => m.current().is_some(),
             Flag::HasArt => self.has_art && m.current().is_some(),
             Flag::Shuffle => s.shuffle,
+            Flag::ShuffleAlbums => s.shuffle_mode() == reborn_core::ShuffleMode::Albums,
             Flag::Repeat => s.repeat != RepeatMode::Off,
             Flag::RepeatOne => s.repeat == RepeatMode::Track,
             Flag::Charging => matches!(b.charging, ChargingState::Charging),

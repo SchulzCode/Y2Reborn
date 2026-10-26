@@ -1109,6 +1109,10 @@ pub struct Settings {
     pub gapless_enabled: bool,
     #[serde(default)]
     pub shuffle: bool,
+    /// Shuffle mixes whole albums, not songs (`shuffle_mode`, Beta 8.39).
+    /// Kept apart from `shuffle` so older sessions and skins read it as on.
+    #[serde(default)]
+    pub shuffle_albums: bool,
     #[serde(default)]
     pub repeat: RepeatMode,
     /// Backlight level in percent of the panel maximum.
@@ -1132,6 +1136,9 @@ pub struct Settings {
     /// Audiobooks stand on Home once the library holds one (Beta 8.19).
     #[serde(default = "default_true")]
     pub audiobooks_on_home: bool,
+    /// Playlists shown in another order than their file's, by path.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub playlist_sort: std::collections::BTreeMap<String, PlaylistSort>,
     /// 1 once the codec default became Auto. Older sessions stored SBC only
     /// as the default (the choice was never offered), so they move to Auto.
     #[serde(default)]
@@ -1240,6 +1247,67 @@ impl NowPlayingWheel {
         match self {
             Self::Volume => Self::Seek,
             Self::Seek => Self::Volume,
+        }
+    }
+}
+/// What Shuffle mixes (Settings > Playback, Now Playing; as the iPod's
+/// Shuffle Off, Songs and Albums): every song, or whole albums in random
+/// order, each album in its own order (Beta 8.39).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ShuffleMode {
+    #[default]
+    Off,
+    Songs,
+    Albums,
+}
+impl ShuffleMode {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Off => "Off",
+            Self::Songs => "Songs",
+            Self::Albums => "Albums",
+        }
+    }
+    pub fn next(self) -> Self {
+        match self {
+            Self::Off => Self::Songs,
+            Self::Songs => Self::Albums,
+            Self::Albums => Self::Off,
+        }
+    }
+}
+/// The order a playlist's page shows and plays its songs in (Beta 8.39).
+/// Only the view changes: the file keeps its own order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum PlaylistSort {
+    /// As the file lists them (songs can be moved).
+    #[default]
+    Playlist,
+    /// Album by album (album artist, album, disc, track).
+    Album,
+    Artist,
+    Title,
+    FileName,
+}
+impl PlaylistSort {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Playlist => "Playlist Order",
+            Self::Album => "Album",
+            Self::Artist => "Artist",
+            Self::Title => "Title",
+            Self::FileName => "File Name",
+        }
+    }
+    pub fn next(self) -> Self {
+        match self {
+            Self::Playlist => Self::Album,
+            Self::Album => Self::Artist,
+            Self::Artist => Self::Title,
+            Self::Title => Self::FileName,
+            Self::FileName => Self::Playlist,
         }
     }
 }
@@ -1362,6 +1430,7 @@ impl Default for Settings {
             crossfade_ms: 0,
             gapless_enabled: true,
             shuffle: false,
+            shuffle_albums: false,
             repeat: RepeatMode::Off,
             brightness: default_brightness(),
             album_view: AlbumView::CoverFlow,
@@ -1370,6 +1439,7 @@ impl Default for Settings {
             wrap_around: WrapAround::Menus,
             screen_off_buttons: ScreenOffButtons::Buttons,
             audiobooks_on_home: true,
+            playlist_sort: Default::default(),
             codec_revision: CODEC_REVISION,
             theme: String::new(),
             time_zone: default_time_zone(),
@@ -1443,6 +1513,32 @@ impl Settings {
     }
 }
 impl Settings {
+    pub fn shuffle_mode(&self) -> ShuffleMode {
+        match (self.shuffle, self.shuffle_albums) {
+            (false, _) => ShuffleMode::Off,
+            (true, false) => ShuffleMode::Songs,
+            (true, true) => ShuffleMode::Albums,
+        }
+    }
+    pub fn set_shuffle_mode(&mut self, mode: ShuffleMode) {
+        self.shuffle = mode != ShuffleMode::Off;
+        self.shuffle_albums = mode == ShuffleMode::Albums;
+    }
+    /// The order a playlist's page shows its songs in.
+    pub fn playlist_sort(&self, path: &std::path::Path) -> PlaylistSort {
+        self.playlist_sort
+            .get(&*path.to_string_lossy())
+            .copied()
+            .unwrap_or_default()
+    }
+    pub fn set_playlist_sort(&mut self, path: &std::path::Path, sort: PlaylistSort) {
+        let key = path.to_string_lossy().into_owned();
+        if sort == PlaylistSort::Playlist {
+            self.playlist_sort.remove(&key);
+        } else {
+            self.playlist_sort.insert(key, sort);
+        }
+    }
     /// The loudest wired volume allowed now: the safe one until the
     /// listener agrees to more.
     pub fn wired_volume_limit(&self) -> u8 {
@@ -1598,7 +1694,9 @@ pub enum Effect {
     PlayCollection {
         selected: usize,
         members: Vec<usize>,
-        shuffle: bool,
+        /// Off: as the Shuffle setting says; Songs or Albums: a Shuffle row
+        /// (any song or album may come first).
+        shuffle: ShuffleMode,
         /// What Up Next calls it ("Night Drive", "Search “bri”").
         source: String,
     },
@@ -1673,7 +1771,9 @@ pub enum Effect {
     /// The playing book's speed (kept for that book).
     SetBookSpeed(u16),
     SetSleepTimer(SleepChoice),
-    SetShuffle(bool),
+    SetShuffle(ShuffleMode),
+    /// How a playlist's page orders its songs (its file's path).
+    SetPlaylistSort(std::path::PathBuf, PlaylistSort),
     SetRepeat(RepeatMode),
     SetScreenTimeout(u32),
     /// Switch to the skin with this id ("" = Reborn's own look).

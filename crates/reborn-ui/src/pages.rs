@@ -170,7 +170,7 @@ pub fn page(ui: &Ui, m: &AppModel, tracks: &[Track]) -> Page {
         Screen::ErrorReports => error_reports(m),
         Screen::Theme => theme(ui, m),
         Screen::SettingsPlayback => Page::rows(vec![
-            row("Shuffle", "shuffle", on_off(m.settings.shuffle)),
+            row("Shuffle", "shuffle", m.settings.shuffle_mode().label()),
             row("Repeat", "repeat", crate::repeat_label(m.settings.repeat)),
             row("Gapless Playback", "gapless", on_off(m.settings.gapless_enabled)),
             row("Crossfade", "crossfade", crate::crossfade_label(m.settings.crossfade_ms)),

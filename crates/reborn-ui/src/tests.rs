@@ -2532,7 +2532,10 @@ fn album_page_plays_and_shuffles_and_artist_page_lists_albums() {
     assert_eq!(rows[1].key, "shuffle:collection");
     assert!(matches!(
         select_key(&mut ui, &mut m, "shuffle:collection"),
-        Effect::PlayCollection { shuffle: true, .. }
+        Effect::PlayCollection {
+            shuffle: ShuffleMode::Songs,
+            ..
+        }
     ));
     let mut m = app(Screen::Artist);
     m.navigation.filter = "artist:Élodie · Μουσική · Музыка · 音楽".into();
@@ -2805,7 +2808,7 @@ fn genres_open_their_albums_then_all_songs_or_one_album() {
         Effect::PlayCollection {
             members, shuffle, ..
         } => {
-            assert!(shuffle);
+            assert_eq!(shuffle, ShuffleMode::Songs);
             assert_eq!(members.len(), 6);
             assert!(members.iter().all(|&i| tracks[i].genre == "Jazz"));
         }
@@ -3438,7 +3441,7 @@ fn the_search_page_lists_each_kind_under_a_heading_with_play_all() {
         Effect::PlayCollection {
             members, shuffle, ..
         } => {
-            assert!(!shuffle);
+            assert_eq!(shuffle, ShuffleMode::Off);
             assert_eq!(members.len(), 9);
             assert_eq!(members[..shown.len()], shown[..]);
         }
@@ -3595,7 +3598,7 @@ fn playlists_section_lists_favorites_first_then_a_to_z_and_opens_a_playlist() {
         Effect::PlayCollection {
             selected: 1,
             members: vec![1, 4, 2],
-            shuffle: false,
+            shuffle: ShuffleMode::Off,
             source: "Road Trip".into()
         }
     );
@@ -3777,7 +3780,15 @@ fn deleting_a_playlist_asks_first_and_favorites_cannot_be_deleted() {
         .collect();
     assert_eq!(
         options,
-        ["Play", "Shuffle", "Play Next", "Add to Queue", "Duplicate"]
+        [
+            "Play",
+            "Shuffle",
+            "Shuffle Albums",
+            "Play Next",
+            "Add to Queue",
+            "Sort",
+            "Duplicate"
+        ]
     );
     ui.model_action(&mut m, Action::Back);
     m.navigation.focus = 3;
@@ -4622,7 +4633,7 @@ fn music_queues_skip_audiobooks_and_songs_play_in_list_order() {
         Effect::PlayCollection {
             members, shuffle, ..
         } => {
-            assert!(shuffle);
+            assert_eq!(shuffle, ShuffleMode::Songs);
             assert_eq!(members, [0, 1, 2, 3, 4, 5]);
         }
         other => panic!("{other:?}"),
@@ -4977,7 +4988,7 @@ fn albums_artists_genres_and_search_results_queue_as_a_whole() {
         Effect::PlayCollection {
             selected: members[0],
             members,
-            shuffle: false,
+            shuffle: ShuffleMode::Off,
             source: rows[1].label.clone(),
         }
     );
@@ -4997,7 +5008,7 @@ fn albums_artists_genres_and_search_results_queue_as_a_whole() {
             ..
         } => {
             assert_eq!(members.len(), 9);
-            assert!(shuffle);
+            assert_eq!(shuffle, ShuffleMode::Songs);
             assert_eq!(source, "Search “song”");
         }
         other => panic!("{other:?}"),
@@ -5021,9 +5032,10 @@ fn menu_labels(ui: &mut Ui, m: &mut AppModel) -> Vec<String> {
 fn every_menu_lists_its_shared_actions_in_one_order() {
     // 8.36: play it, queue it, what this place changes, keep it, go to it,
     // then many songs at once; the same everywhere.
-    const ORDER: [&str; 12] = [
+    const ORDER: [&str; 13] = [
         "Play",
         "Shuffle",
+        "Shuffle Albums",
         "Play Next",
         "Add to Queue",
         "Move",
@@ -5101,8 +5113,14 @@ fn every_menu_lists_its_shared_actions_in_one_order() {
     pm.navigation.focus = 3;
     let playlist = menu_labels(&mut pui, &mut pm);
     assert_eq!(
-        playlist[..4],
-        ["Play", "Shuffle", "Play Next", "Add to Queue"]
+        playlist[..5],
+        [
+            "Play",
+            "Shuffle",
+            "Shuffle Albums",
+            "Play Next",
+            "Add to Queue"
+        ]
     );
     for (menu, place) in [
         (&songs, "songs"),
@@ -5347,7 +5365,16 @@ fn playlists_are_found_by_name_and_open_or_play_from_the_results() {
     // Hold Select: the playlist's own menu.
     m.navigation.focus = at;
     let menu = menu_labels(&mut ui, &mut m);
-    assert_eq!(menu[..4], ["Play", "Shuffle", "Play Next", "Add to Queue"]);
+    assert_eq!(
+        menu[..5],
+        [
+            "Play",
+            "Shuffle",
+            "Shuffle Albums",
+            "Play Next",
+            "Add to Queue"
+        ]
+    );
     // Select opens it; Back returns to the results.
     ui.model_action(&mut m, Action::Select);
     assert_eq!(m.screen, Screen::Playlist);
@@ -5431,4 +5458,267 @@ fn settings_pages_keep_their_rows_until_the_focus_reaches_an_edge() {
         .map(|f| ui.group_window(&m, f, 5, 10))
         .collect();
     assert_eq!(up, [5, 5, 5, 5, 5, 4, 3, 2, 1, 0]);
+}
+
+/// A genre folder as the Reddit report (2026-10-26) keeps it: loose songs
+/// named "Title - Artist", album folders, a compilation without an album
+/// artist; in library order (artist first), as the database hands it over.
+fn folder_library() -> Vec<Track> {
+    let song = |path: &str, title: &str, artist: &str, album: &str, track: u32| Track {
+        source_id: "internal".into(),
+        title: title.into(),
+        artist: artist.into(),
+        album: album.into(),
+        track,
+        path: format!("/data/music/Hardcore/{path}").into(),
+        filename: path.rsplit('/').next().unwrap().into(),
+        duration_ms: 200_000,
+        online: true,
+        ..Default::default()
+    };
+    let mut tracks = vec![
+        song(
+            "Skydivin' - Darren Styles.mp3",
+            "Skydiving",
+            "Darren Styles",
+            "",
+            0,
+        ),
+        song("abc - Zed.mp3", "Zzz", "Aaa", "", 0),
+        song(
+            "Clubland 28/10 - Xan - Ten.mp3",
+            "Ten",
+            "Xan",
+            "Clubland 28",
+            10,
+        ),
+        song(
+            "Clubland 28/2 - Bea - Two.mp3",
+            "Two",
+            "Bea",
+            "Clubland 28",
+            2,
+        ),
+        song(
+            "Clubland 28/01 - Zoe - One.mp3",
+            "One",
+            "Zoe",
+            "Clubland 28",
+            1,
+        ),
+        song("zeta/01 - z.mp3", "z", "Darren Styles", "Zeta", 1),
+        song("Alpha/01 - a.mp3", "a", "Yves", "Alpha", 1),
+    ];
+    tracks.sort_by(|a, b| (&a.artist, &a.album).cmp(&(&b.artist, &b.album)));
+    for (i, t) in tracks.iter_mut().enumerate() {
+        t.id = i as i64;
+    }
+    tracks
+}
+
+fn folder_app(filter: &str) -> (Ui, AppModel) {
+    let mut m = app(Screen::Folders);
+    m.library.tracks = folder_library();
+    m.navigation.filter = filter.into();
+    (Ui::default(), m)
+}
+
+fn at(tracks: &[Track], file: &str) -> usize {
+    tracks.iter().position(|t| t.filename == file).unwrap()
+}
+
+#[test]
+fn a_folder_lists_its_folders_then_its_songs_by_file_name() {
+    let (mut ui, mut m) = folder_app("folder:/data/music/Hardcore");
+    let tracks = m.library.tracks.clone();
+    let rows = ui.rows(&m, &tracks);
+    let labels: Vec<&str> = rows.iter().map(|r| r.label.as_str()).collect();
+    // Not by artist: the loose song shows its file name where the file
+    // manager has it, not "Skydiving" among Darren Styles' songs.
+    assert_eq!(
+        labels,
+        [
+            "Alpha",
+            "Clubland 28",
+            "zeta",
+            "abc - Zed",
+            "Skydivin' - Darren Styles"
+        ]
+    );
+    assert_eq!(
+        rows[1].secondary, "3 songs",
+        "counted when the folder opened"
+    );
+    assert_eq!(rows[4].secondary, "Darren Styles");
+    // The compilation by its numbered files, numbers as numbers.
+    select_key(&mut ui, &mut m, "folder:/data/music/Hardcore/Clubland 28");
+    let rows = ui.rows(&m, &tracks);
+    let labels: Vec<&str> = rows.iter().map(|r| r.label.as_str()).collect();
+    assert_eq!(
+        labels,
+        ["01 - Zoe - One", "2 - Bea - Two", "10 - Xan - Ten"]
+    );
+    // A song plays the folder in that order: Next is the row below.
+    let (one, two, ten) = (
+        at(&tracks, "01 - Zoe - One.mp3"),
+        at(&tracks, "2 - Bea - Two.mp3"),
+        at(&tracks, "10 - Xan - Ten.mp3"),
+    );
+    assert_eq!(
+        select_key(&mut ui, &mut m, &format!("track:{two}")),
+        Effect::PlayCollection {
+            selected: two,
+            members: vec![one, two, ten],
+            shuffle: ShuffleMode::Off,
+            source: "Clubland 28".into(),
+        }
+    );
+    // A loose song plays the folder's own songs, not its albums too.
+    let (mut ui, mut m) = folder_app("folder:/data/music/Hardcore");
+    let sky = at(&tracks, "Skydivin' - Darren Styles.mp3");
+    let Effect::PlayCollection { members, .. } =
+        select_key(&mut ui, &mut m, &format!("track:{sky}"))
+    else {
+        panic!("a song plays");
+    };
+    assert_eq!(members, [at(&tracks, "abc - Zed.mp3"), sky]);
+}
+
+#[test]
+fn playing_a_folder_follows_folders_order_and_offers_shuffle_albums() {
+    let (mut ui, mut m) = folder_app("folder:/data/music");
+    let tracks = m.library.tracks.clone();
+    assert_eq!(ui.rows(&m, &tracks)[0].label, "Hardcore");
+    m.navigation.focus = 0;
+    let menu = menu_labels(&mut ui, &mut m);
+    assert_eq!(menu[..3], ["Play", "Shuffle", "Shuffle Albums"]);
+    let Effect::PlayCollection {
+        members, shuffle, ..
+    } = menu_select(&mut ui, &mut m, "group_play")
+    else {
+        panic!("the folder plays");
+    };
+    assert_eq!(shuffle, ShuffleMode::Off);
+    let files: Vec<&str> = members
+        .iter()
+        .map(|&i| tracks[i].filename.as_str())
+        .collect();
+    assert_eq!(
+        files,
+        [
+            "01 - a.mp3",
+            "01 - Zoe - One.mp3",
+            "2 - Bea - Two.mp3",
+            "10 - Xan - Ten.mp3",
+            "01 - z.mp3",
+            "abc - Zed.mp3",
+            "Skydivin' - Darren Styles.mp3",
+        ]
+    );
+    let (mut ui, mut m) = folder_app("folder:/data/music");
+    m.navigation.focus = 0;
+    assert!(matches!(
+        menu_select(&mut ui, &mut m, "group_shuffle_albums"),
+        Effect::PlayCollection {
+            shuffle: ShuffleMode::Albums,
+            ..
+        }
+    ));
+    // One album has nothing to mix.
+    let mut m = app(Screen::Albums);
+    m.settings.album_view = reborn_core::AlbumView::Grid;
+    let album = menu_labels(&mut Ui::default(), &mut m);
+    assert!(!album.contains(&"Shuffle Albums".to_string()), "{album:?}");
+}
+
+#[test]
+fn shuffle_steps_through_off_songs_and_albums() {
+    let mut ui = radios();
+    let mut m = app(Screen::NowPlaying);
+    for (now, next) in [
+        (ShuffleMode::Off, ShuffleMode::Songs),
+        (ShuffleMode::Songs, ShuffleMode::Albums),
+        (ShuffleMode::Albums, ShuffleMode::Off),
+    ] {
+        m.settings.set_shuffle_mode(now);
+        ui.model_action(&mut m, Action::ContextMenu);
+        let rows = ui.modal_rows_public(&m, &m.library.tracks.clone());
+        let row = rows
+            .iter()
+            .find(|r| r.key == "toggle_shuffle")
+            .unwrap_or_else(|| panic!("{rows:?}"));
+        assert_eq!(row.secondary, now.label());
+        ui.model_action(&mut m, Action::Back);
+        assert_eq!(
+            menu_select(&mut ui, &mut m, "toggle_shuffle"),
+            Effect::SetShuffle(next)
+        );
+        if m.navigation.modal.is_some() {
+            ui.model_action(&mut m, Action::Back);
+        }
+        assert_eq!(m.screen, Screen::NowPlaying);
+    }
+    // Older sessions stored only `shuffle`: on is Songs.
+    let old: reborn_core::Settings = serde_json::from_value({
+        let mut v = serde_json::to_value(reborn_core::Settings::default()).unwrap();
+        v["shuffle"] = true.into();
+        v.as_object_mut().unwrap().remove("shuffle_albums");
+        v
+    })
+    .unwrap();
+    assert_eq!(old.shuffle_mode(), ShuffleMode::Songs);
+}
+
+#[test]
+fn a_playlist_sorts_its_page_and_plays_in_that_order() {
+    let (mut ui, mut m) = playlists_app();
+    select_key(&mut ui, &mut m, "playlist:2");
+    let path = PathBuf::from("/data/music/Playlists/Road Trip.m3u8");
+    let tracks = m.library.tracks.clone();
+    // Hold Select on a song: Sort steps the order on, the menu stays open.
+    m.navigation.focus = 2;
+    assert_eq!(
+        menu_select(&mut ui, &mut m, "ple_sort"),
+        Effect::SetPlaylistSort(path.clone(), reborn_core::PlaylistSort::Album)
+    );
+    assert_eq!(m.navigation.modal, Some(Modal::ContextMenu));
+    ui.model_action(&mut m, Action::Back);
+    // By title: Song 1, Song 2, Song 4, the missing song last.
+    m.settings
+        .set_playlist_sort(&path, reborn_core::PlaylistSort::Title);
+    let labels: Vec<String> = ui.rows(&m, &tracks).into_iter().map(|r| r.label).collect();
+    assert_eq!(labels[2..], ["Song 1", "Song 2", "Song 4", "Lost Song"]);
+    assert_eq!(
+        select_key(&mut ui, &mut m, "pl_play"),
+        Effect::PlayCollection {
+            selected: 1,
+            members: vec![1, 2, 4],
+            shuffle: ShuffleMode::Off,
+            source: "Road Trip".into()
+        }
+    );
+    ui.model_action(&mut m, Action::Back);
+    // Moving a song only means something in the file's order.
+    m.navigation.focus = 2;
+    let menu = menu_labels(&mut ui, &mut m);
+    assert!(!menu.contains(&"Move".to_string()), "{menu:?}");
+    assert!(menu.contains(&"Sort".to_string()));
+    // Holding Play or Shuffle gives the playlist's own menu.
+    m.navigation.focus = 0;
+    let menu = menu_labels(&mut ui, &mut m);
+    assert_eq!(menu[..3], ["Play", "Shuffle", "Shuffle Albums"]);
+    assert!(matches!(
+        menu_select(&mut ui, &mut m, "pl_shuffle_albums"),
+        Effect::PlayCollection {
+            shuffle: ShuffleMode::Albums,
+            ..
+        }
+    ));
+    // Playlist Order again: the file's order, and Move is back.
+    m.settings
+        .set_playlist_sort(&path, reborn_core::PlaylistSort::Playlist);
+    assert!(
+        m.settings.playlist_sort.is_empty(),
+        "nothing kept for the default"
+    );
 }

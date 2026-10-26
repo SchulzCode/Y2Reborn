@@ -6,8 +6,9 @@
 use crate::{keyboard, names_or_unknown, playlist_index, track_title, Item, Ui};
 use reborn_core::{
     playlist::{Playlist, PlaylistEdit, PlaylistEntry},
-    sort::{sort_key, SortAs},
-    Action, AppModel, ConfirmAction, Effect, Modal, PlaylistRequest, Screen, Track,
+    sort::{fold, natural_key, sort_key, SortAs},
+    Action, AppModel, ConfirmAction, Effect, Modal, PlaylistRequest, PlaylistSort, Screen,
+    ShuffleMode, Track,
 };
 use std::path::{Path, PathBuf};
 
@@ -53,7 +54,15 @@ pub(crate) struct Facts {
 pub(crate) type FactsKey = ((u64, i64), usize, (usize, usize));
 
 /// What the rows of a Playlist screen depend on.
-pub(crate) type RowsKey = (Screen, String, u64, usize, usize, Option<(usize, usize)>);
+pub(crate) type RowsKey = (
+    Screen,
+    String,
+    u64,
+    usize,
+    usize,
+    Option<(usize, usize)>,
+    PlaylistSort,
+);
 
 impl PlaylistsView {
     /// Bumped whenever the lists change.
@@ -111,6 +120,11 @@ fn roots(m: &AppModel) -> Vec<PathBuf> {
         }
     }
     roots
+}
+
+/// The Sort row of a playlist's menus: each press steps the order on.
+fn sort_row(key: &str, sort: PlaylistSort) -> Item {
+    Item::new("Sort", key).with_secondary(sort.label())
 }
 
 /// "24 songs · 1 h 32 min".
@@ -206,9 +220,86 @@ impl Ui {
         self.facts(tracks, playlist).resolved.clone()
     }
 
-    /// The library songs of a playlist that can play now, in order.
-    fn playable(&self, tracks: &[Track], playlist: &Playlist) -> Vec<usize> {
-        self.facts(tracks, playlist).playable.clone()
+    /// A playlist's entries in the order its page shows them (Sort, Beta
+    /// 8.39): the file's order, or sorted with entries not on the player
+    /// last.
+    pub(crate) fn shown_order(
+        &self,
+        m: &AppModel,
+        tracks: &[Track],
+        playlist: &Playlist,
+    ) -> Vec<usize> {
+        let mut order: Vec<usize> = (0..playlist.entries.len()).collect();
+        let sort = m.settings.playlist_sort(&playlist.path);
+        if sort == PlaylistSort::Playlist {
+            return order;
+        }
+        let facts = self.facts(tracks, playlist);
+        let song = |i: usize| facts.resolved[i].and_then(|t| tracks.get(t));
+        type Key = (bool, String, String, u32, u32, String, usize);
+        order.sort_by_cached_key(|&i| -> Key {
+            let Some(t) = song(i) else {
+                return (true, String::new(), String::new(), 0, 0, String::new(), i);
+            };
+            let file = natural_key(&t.filename);
+            match sort {
+                PlaylistSort::Album => (
+                    false,
+                    sort_key(crate::album_artist_of(t), SortAs::Artist),
+                    sort_key(&t.album, SortAs::Title),
+                    t.disc,
+                    t.track,
+                    file,
+                    i,
+                ),
+                PlaylistSort::Artist => (
+                    false,
+                    sort_key(&t.artist, SortAs::Artist),
+                    sort_key(&t.album, SortAs::Title),
+                    t.disc,
+                    t.track,
+                    file,
+                    i,
+                ),
+                PlaylistSort::Title => (
+                    false,
+                    sort_key(track_title(t), SortAs::Title),
+                    fold(&t.artist),
+                    0,
+                    0,
+                    file,
+                    i,
+                ),
+                PlaylistSort::FileName | PlaylistSort::Playlist => {
+                    (false, file, String::new(), 0, 0, String::new(), i)
+                }
+            }
+        });
+        order
+    }
+
+    /// The songs that can play now in the order the page shows them.
+    fn playable_shown(&self, m: &AppModel, tracks: &[Track], playlist: &Playlist) -> Vec<usize> {
+        let facts = self.facts(tracks, playlist);
+        self.shown_order(m, tracks, playlist)
+            .into_iter()
+            .filter_map(|i| facts.resolved[i])
+            .filter(|&t| tracks.get(t).is_some_and(|t| t.online))
+            .collect()
+    }
+
+    /// The playlist a menu is about: a playlist row, or on a playlist's
+    /// page its Play and Shuffle buttons.
+    fn menu_playlist(&self, m: &AppModel, key: &str) -> Option<&Playlist> {
+        if let Some(i) = key.strip_prefix("playlist:") {
+            return i
+                .parse::<usize>()
+                .ok()
+                .and_then(|i| self.playlists.lists.get(i));
+        }
+        (m.screen == Screen::Playlist && matches!(key, "pl_play" | "pl_shuffle"))
+            .then(|| self.playlists.get(Path::new(&m.navigation.filter)))
+            .flatten()
     }
 
     /// Track indices in Favorites (for the heart).
@@ -276,6 +367,7 @@ impl Ui {
             tracks.as_ptr() as usize,
             tracks.len(),
             self.playlists.moving,
+            m.settings.playlist_sort(Path::new(&m.navigation.filter)),
         );
         let fresh = matches!(&*self.playlist_rows_cache.borrow(), Some((k, _)) if *k == key);
         if !fresh {
@@ -316,7 +408,7 @@ impl Ui {
                     rows.push(Item::new("Shuffle", "pl_shuffle"));
                 }
                 // While a song is being moved it is drawn at its new place.
-                let mut order: Vec<usize> = (0..p.entries.len()).collect();
+                let mut order = self.shown_order(m, tracks, p);
                 if let Some((from, to)) = self.playlists.moving {
                     if from < order.len() {
                         let entry = order.remove(from);
@@ -374,7 +466,7 @@ impl Ui {
         let Some(p) = self.playlists.get(Path::new(&m.navigation.filter)).cloned() else {
             return Effect::None;
         };
-        let members = self.playable(tracks, &p);
+        let members = self.playable_shown(m, tracks, &p);
         let source = crate::source_label(m);
         match key {
             "pl_play" | "pl_shuffle" if !members.is_empty() => {
@@ -382,7 +474,11 @@ impl Ui {
                 Effect::PlayCollection {
                     selected: members[0],
                     members,
-                    shuffle: key == "pl_shuffle",
+                    shuffle: if key == "pl_shuffle" {
+                        ShuffleMode::Songs
+                    } else {
+                        ShuffleMode::Off
+                    },
                     source,
                 }
             }
@@ -399,7 +495,7 @@ impl Ui {
                         Effect::PlayCollection {
                             selected: t,
                             members,
-                            shuffle: false,
+                            shuffle: ShuffleMode::Off,
                             source,
                         }
                     }
@@ -418,17 +514,15 @@ impl Ui {
 
     /// Hold Select on a playlist, or on a song in one.
     pub(crate) fn playlist_context_rows(&self, m: &AppModel, key: &str) -> Vec<Item> {
-        if let Some(p) = key
-            .strip_prefix("playlist:")
-            .and_then(|i| i.parse::<usize>().ok())
-            .and_then(|i| self.playlists.lists.get(i))
-        {
+        if let Some(p) = self.menu_playlist(m, key) {
             // As an album's: Play and Shuffle first (8.36).
             let mut rows = vec![
                 Item::new("Play", "pl_play"),
                 Item::new("Shuffle", "pl_shuffle"),
+                Item::new("Shuffle Albums", "pl_shuffle_albums"),
                 Item::new("Play Next", "pl_next"),
                 Item::new("Add to Queue", "pl_queue"),
+                sort_row("pl_sort", m.settings.playlist_sort(&p.path)),
             ];
             if !is_favorites(&p.path) && !p.read_only {
                 rows.push(Item::new("Rename", "pl_rename"));
@@ -440,22 +534,27 @@ impl Ui {
             return rows;
         }
         if key.starts_with("pl_entry:") {
-            let read_only = self
-                .playlists
-                .get(Path::new(&m.navigation.filter))
-                .is_none_or(|p| p.read_only);
+            let playlist = self.playlists.get(Path::new(&m.navigation.filter));
+            let read_only = playlist.is_none_or(|p| p.read_only);
+            let sort = playlist.map_or(PlaylistSort::Playlist, |p| {
+                m.settings.playlist_sort(&p.path)
+            });
             let mut rows = vec![
                 Item::new("Play Next", "ple_next"),
                 Item::new("Add to Queue", "ple_queue"),
             ];
             if !read_only {
-                rows.push(Item::new("Move", "ple_move"));
+                // Moving a song only means something in the file's order.
+                if sort == PlaylistSort::Playlist {
+                    rows.push(Item::new("Move", "ple_move"));
+                }
                 rows.push(Item::new("Remove from Playlist", "ple_remove"));
             }
             rows.extend([
                 Item::new("Add to Playlist…", "ple_add"),
                 Item::new("Go to Album", "ple_album"),
                 Item::new("Go to Artist", "ple_artist"),
+                sort_row("ple_sort", sort),
             ]);
             return rows;
         }
@@ -469,20 +568,24 @@ impl Ui {
         source: &str,
         menu: &str,
     ) -> Option<Effect> {
-        if let Some(p) = source
-            .strip_prefix("playlist:")
-            .and_then(|i| i.parse::<usize>().ok())
-            .and_then(|i| self.playlists.lists.get(i))
-            .cloned()
-        {
-            let members = self.playable(tracks, &p);
+        if let Some(p) = self.menu_playlist(m, source).cloned() {
+            let members = self.playable_shown(m, tracks, &p);
             return Some(match menu {
-                "pl_play" | "pl_shuffle" if !members.is_empty() => {
+                // The menu stays open: each press steps the order on.
+                "pl_sort" => Effect::SetPlaylistSort(
+                    p.path.clone(),
+                    m.settings.playlist_sort(&p.path).next(),
+                ),
+                "pl_play" | "pl_shuffle" | "pl_shuffle_albums" if !members.is_empty() => {
                     Self::go(m, Screen::NowPlaying, "");
                     Effect::PlayCollection {
                         selected: members[0],
                         members,
-                        shuffle: menu == "pl_shuffle",
+                        shuffle: match menu {
+                            "pl_shuffle" => ShuffleMode::Songs,
+                            "pl_shuffle_albums" => ShuffleMode::Albums,
+                            _ => ShuffleMode::Off,
+                        },
                         source: p.name.clone(),
                     }
                 }
@@ -524,6 +627,10 @@ impl Ui {
             .cloned()?;
         let entry = p.entries.get(index)?.clone();
         let track = self.resolved(tracks, &p).get(index).copied().flatten();
+        if menu == "ple_sort" {
+            let next = m.settings.playlist_sort(&p.path).next();
+            return Some(Effect::SetPlaylistSort(p.path, next));
+        }
         Self::close_modal(m);
         Some(match (menu, track) {
             ("ple_next", Some(t)) => Effect::PlayNext(t),

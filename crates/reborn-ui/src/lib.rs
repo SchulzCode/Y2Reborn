@@ -43,7 +43,7 @@ mod views_system;
 use reborn_core::{
     platform::{ChargingState, LowBattery, UsbTransfer, WifiProblem},
     Action, AppModel, AudioOutput, CodecPreference, ConfirmAction, Modal, NavigationFrame,
-    PlatformTask, RadioRequest, RadioScan, RepeatMode, Screen, Track, WrapAround,
+    PlatformTask, RadioRequest, RadioScan, RepeatMode, Screen, ShuffleMode, Track, WrapAround,
 };
 use reborn_graphics::Quad;
 use std::{
@@ -1381,11 +1381,8 @@ impl Ui {
             return vec![
                 Item::new("Up Next", "show_queue").with_secondary(next),
                 Item::new("Sleep Timer", "sleep_timer").with_secondary(sleep_label(m, false)),
-                Item::new("Shuffle", "toggle_shuffle").with_secondary(if m.settings.shuffle {
-                    "On"
-                } else {
-                    "Off"
-                }),
+                Item::new("Shuffle", "toggle_shuffle")
+                    .with_secondary(m.settings.shuffle_mode().label()),
                 Item::new("Repeat", "cycle_repeat").with_secondary(repeat_label(m.settings.repeat)),
                 self.favorite_row(m, tracks, self.current_index(m, tracks)),
                 Item::new("Add to Playlist…", "add_playlist"),
@@ -1435,17 +1432,22 @@ impl Ui {
             return rows;
         }
         // An album, artist, genre or folder row, the search's Play All.
-        if key.is_some_and(Self::group_key) {
-            return Self::group_menu();
+        if let Some(key) = key.filter(|k| Self::group_key(k)) {
+            return Self::group_menu(key);
         }
         if matches!(m.screen, Screen::Album | Screen::Artist) && key == Some("play:collection") {
-            return vec![
+            let mut rows = vec![
                 Item::new("Play", "collection_play"),
                 Item::new("Shuffle", "collection_shuffle"),
                 Item::new("Play Next", "collection_next"),
                 Item::new("Add to Queue", "collection_queue"),
                 Item::new("Add to Playlist…", "collection_playlist"),
             ];
+            // An artist's albums, each whole, in random order.
+            if m.screen == Screen::Artist {
+                rows.insert(2, Item::new("Shuffle Albums", "collection_shuffle_albums"));
+            }
+            return rows;
         }
         match m.screen {
             Screen::Albums | Screen::Artists | Screen::Genres | Screen::Search => vec![],
@@ -2279,7 +2281,7 @@ impl Ui {
             return Effect::None;
         }
         if key == "shuffle:collection" {
-            return self.play_filtered(m, tracks, true);
+            return self.play_filtered(m, tracks, ShuffleMode::Songs);
         }
         if key == "playlists" {
             Self::go(m, Screen::Playlists, "");
@@ -2299,7 +2301,7 @@ impl Ui {
             return Effect::None;
         }
         if key == catalog::SEARCH_PLAY_ALL {
-            return self.play_filtered(m, tracks, false);
+            return self.play_filtered(m, tracks, ShuffleMode::Off);
         }
         if let Some(screen) = route(key) {
             Self::go(m, screen, "");
@@ -2360,7 +2362,7 @@ impl Ui {
                     return self.play_track(m, tracks, key);
                 }
                 if key == "play:collection" {
-                    return self.play_filtered(m, tracks, false);
+                    return self.play_filtered(m, tracks, ShuffleMode::Off);
                 }
             }
             Screen::Queue => {
@@ -2579,7 +2581,7 @@ impl Ui {
                 let (_, _, gains) = pages::EQ_PRESETS.iter().find(|(_, key, _)| *key == name)?;
                 Effect::SetEqPreset(*gains)
             }
-            "shuffle" => Effect::SetShuffle(!m.settings.shuffle),
+            "shuffle" => Effect::SetShuffle(m.settings.shuffle_mode().next()),
             "repeat" => Effect::SetRepeat(next_repeat(m.settings.repeat)),
             "gapless" => Effect::SetGapless(!m.settings.gapless_enabled),
             "scrobble_log" => Effect::SetScrobbleLog(!m.settings.scrobble_log),
@@ -2640,7 +2642,12 @@ impl Ui {
         effect
     }
 
-    fn play_filtered(&mut self, m: &mut AppModel, tracks: &[Track], shuffle: bool) -> Effect {
+    fn play_filtered(
+        &mut self,
+        m: &mut AppModel,
+        tracks: &[Track],
+        shuffle: ShuffleMode,
+    ) -> Effect {
         let members = self.filtered_indices(m, tracks);
         let Some(&index) = members.first() else {
             return Effect::None;
@@ -2655,9 +2662,13 @@ impl Ui {
         effect
     }
     fn filtered_indices(&self, m: &AppModel, tracks: &[Track]) -> Vec<usize> {
-        if matches!(m.screen, Screen::Album | Screen::Search | Screen::Tracks) {
-            // The page's own order (album, search results, Songs A to Z),
-            // not library order: Next plays the row below (Y2Reborn #21).
+        if matches!(
+            m.screen,
+            Screen::Album | Screen::Search | Screen::Tracks | Screen::Folders
+        ) {
+            // The page's own order (album, search results, Songs A to Z, a
+            // folder's own songs by file name), not library order: Next
+            // plays the row below (Y2Reborn #21).
             // The search: every song found, also those See All would show.
             let mut c = self.catalog.borrow_mut();
             self.ensure_catalog(&mut c, m, tracks);
@@ -2679,7 +2690,7 @@ impl Ui {
             Effect::PlayCollection {
                 selected,
                 members,
-                shuffle: false,
+                shuffle: ShuffleMode::Off,
                 source: source_label(m),
             }
         } else {
@@ -3183,8 +3194,9 @@ impl Ui {
             "play" => track_index.map(Effect::Play).unwrap_or(Effect::None),
             "play_next" => track_index.map(Effect::PlayNext).unwrap_or(Effect::None),
             "add_queue" => track_index.map(Effect::AddToQueue).unwrap_or(Effect::None),
-            "collection_play" => self.play_filtered(m, tracks, false),
-            "collection_shuffle" => self.play_filtered(m, tracks, true),
+            "collection_play" => self.play_filtered(m, tracks, ShuffleMode::Off),
+            "collection_shuffle" => self.play_filtered(m, tracks, ShuffleMode::Songs),
+            "collection_shuffle_albums" => self.play_filtered(m, tracks, ShuffleMode::Albums),
             "collection_next" | "collection_queue" => {
                 let members = self.filtered_indices(m, tracks);
                 if members.is_empty() {
@@ -3200,7 +3212,7 @@ impl Ui {
                 self.open_up_next(m, tracks);
                 Effect::None
             }
-            "toggle_shuffle" => Effect::SetShuffle(!m.settings.shuffle),
+            "toggle_shuffle" => Effect::SetShuffle(m.settings.shuffle_mode().next()),
             "cycle_repeat" => Effect::SetRepeat(next_repeat(m.settings.repeat)),
             "go_album" => {
                 if let Some(track) = track_index.and_then(|i| tracks.get(i)) {
@@ -3953,13 +3965,14 @@ fn next_brightness(current: u8) -> u8 {
 /// The letter a row of `screen` files under in A to Z order (the fast-scroll
 /// overlay): "The Postal Service" is under P on Artists.
 pub(crate) fn initial(label: &str, screen: Screen) -> char {
-    use reborn_core::sort::{sort_initial, sort_key, SortAs};
-    let kind = if screen == Screen::Artists {
-        SortAs::Artist
-    } else {
-        SortAs::Title
+    use reborn_core::sort::{natural_key, sort_initial, sort_key, SortAs};
+    let key = match screen {
+        Screen::Artists => sort_key(label, SortAs::Artist),
+        // Folders sort by the whole name, "The" included.
+        Screen::Folders => natural_key(label),
+        _ => sort_key(label, SortAs::Title),
     };
-    sort_initial(&sort_key(label, kind))
+    sort_initial(&key)
 }
 
 /// The coverage-mask atlases the native renderer needs.

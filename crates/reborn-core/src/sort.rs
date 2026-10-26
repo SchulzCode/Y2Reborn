@@ -105,6 +105,40 @@ pub fn sort_key_folded(mut folded: String, kind: SortAs) -> String {
     folded
 }
 
+/// Digits a number in `natural_key` is padded to; longer runs stay as they are.
+const NUMBER_WIDTH: usize = 10;
+
+/// The key a file or folder name sorts by, as file managers order them: the
+/// name folded (`fold`, no article skipped) with its numbers compared as
+/// numbers, so "2 - Intro" comes before "10 - Outro" (Folders, Beta 8.39).
+pub fn natural_key(name: &str) -> String {
+    let folded = fold(name);
+    let mut out = String::with_capacity(folded.len() + 8);
+    let mut digits = String::new();
+    let flush = |out: &mut String, digits: &mut String| {
+        if digits.is_empty() {
+            return;
+        }
+        let number = digits.trim_start_matches('0');
+        let number = if number.is_empty() { "0" } else { number };
+        for _ in number.len()..NUMBER_WIDTH {
+            out.push('0');
+        }
+        out.push_str(number);
+        digits.clear();
+    };
+    for ch in folded.chars() {
+        if ch.is_ascii_digit() {
+            digits.push(ch);
+        } else {
+            flush(&mut out, &mut digits);
+            out.push(ch);
+        }
+    }
+    flush(&mut out, &mut digits);
+    out
+}
+
 /// The letter a sort key files under (fast scrolling's overlay): A to Z, or
 /// # for digits, symbols and other scripts.
 pub fn sort_initial(key: &str) -> char {
@@ -186,5 +220,36 @@ mod tests {
         assert_eq!(sort_initial(&sort_key("10cc", SortAs::Artist)), '#');
         assert_eq!(sort_initial(&sort_key("Северный", SortAs::Title)), '#');
         assert_eq!(sort_initial(""), '#');
+    }
+
+    #[test]
+    fn file_names_sort_as_file_managers_order_them() {
+        let mut names = vec![
+            "10 - Outro.mp3",
+            "2 - Intro.mp3",
+            "01 - Opening.mp3",
+            "the Zebra.mp3",
+            "Skydivin' - Darren Styles.mp3",
+            "apple.mp3",
+            "Électrique.mp3",
+            "Zulu.mp3",
+        ];
+        names.sort_by_cached_key(|n| (natural_key(n), n.to_string()));
+        assert_eq!(
+            names,
+            [
+                "01 - Opening.mp3",
+                "2 - Intro.mp3",
+                "10 - Outro.mp3",
+                "apple.mp3",
+                "Électrique.mp3",
+                "Skydivin' - Darren Styles.mp3",
+                "the Zebra.mp3",
+                "Zulu.mp3",
+            ]
+        );
+        // "01" and "1" are the same number; the name itself breaks the tie.
+        assert_eq!(natural_key("CD01"), natural_key("CD1"));
+        assert_eq!(natural_key("Vol. 007"), "vol 0000000007");
     }
 }

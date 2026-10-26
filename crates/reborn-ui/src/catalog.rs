@@ -4,7 +4,7 @@ use reborn_core::{
     sort::{sort_key, SortAs},
     AppModel, Screen, Track,
 };
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 /// A genre's cover track, its albums, its song count and whether the cover
 /// track has artwork.
 type GenreStats<'a> = (usize, BTreeSet<(&'a str, &'a str)>, usize, bool);
@@ -16,6 +16,8 @@ pub enum Row {
     SearchSong(usize),
     /// An album among search results (a track of it).
     SearchAlbum(usize),
+    /// A song in Folders, named by its file (Beta 8.39).
+    FolderTrack(usize),
     Item(Item),
 }
 
@@ -109,12 +111,15 @@ impl Row {
                 let t = &tracks[*i];
                 album_item(&t.album, &t.album_artist, *i, t)
             }
+            Self::FolderTrack(i) => file_item(*i, &tracks[*i]),
             Self::Item(i) => i.clone(),
         }
     }
     pub fn track(&self) -> Option<usize> {
         match self {
-            Self::Track(i) | Self::AlbumTrack(i) | Self::SearchSong(i) => Some(*i),
+            Self::Track(i) | Self::AlbumTrack(i) | Self::SearchSong(i) | Self::FolderTrack(i) => {
+                Some(*i)
+            }
             Self::SearchAlbum(_) | Self::Item(_) => None,
         }
     }
@@ -433,56 +438,43 @@ impl Catalog {
             Screen::Folders => {
                 let parent =
                     std::path::Path::new(m.navigation.filter.strip_prefix("folder:").unwrap_or(""));
-                let mut children = BTreeSet::new();
                 if parent.as_os_str().is_empty() {
-                    for s in m.sources.iter().filter(|s| s.online) {
-                        children.insert(s.root.clone());
-                    }
-                    if children.is_empty() {
-                        for t in tracks.iter().filter(|t| t.is_music()) {
-                            if let Some(p) = t.path.parent() {
-                                children.insert(p.to_path_buf());
-                            }
-                        }
-                    }
-                } else {
-                    for t in tracks.iter().filter(|t| t.is_music()) {
-                        if let Ok(suffix) = t.path.strip_prefix(parent) {
-                            if let Some(first) = suffix.components().next() {
-                                let child = parent.join(first);
-                                if child != t.path {
-                                    children.insert(child);
-                                }
-                            }
-                        }
+                    self.folder_roots(m, tracks);
+                    return;
+                }
+                // A folder as a file manager shows it (Beta 8.39): its
+                // folders, then its songs, both by name with numbers in
+                // number order; songs by file name, not by title or artist.
+                let mut folders: HashMap<&std::ffi::OsStr, usize> = HashMap::new();
+                let mut songs = vec![];
+                for (i, t) in tracks.iter().enumerate().filter(|(_, t)| t.is_music()) {
+                    let Ok(rest) = t.path.strip_prefix(parent) else {
+                        continue;
+                    };
+                    let mut parts = rest.components();
+                    let Some(first) = parts.next() else {
+                        continue;
+                    };
+                    if parts.next().is_none() {
+                        songs.push(i);
+                    } else {
+                        *folders.entry(first.as_os_str()).or_default() += 1;
                     }
                 }
-                let root = parent.as_os_str().is_empty();
-                for child in children {
-                    // Storage roots are named for what they are, not their path.
-                    let source = m.sources.iter().find(|s| root && s.root == child);
-                    let label = match source.map(|s| &s.kind) {
-                        Some(reborn_core::MediaSource::Internal) => "Internal Storage".into(),
-                        Some(reborn_core::MediaSource::SdCard(_)) => "SD Card".into(),
-                        None => child
-                            .file_name()
-                            .map(|x| x.to_string_lossy().into_owned())
-                            .unwrap_or_else(|| child.display().to_string()),
-                    };
+                let mut folders: Vec<_> = folders.into_iter().collect();
+                folders.sort_by_cached_key(|(name, _)| name_key(&name.to_string_lossy()));
+                for (name, songs) in folders {
+                    let child = parent.join(name);
                     self.push(
-                        Item::new(label, format!("folder:{}", child.display()))
-                            .with_secondary(if source.is_some() { "" } else { "Folder" }),
+                        Item::new(
+                            name.to_string_lossy(),
+                            format!("folder:{}", child.display()),
+                        )
+                        .with_secondary(crate::components::count(songs, "song", "songs")),
                     );
                 }
-                if !parent.as_os_str().is_empty() {
-                    for (i, _) in tracks
-                        .iter()
-                        .enumerate()
-                        .filter(|(_, t)| t.is_music() && t.path.parent() == Some(parent))
-                    {
-                        self.rows.push(Row::Track(i));
-                    }
-                }
+                songs.sort_by_cached_key(|&i| name_key(&tracks[i].filename));
+                self.rows.extend(songs.into_iter().map(Row::FolderTrack));
             }
             Screen::Tracks | Screen::Album | Screen::Artist => {
                 if matches!(m.screen, Screen::Album | Screen::Artist) {
@@ -575,6 +567,105 @@ impl Catalog {
             _ => {}
         }
     }
+}
+impl Catalog {
+    /// Folders' first page: the storages (Internal Storage, SD Card), or
+    /// the songs' folders when none is online.
+    fn folder_roots(&mut self, m: &AppModel, tracks: &[Track]) {
+        let mut children = BTreeSet::new();
+        for s in m.sources.iter().filter(|s| s.online) {
+            children.insert(s.root.clone());
+        }
+        if children.is_empty() {
+            for t in tracks.iter().filter(|t| t.is_music()) {
+                if let Some(p) = t.path.parent() {
+                    children.insert(p.to_path_buf());
+                }
+            }
+        }
+        for child in children {
+            // Storage roots are named for what they are, not their path.
+            let source = m.sources.iter().find(|s| s.root == child);
+            let label = match source.map(|s| &s.kind) {
+                Some(reborn_core::MediaSource::Internal) => "Internal Storage".into(),
+                Some(reborn_core::MediaSource::SdCard(_)) => "SD Card".into(),
+                None => child
+                    .file_name()
+                    .map(|x| x.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| child.display().to_string()),
+            };
+            self.push(
+                Item::new(label, format!("folder:{}", child.display()))
+                    .with_secondary(if source.is_some() { "" } else { "Folder" }),
+            );
+        }
+    }
+}
+/// A file or folder name's place in Folders (`natural_key`); the name
+/// itself breaks ties.
+fn name_key(name: &str) -> (String, String) {
+    (reborn_core::sort::natural_key(name), name.to_owned())
+}
+/// The songs below `root` in the order Folders lists them: in each folder
+/// its folders first, then its songs, both by name. Playing a folder plays
+/// in this order. Each folder's names are sorted once (a whole card is
+/// 120 000 songs in some 10 000 folders).
+pub(crate) fn folder_play_order(
+    root: &std::path::Path,
+    tracks: &[Track],
+    members: &[usize],
+) -> Vec<usize> {
+    use std::path::Path;
+    let mut songs: HashMap<&Path, Vec<usize>> = HashMap::new();
+    let mut folders: HashMap<&Path, Vec<&Path>> = HashMap::new();
+    let mut linked: std::collections::HashSet<&Path> = Default::default();
+    for &i in members {
+        let Some(parent) = tracks[i].path.parent() else {
+            continue;
+        };
+        songs.entry(parent).or_default().push(i);
+        // Each folder joins the one above it once, up to `root`.
+        let mut dir = parent;
+        while dir != root && dir.starts_with(root) && linked.insert(dir) {
+            let Some(up) = dir.parent() else {
+                break;
+            };
+            folders.entry(up).or_default().push(dir);
+            dir = up;
+        }
+    }
+    let mut order = Vec::with_capacity(members.len());
+    let mut stack = vec![root];
+    let name = |p: &Path| {
+        p.file_name()
+            .map_or_else(String::new, |n| n.to_string_lossy().into_owned())
+    };
+    while let Some(dir) = stack.pop() {
+        if let Some(mut subfolders) = folders.remove(dir) {
+            subfolders.sort_by_cached_key(|f| name_key(&name(f)));
+            // Songs come after the subfolders: they wait on the stack.
+            stack.push(dir);
+            stack.extend(subfolders.into_iter().rev());
+            continue;
+        }
+        if let Some(mut mine) = songs.remove(dir) {
+            mine.sort_by_cached_key(|&i| name_key(&tracks[i].filename));
+            order.extend(mine);
+        }
+    }
+    order
+}
+/// A song in Folders: its file name without the extension.
+fn file_item(i: usize, t: &Track) -> Item {
+    let mut item = track_item(i, t);
+    let stem = std::path::Path::new(&t.filename)
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .filter(|s| !s.is_empty());
+    if let Some(stem) = stem {
+        item.label = stem;
+    }
+    item
 }
 /// A to Z keys (`reborn_core::sort::sort_key`): an artist skips a leading
 /// "The ", a title "The", "A" or "An". The name itself breaks ties.

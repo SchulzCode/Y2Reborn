@@ -50,7 +50,7 @@ fn marker(path: &Path) -> Option<usize> {
 }
 
 /// `Disc 2`, `CD1`, `Part 3`, `Vol. 1`, `Side A` and the like.
-fn subdivision(name: &str) -> bool {
+pub(crate) fn subdivision(name: &str) -> bool {
     let folded = fold(name);
     let mut words = folded.split(' ');
     let (Some(word), rest) = (words.next(), words.collect::<Vec<_>>()) else {

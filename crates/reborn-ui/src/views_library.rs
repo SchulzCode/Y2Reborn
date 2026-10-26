@@ -747,11 +747,8 @@ fn folder_list(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interact
             None => {
                 c.icon(Icon::Folder, 36., y + 25., 24., 0x6EA0FFFF);
                 c.text_mid(64., y + 25., 310., &row.label, Face::R15, color::TEXT);
-                let songs = songs_under(tracks, &row.key);
-                if songs > 0 {
-                    let label = components::count(songs, "song", "songs");
-                    c.text_mid_right(WIDTH - 36., y + 25., &label, Face::R11, color::DIM);
-                }
+                // Counted once when the folder opened, not every frame.
+                c.text_mid_right(WIDTH - 36., y + 25., &row.secondary, Face::R11, color::DIM);
             }
         }
     }
@@ -766,16 +763,7 @@ fn folder_list(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interact
     if count > visible {
         components::scroll_rail(c, 44., 250., scroll, count, visible, accent);
     }
-}
-
-fn songs_under(tracks: &[Track], key: &str) -> usize {
-    let Some(path) = key.strip_prefix("folder:") else {
-        return 0;
-    };
-    tracks
-        .iter()
-        .filter(|t| t.is_music() && t.path.parent().is_some_and(|p| p.starts_with(path)))
-        .count()
+    letter_bubble(c, ui, m, tracks, focus);
 }
 
 // --------------------------------------------------------------- empty states

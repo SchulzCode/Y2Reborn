@@ -83,6 +83,10 @@ pub const METRICS: &[&str] = &[
     "artwork_uploads",
     "graphics_missed_frames",
     "graphics_context_losses",
+    // The last input action's handling and the last frame's layout (the
+    // lists' rows are built there), for timing long libraries (Beta 8.39).
+    "ui_action_ms",
+    "ui_layout_ms",
     "wifi_connects",
     "wifi_disconnects",
     "wifi_errors",

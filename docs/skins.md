@@ -192,7 +192,8 @@ Write `{name}` inside `text`:
 `"if"` takes names joined with `&` (and), `|` (or, lower precedence) and `!`
 (not), e.g. `"playing & !shuffle | paused"`.
 
-Anywhere: `playing`, `paused`, `has_track`, `has_art`, `shuffle`, `repeat`,
+Anywhere: `playing`, `paused`, `has_track`, `has_art`, `shuffle` (Songs or
+Albums), `shuffle_albums` (Shuffle Albums only), `repeat`,
 `repeat_one`, `charging`, `battery_low`, `bluetooth`, `bluetooth_connected`,
 `wifi`, `wifi_connected`, `back` (not Home), `empty`, `error` (toast),
 `danger` (dialog), `eq`, `gapless`, `crossfade`, `normalise`, `sleep` (a sleep
