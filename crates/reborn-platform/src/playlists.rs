@@ -22,6 +22,40 @@ pub fn is_playlist(path: &Path) -> bool {
         .is_some_and(|e| e.eq_ignore_ascii_case("m3u") || e.eq_ignore_ascii_case("m3u8"))
 }
 
+/// Whether `discover` lists this playlist file under `root`: not in a hidden
+/// or system folder, not the Radio folder's station lists, not a "._" file.
+pub fn listed(root: &Path, path: &Path) -> bool {
+    let Ok(inside) = path.strip_prefix(root) else {
+        return false;
+    };
+    let parts: Vec<String> = inside
+        .components()
+        .map(|c| c.as_os_str().to_string_lossy().into_owned())
+        .collect();
+    let Some((file, folders)) = parts.split_last() else {
+        return false;
+    };
+    !file.starts_with("._")
+        && is_playlist(path)
+        && folders
+            .iter()
+            .enumerate()
+            .all(|(depth, name)| !skipped(depth, name))
+}
+
+fn skipped(depth: usize, name: &str) -> bool {
+    name.starts_with('.')
+        || (depth == 0 && name.eq_ignore_ascii_case("Radio"))
+        || [
+            "System Volume Information",
+            "$RECYCLE.BIN",
+            "LOST.DIR",
+            "lost+found",
+        ]
+        .iter()
+        .any(|s| name.eq_ignore_ascii_case(s))
+}
+
 /// Every playlist file under the storage roots, except the Radio folder's
 /// station lists, hidden folders and the system folders computers leave.
 pub fn discover(roots: &[PathBuf]) -> Vec<PathBuf> {
@@ -39,17 +73,7 @@ pub fn discover(roots: &[PathBuf]) -> Vec<PathBuf> {
                 let name = entry.file_name();
                 let name = name.to_string_lossy();
                 if kind.is_dir() {
-                    let skip = name.starts_with('.')
-                        || (depth == 0 && name.eq_ignore_ascii_case("Radio"))
-                        || [
-                            "System Volume Information",
-                            "$RECYCLE.BIN",
-                            "LOST.DIR",
-                            "lost+found",
-                        ]
-                        .iter()
-                        .any(|s| name.eq_ignore_ascii_case(s));
-                    if !skip && depth < 32 {
+                    if !skipped(depth, &name) && depth < 32 {
                         stack.push((entry.path(), depth + 1));
                     }
                 } else if kind.is_file() && !name.starts_with("._") && is_playlist(&entry.path()) {

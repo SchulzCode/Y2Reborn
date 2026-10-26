@@ -7,11 +7,16 @@
 use reborn_core::playlist::{Playlist, PlaylistEdit, PlaylistEntry};
 use reborn_observability::isolated;
 use reborn_platform::playlists as files;
+use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver, Sender};
 
 pub enum Job {
     Refresh(Vec<PathBuf>),
+    /// The playlist files a library scan met, per storage it walked whole:
+    /// a refresh reads them instead of walking the storage again (a card of
+    /// 120 000 songs takes a minute and a half to walk; Beta 8.39).
+    Known(Vec<(PathBuf, Vec<PathBuf>)>),
     Create {
         dir: PathBuf,
         name: String,
@@ -57,7 +62,19 @@ impl Worker {
         std::thread::Builder::new()
             .name("playlists".into())
             .spawn(move || {
+                let mut known = Known::default();
                 while let Ok(job) = queue.recv() {
+                    let job = match job {
+                        Job::Known(found) => {
+                            known.learn(found);
+                            continue;
+                        }
+                        Job::Refresh(roots) => {
+                            let paths = known.paths(&roots);
+                            Job::Refresh(paths)
+                        }
+                        job => job,
+                    };
                     // Y2Linux 8.27: the SD card is read-only between writes;
                     // a change to a playlist on it runs inside a write window.
                     let window = on_card(&job)
@@ -67,6 +84,7 @@ impl Worker {
                     if window {
                         let _ = reborn_platform::client::sd_write_window(false);
                     }
+                    known.follow(&reply);
                     let reply = match reply {
                         Reply::Failed(error) if error.contains("os error 30") => Reply::Failed(
                             "The SD card can't be changed right now. If it has errors, repair it in Settings > Storage."
@@ -90,7 +108,7 @@ impl Worker {
 /// The job writes on the SD card (the platform's mount point).
 fn on_card(job: &Job) -> bool {
     let path = match job {
-        Job::Refresh(_) => return false,
+        Job::Refresh(_) | Job::Known(_) => return false,
         Job::Create { dir, .. } => dir,
         Job::Edit { path, .. } | Job::Rename { path, .. } => path,
         Job::Duplicate(path) | Job::Delete(path) => path,
@@ -98,14 +116,64 @@ fn on_card(job: &Job) -> bool {
     path.starts_with("/media/sd")
 }
 
+/// Playlist files known per storage root, from the last scan or walk.
+#[derive(Default)]
+struct Known(HashMap<PathBuf, BTreeSet<PathBuf>>);
+
+impl Known {
+    fn learn(&mut self, found: Vec<(PathBuf, Vec<PathBuf>)>) {
+        for (root, paths) in found {
+            self.0.insert(root, paths.into_iter().collect());
+        }
+    }
+    /// The playlist files under `roots`: the known ones and each storage's
+    /// own Playlists folder (made on the player); a storage not yet known is
+    /// walked once.
+    fn paths(&mut self, roots: &[PathBuf]) -> Vec<PathBuf> {
+        let mut out = BTreeSet::new();
+        for root in roots {
+            let known = self.0.entry(root.clone()).or_insert_with(|| {
+                files::discover(std::slice::from_ref(root))
+                    .into_iter()
+                    .collect()
+            });
+            out.extend(known.iter().cloned());
+            out.extend(files::discover(&[root.join(files::FOLDER)]));
+        }
+        out.into_iter().take(files::MAX_PLAYLISTS).collect()
+    }
+    /// A playlist made, renamed or deleted here stays known.
+    fn follow(&mut self, reply: &Reply) {
+        let (gone, new) = match reply {
+            Reply::Saved {
+                playlist,
+                created: true,
+            } => (None, Some(&playlist.path)),
+            Reply::Renamed { old, playlist } => (Some(old), Some(&playlist.path)),
+            Reply::Deleted(path) => (Some(path), None),
+            _ => (None, None),
+        };
+        for (root, paths) in &mut self.0 {
+            if let Some(gone) = gone {
+                paths.remove(gone);
+            }
+            if let Some(new) = new.filter(|p| p.starts_with(root)) {
+                paths.insert(new.clone());
+            }
+        }
+    }
+}
+
 fn run(job: Job) -> Reply {
     match job {
-        Job::Refresh(roots) => Reply::Listed(
-            files::discover(&roots)
+        // The files to read, as `Known::paths` gave them.
+        Job::Refresh(paths) => Reply::Listed(
+            paths
                 .iter()
                 .filter_map(|path| isolated(|| files::read(path)).ok()?.ok())
                 .collect(),
         ),
+        Job::Known(_) => Reply::Failed("known playlists are kept by the worker".into()),
         Job::Create { dir, name, entries } => (|| {
             let mut playlist = files::create(&dir, &name)?;
             if !entries.is_empty() {
@@ -282,12 +350,52 @@ mod tests {
             run(Job::Delete(renamed.path.clone())),
             Reply::Deleted(_)
         ));
-        let Reply::Listed(found) = run(Job::Refresh(vec![dir.clone()])) else {
+        let mut known = Known::default();
+        let Reply::Listed(found) = run(Job::Refresh(known.paths(std::slice::from_ref(&dir))))
+        else {
             panic!("refresh failed")
         };
         let mut names: Vec<_> = found.iter().map(|p| p.name.clone()).collect();
         names.sort();
         assert_eq!(names, ["Favorites", "Road Trip"]);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_scan_s_playlists_are_read_without_walking_the_storage_again() {
+        let dir = std::env::temp_dir().join(format!("reborn-plk-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("Music/Mixes")).unwrap();
+        std::fs::create_dir_all(dir.join(files::FOLDER)).unwrap();
+        let mix = dir.join("Music/Mixes/Mix.m3u");
+        std::fs::write(&mix, "a.mp3\n").unwrap();
+        let mut known = Known::default();
+        known.learn(vec![(dir.clone(), vec![mix.clone()])]);
+        // Copied without a scan since: not seen until the next one…
+        let later = dir.join("Music/Later.m3u");
+        std::fs::write(&later, "b.mp3\n").unwrap();
+        // …except in the Playlists folder, where the player makes them.
+        let made = dir.join(files::FOLDER).join("Made.m3u8");
+        std::fs::write(&made, "c.mp3\n").unwrap();
+        assert_eq!(
+            known.paths(std::slice::from_ref(&dir)),
+            [mix.clone(), made.clone()]
+        );
+        // A rename here stays known; a scan replaces the list.
+        let renamed = dir.join("Music/Mixes/Renamed.m3u");
+        known.follow(&Reply::Renamed {
+            old: mix.clone(),
+            playlist: Playlist {
+                path: renamed.clone(),
+                ..files::read(&made).unwrap()
+            },
+        });
+        assert_eq!(
+            known.paths(std::slice::from_ref(&dir)),
+            [renamed, made.clone()]
+        );
+        known.learn(vec![(dir.clone(), vec![later.clone()])]);
+        assert_eq!(known.paths(std::slice::from_ref(&dir)), [later, made]);
         std::fs::remove_dir_all(dir).unwrap();
     }
 }

@@ -30,6 +30,10 @@ pub const MAX_LIBRARY_TRACKS: usize = 250_000;
 pub const CATALOG_PAGE_SIZE: usize = 512;
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ScanMetrics {
+    /// Playlist files met on the way, per storage walked whole (its root):
+    /// Playlists need not walk a 120 000-song card again (Beta 8.39).
+    #[serde(skip)]
+    pub playlists: Vec<(PathBuf, Vec<PathBuf>)>,
     pub discovered: u64,
     pub reused: u64,
     pub rescanned: u64,
@@ -1585,6 +1589,7 @@ fn scan_sources_with_identity_and_reuse(
         };
         let mut batch_items = Vec::with_capacity(64);
         let mut complete = true;
+        let mut playlists = vec![];
         while let Some((entries, depth)) = directories.last_mut() {
             workload.renew();
             log.heartbeat("scanner", 30);
@@ -1635,6 +1640,18 @@ fn scan_sources_with_identity_and_reuse(
                     Err(_) => {
                         complete = false;
                         stats.failures += 1;
+                    }
+                }
+                continue;
+            }
+            if file_type.is_file()
+                && reborn_platform::playlists::is_playlist(&path)
+                && playlists.len() < reborn_platform::playlists::MAX_PLAYLISTS
+            {
+                if let Ok(inside) = path.strip_prefix(&pinned_root) {
+                    let logical = source.root.join(inside);
+                    if reborn_platform::playlists::listed(&source.root, &logical) {
+                        playlists.push(logical);
                     }
                 }
                 continue;
@@ -1728,6 +1745,9 @@ fn scan_sources_with_identity_and_reuse(
         if complete && !finished.verified {
             complete = false;
             stats.failures += 1;
+        }
+        if complete {
+            stats.playlists.push((source.root.clone(), playlists));
         }
         stats.complete &= complete;
     }

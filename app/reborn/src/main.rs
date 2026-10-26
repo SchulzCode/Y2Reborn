@@ -5271,6 +5271,13 @@ fn run() -> Result<(), String> {
                 Ok(stats) => stats.rescanned != 0 || stats.removed != 0,
                 Err(_) => true,
             };
+            // The playlist files the scan met: Playlists need not walk the
+            // storages again.
+            if let (Ok(stats), Some(worker)) = (&result, &rt.playlist_worker) {
+                if !stats.playlists.is_empty() {
+                    worker.send(playlists::Job::Known(stats.playlists.clone()));
+                }
+            }
             match result {
                 Ok(stats) if stats.complete => {
                     rt.model
