@@ -1121,6 +1121,10 @@ pub struct Settings {
     /// How Albums and Audiobooks present their covers.
     #[serde(default)]
     pub album_view: AlbumView,
+    /// Albums show every cover edge to edge, six across, whatever Cover
+    /// Flow says: Customize > Wall. Audiobooks follow Cover Flow.
+    #[serde(default)]
+    pub album_wall: bool,
     /// What the wheel does on Now Playing (Beta 8.36).
     #[serde(default)]
     pub now_playing_wheel: NowPlayingWheel,
@@ -1434,6 +1438,7 @@ impl Default for Settings {
             repeat: RepeatMode::Off,
             brightness: default_brightness(),
             album_view: AlbumView::CoverFlow,
+            album_wall: false,
             now_playing_wheel: NowPlayingWheel::Volume,
             artists_list: ArtistsList::All,
             wrap_around: WrapAround::Menus,
@@ -1755,6 +1760,7 @@ pub enum Effect {
     SetBalance(i8),
     SetGapless(bool),
     SetAlbumView(AlbumView),
+    SetAlbumWall(bool),
     SetNowPlayingWheel(NowPlayingWheel),
     SetArtistsList(ArtistsList),
     SetWrapAround(WrapAround),

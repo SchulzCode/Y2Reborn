@@ -40,6 +40,7 @@ mod views_radio;
 mod views_search;
 mod views_settings;
 mod views_system;
+mod views_wall;
 
 use reborn_core::{
     platform::{ChargingState, LowBattery, UsbTransfer, WifiProblem},
@@ -1816,8 +1817,12 @@ impl Ui {
     pub fn action(&mut self, m: &mut AppModel, tracks: &[Track], action: Action) -> Effect {
         let before = (m.screen, m.navigation.filter.clone());
         let effect = self.action_inner(m, tracks, action);
-        // Cover Flow and the album page hand the centre cover to each other.
-        if m.settings.album_view == reborn_core::AlbumView::CoverFlow && !self.motion_fixed {
+        // Cover Flow and the album page hand the centre cover to each other
+        // (not from the Wall, which shows Albums in its place).
+        if m.settings.album_view == reborn_core::AlbumView::CoverFlow
+            && !m.settings.album_wall
+            && !self.motion_fixed
+        {
             let kind = match (before.0, m.screen) {
                 (Screen::Albums, Screen::Album) => Some(flow::TransitionKind::Open),
                 (Screen::Album, Screen::Albums) => Some(flow::TransitionKind::Close),
@@ -2688,6 +2693,7 @@ impl Ui {
                 Effect::SetScreenOffButtons(m.settings.screen_off_buttons.next())
             }
             "album_view" => Effect::SetAlbumView(m.settings.album_view.next()),
+            "album_wall" => Effect::SetAlbumWall(!m.settings.album_wall),
             "artists_list" => Effect::SetArtistsList(m.settings.artists_list.next()),
             "now_playing_wheel" => Effect::SetNowPlayingWheel(m.settings.now_playing_wheel.next()),
             "crossfade" => Effect::SetCrossfade(match m.settings.crossfade_ms {

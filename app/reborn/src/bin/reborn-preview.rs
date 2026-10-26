@@ -539,6 +539,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             m.navigation.focus = 1;
         }
     );
+    case!("08f-albums-wall", at(Screen::Albums, ""), move |ui, m| {
+        ui.accent = orange;
+        m.settings.album_wall = true;
+        m.navigation.focus = 3;
+    });
     // 8.36 (#50): an album opened from a genre, its other songs a row away.
     case!(
         "09b-album-from-genre",
