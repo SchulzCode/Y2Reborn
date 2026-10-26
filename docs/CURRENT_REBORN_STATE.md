@@ -1,6 +1,12 @@
 # Current Reborn state on the Y2
 
-## 1.0.0-beta.8.39 — Y2Linux 1.0 Beta 8.39 (Baseline 153), 2026-10-26 (latest): Folders by file name, Shuffle Albums, playlist Sort, 120 000 songs
+## 1.0.0-beta.8.40 — Y2Linux 1.0 Beta 8.40 (Baseline 154), 2026-10-27 (latest): identity only
+
+Published as `baseline-154` (Reborn `77c54e2`; sequence 10500). No Reborn change: the release is a kernel fix
+(Power Off on a charger restarts into the charging screen, ledger F46). Details:
+[Y2Linux Beta 8.40 report](https://github.com/SchulzCode/Y2Linux/blob/main/docs/validation/Y2-LINUX-1.0-BETA-8.40.md).
+
+## 1.0.0-beta.8.39 — Y2Linux 1.0 Beta 8.39 (Baseline 153), 2026-10-26: Folders by file name, Shuffle Albums, playlist Sort, 120 000 songs
 
 Published as `baseline-153` (Reborn `7cf527d`; features `894a99c`; sequence 10470). Folders list folders then songs
 by name (`sort::natural_key`), songs by file name (`catalog::Row::FolderTrack`), from `folders::FolderIndex` (per
