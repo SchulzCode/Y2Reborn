@@ -1061,6 +1061,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     case!("29c-dac-filter", at(Screen::DacFilter, ""), |_, m| {
         m.navigation.focus = 3;
     });
+    case!(
+        "27d-output-measure-headphones",
+        at(Screen::Output, ""),
+        |_, m| {
+            m.platform.headphones = reborn_core::platform::HeadphoneLoad::Unmeasured;
+            m.navigation.focus = 4;
+        }
+    );
+    case!("27e-headphones-measured", at(Screen::Output, ""), |_, m| {
+        m.platform.headphones = reborn_core::platform::HeadphoneLoad::Measured { ohms: (33, 32) };
+        m.navigation.focus = 4;
+    });
     case!("30-display", at(Screen::SettingsDisplay, ""));
     case!("30b-time-zone", at(Screen::TimeZone, ""), |ui, m| {
         m.settings.time_zone = "Europe/Berlin".into();
