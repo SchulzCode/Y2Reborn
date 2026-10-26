@@ -721,10 +721,7 @@ pub fn screen_title(m: &AppModel) -> String {
             if m.navigation.filter.is_empty() {
                 "Folders".into()
             } else {
-                std::path::Path::new(m.navigation.filter.trim_start_matches("folder:"))
-                    .file_name()
-                    .map(|s| s.to_string_lossy().into_owned())
-                    .unwrap_or_else(|| "Folders".into())
+                crate::folder_name(m, m.navigation.filter.trim_start_matches("folder:"))
             }
         }
         Screen::Album => "Album".into(),

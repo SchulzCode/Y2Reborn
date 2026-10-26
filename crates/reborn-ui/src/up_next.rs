@@ -2,9 +2,7 @@
 //! on the song playing, the history is a scroll up), then your queue, then
 //! the rest of what plays, each part under a heading. Rows are made one at a
 //! time from the queue (it holds up to 5 000 songs).
-use crate::{
-    catalog::folder_play_order, display_or_unknown, track_title, Effect, Item, Selection, Ui,
-};
+use crate::{display_or_unknown, track_title, Effect, Item, Selection, Ui};
 use reborn_core::{Action, AppModel, QueueEntryId, Screen, ShuffleMode, Track};
 use std::{collections::HashMap, ops::Range};
 
@@ -603,17 +601,20 @@ impl Ui {
         if key == crate::catalog::SEARCH_PLAY_ALL {
             return self.filtered_indices(m, tracks);
         }
+        if let Some(folder) = key.strip_prefix("folder:") {
+            // As Folders shows them: in each folder its folders first, then
+            // its songs, both by name (Beta 8.39).
+            let mut c = self.catalog.borrow_mut();
+            c.folders.ensure(tracks);
+            return c.folders.play_order(tracks, std::path::Path::new(folder));
+        }
         let mut members: Vec<usize> = tracks
             .iter()
             .enumerate()
             .filter(|(_, t)| crate::track_matches(t, key))
             .map(|(i, _)| i)
             .collect();
-        if let Some(folder) = key.strip_prefix("folder:") {
-            // As Folders shows them: in each folder its folders first, then
-            // its songs, both by name (Beta 8.39).
-            members = folder_play_order(std::path::Path::new(folder), tracks, &members);
-        } else {
+        {
             members.sort_by_cached_key(|&i| {
                 let t = &tracks[i];
                 (
@@ -638,10 +639,7 @@ impl Ui {
             return display_or_unknown(album).to_owned();
         }
         if let Some(folder) = key.strip_prefix("folder:") {
-            return std::path::Path::new(folder)
-                .file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_else(|| "Folder".into());
+            return crate::folder_name(m, folder);
         }
         let name = key.split_once(':').map_or(key, |(_, n)| n);
         if key.starts_with("genre:") && name.is_empty() {
@@ -699,7 +697,28 @@ impl Ui {
             return Some((crate::components::count(n, "Song", "Songs"), String::new()));
         }
         if Self::group_key(key) {
-            let n = self.group_members(m, tracks, key).len();
+            // Counted once per menu, not on every frame it is drawn.
+            let library = crate::library_stamp(tracks);
+            let cached = self
+                .group_count
+                .borrow()
+                .as_ref()
+                .filter(|(l, k, _)| *l == library && k == key)
+                .map(|(_, _, n)| *n);
+            let n = match cached {
+                Some(n) => n,
+                None => {
+                    let n = if let Some(folder) = key.strip_prefix("folder:") {
+                        let mut c = self.catalog.borrow_mut();
+                        c.folders.ensure(tracks);
+                        c.folders.total(std::path::Path::new(folder))
+                    } else {
+                        self.group_members(m, tracks, key).len()
+                    };
+                    *self.group_count.borrow_mut() = Some((library, key.to_owned(), n));
+                    n
+                }
+            };
             return Some((
                 Self::group_label(m, key),
                 crate::components::count(n, "song", "songs"),

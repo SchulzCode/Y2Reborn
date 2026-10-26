@@ -9,6 +9,7 @@ mod components;
 mod date_time;
 pub mod diagnostics;
 mod flow;
+mod folders;
 mod fontdata;
 mod glyph_cache;
 pub use glyph_cache::{
@@ -48,7 +49,7 @@ use reborn_core::{
 use reborn_graphics::Quad;
 use std::{
     cell::RefCell,
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     time::{Duration, Instant},
 };
 
@@ -73,6 +74,10 @@ pub fn focus_target_count(quads: &[Quad]) -> usize {
 type CountsCache = Option<((usize, usize), reborn_core::ArtistsList, [usize; 4])>;
 /// Library identity, album filter key and its detail line.
 type DetailCache = Option<((usize, usize), String, String)>;
+/// A group menu's song count: (library, group key, songs).
+type GroupCount = Option<((usize, usize), String, usize)>;
+/// Songs and milliseconds per (album artist, album), for a library.
+type AlbumTotals = Option<((usize, usize), HashMap<(String, String), (usize, u64)>)>;
 
 /// How a settings-style row presents its value.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -498,6 +503,11 @@ pub struct Ui {
     cover_request: std::cell::Cell<Option<(u64, usize)>>,
     /// The last album detail line.
     detail: RefCell<DetailCache>,
+    /// Every album's songs and length, counted once per library: Cover
+    /// Flow names each album it passes (Beta 8.39).
+    album_totals: RefCell<AlbumTotals>,
+    /// The song count a group's menu shows, for (library, group).
+    group_count: RefCell<GroupCount>,
     /// The skin in use; `None` is Reborn's own look.
     pub skin: Option<std::rc::Rc<skin::Skin>>,
     /// Installed skins, as last scanned for the picker.
@@ -715,7 +725,31 @@ impl Ui {
                 return text.clone();
             }
         }
-        let text = views_library::album_detail(m, tracks, key);
+        // A plain album from the totals counted once; one opened from a
+        // genre (only that genre's songs) is counted on its own.
+        let text = match album_parts(key) {
+            Some((artist, album, None)) => {
+                let mut totals = self.album_totals.borrow_mut();
+                if totals.as_ref().is_none_or(|(l, _)| *l != library) {
+                    let mut map: HashMap<(String, String), (usize, u64)> = HashMap::new();
+                    for t in tracks.iter().filter(|t| t.is_music()) {
+                        let entry = map
+                            .entry((t.album_artist.clone(), t.album.clone()))
+                            .or_default();
+                        entry.0 += 1;
+                        entry.1 += t.duration_ms;
+                    }
+                    *totals = Some((library, map));
+                }
+                let (songs, ms) = totals
+                    .as_ref()
+                    .and_then(|(_, map)| map.get(&(artist.to_owned(), album.to_owned())))
+                    .copied()
+                    .unwrap_or_default();
+                views_library::album_line(songs, ms)
+            }
+            _ => views_library::album_detail(m, tracks, key),
+        };
         *detail = Some((library, key.to_owned(), text.clone()));
         text
     }
@@ -4038,6 +4072,18 @@ fn names_or_unknown(value: &str) -> std::borrow::Cow<'_, str> {
 }
 /// Identifies one published library: a new scan publishes a new list, so
 /// caches built from the songs (search, playlists, catalog) start again.
+/// A folder's name; a storage's root by what it is ("SD Card", not "sd").
+pub(crate) fn folder_name(m: &AppModel, folder: &str) -> String {
+    let path = std::path::Path::new(folder);
+    match m.sources.iter().find(|s| s.root == path).map(|s| &s.kind) {
+        Some(reborn_core::MediaSource::Internal) => "Internal Storage".into(),
+        Some(reborn_core::MediaSource::SdCard(_)) => "SD Card".into(),
+        None => path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "Folders".into()),
+    }
+}
 pub(crate) fn library_stamp(tracks: &[Track]) -> (usize, usize) {
     (tracks.as_ptr() as usize, tracks.len())
 }

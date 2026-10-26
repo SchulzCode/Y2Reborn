@@ -5589,6 +5589,8 @@ fn playing_a_folder_follows_folders_order_and_offers_shuffle_albums() {
     let (mut ui, mut m) = folder_app("folder:/data/music");
     let tracks = m.library.tracks.clone();
     assert_eq!(ui.rows(&m, &tracks)[0].label, "Hardcore");
+    // A storage is named for what it is, not its mount folder.
+    assert_eq!(crate::screens::screen_title(&m), "Internal Storage");
     m.navigation.focus = 0;
     let menu = menu_labels(&mut ui, &mut m);
     assert_eq!(menu[..3], ["Play", "Shuffle", "Shuffle Albums"]);
@@ -5721,4 +5723,85 @@ fn a_playlist_sorts_its_page_and_plays_in_that_order() {
         m.settings.playlist_sort.is_empty(),
         "nothing kept for the default"
     );
+}
+
+#[test]
+#[ignore]
+fn profile_folder_group_120k() {
+    let mut tracks = vec![];
+    for g in 0..12 {
+        for a in 0..90 {
+            for al in 0..10 {
+                for n in 0..11 {
+                    tracks.push(Track {
+                        id: tracks.len() as i64,
+                        source_id: "sd".into(),
+                        title: format!("t{n}"),
+                        artist: format!("Artist {a}"),
+                        album: format!("Album {al}"),
+                        track: n,
+                        path: format!("/media/sd/Y2Bench120k/Genre {g}/Artist {a}/Album {al} (1999)/{n:02} - Title {n}.mp3").into(),
+                        filename: format!("{n:02} - Title {n}.mp3"),
+                        online: true,
+                        ..Default::default()
+                    });
+                }
+            }
+        }
+    }
+    let ui = Ui::default();
+    let m = app(Screen::Folders);
+    let key = "folder:/media/sd";
+    let t = std::time::Instant::now();
+    let members = ui.group_members(&m, &tracks, key);
+    eprintln!("group_members {} in {:?}", members.len(), t.elapsed());
+    let t = std::time::Instant::now();
+    let all: Vec<usize> = (0..tracks.len())
+        .filter(|&i| crate::track_matches(&tracks[i], key))
+        .collect();
+    eprintln!("track_matches pass {} in {:?}", all.len(), t.elapsed());
+    let t = std::time::Instant::now();
+    let order = ui.group_members(&m, &tracks, key);
+    eprintln!(
+        "group_members again (index built) {} in {:?}",
+        order.len(),
+        t.elapsed()
+    );
+    let t = std::time::Instant::now();
+    let subject = ui.menu_subject(&m, &tracks, key);
+    eprintln!("menu_subject {subject:?} in {:?}", t.elapsed());
+    let refs: Vec<&Track> = order.iter().map(|&i| &tracks[i]).collect();
+    let t = std::time::Instant::now();
+    let shuffled = reborn_core::queue::album_shuffle(&refs, None, 7);
+    eprintln!("album_shuffle {} in {:?}", shuffled.len(), t.elapsed());
+    let mut m = app(Screen::Folders);
+    m.library.tracks = tracks.clone();
+    m.navigation.filter = "folder:/media/sd/Y2Bench120k".into();
+    let t = std::time::Instant::now();
+    let n = ui.rows(&m, &tracks).len();
+    eprintln!("folders rows {n} in {:?}", t.elapsed());
+    m.navigation.filter = "folder:/media/sd/Y2Bench120k/Genre 3".into();
+    let t = std::time::Instant::now();
+    let n = ui.rows(&m, &tracks).len();
+    eprintln!("genre folder rows {n} in {:?}", t.elapsed());
+    let mut m = app(Screen::Tracks);
+    m.library.tracks = tracks.clone();
+    for pass in 0..2 {
+        m.screen = Screen::Tracks;
+        let t = std::time::Instant::now();
+        let n = ui.rows(&m, &tracks).len();
+        eprintln!("songs rows {n} pass {pass} in {:?}", t.elapsed());
+        m.screen = Screen::Artists;
+        let t = std::time::Instant::now();
+        let n = ui.rows(&m, &tracks).len();
+        eprintln!("artists rows {n} pass {pass} in {:?}", t.elapsed());
+    }
+    let key = crate::album_filter(&tracks[500]);
+    let t = std::time::Instant::now();
+    let a = ui.album_detail(&m, &tracks, &key);
+    let b = ui.album_detail(&m, &tracks, &crate::album_filter(&tracks[900]));
+    eprintln!("album_detail {a} / {b} in {:?}", t.elapsed());
+    let t = std::time::Instant::now();
+    let _ = ui.album_detail(&m, &tracks, &crate::album_filter(&tracks[1900]));
+    eprintln!("album_detail next album in {:?}", t.elapsed());
 }

@@ -4,10 +4,11 @@ use reborn_core::{
     sort::{sort_key, SortAs},
     AppModel, Screen, Track,
 };
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet};
 /// A genre's cover track, its albums, its song count and whether the cover
 /// track has artwork.
 type GenreStats<'a> = (usize, BTreeSet<(&'a str, &'a str)>, usize, bool);
+#[derive(Clone)]
 pub enum Row {
     Track(usize),
     /// A track on its album's own page; the artist line is redundant there.
@@ -151,7 +152,15 @@ pub struct Catalog {
     /// playlists' generation they were made from.
     pub playlists: Vec<Item>,
     pub playlists_generation: Option<u64>,
+    /// Every folder's songs and folders, made once per library.
+    pub(crate) folders: crate::folders::FolderIndex,
+    /// The whole-library lists (Songs, Albums, Artists, Genres) as last
+    /// built for this library: opening one again does not sort 120 000
+    /// songs again (Beta 8.39).
+    whole: Vec<(WholeKey, Vec<Row>)>,
 }
+/// A whole-library list: the library, the screen and who Artists lists.
+type WholeKey = ((usize, usize), Screen, reborn_core::ArtistsList);
 impl Catalog {
     /// The search page (Beta 8.32): the field, then each kind of result
     /// under its heading — artists, albums, playlists, audiobooks, then songs
@@ -298,6 +307,8 @@ impl Catalog {
     pub fn clear(&mut self) {
         self.stamp = None;
         self.index = Default::default();
+        self.whole.clear();
+        self.folders = Default::default();
     }
     /// The playlists the search looks through, as Playlists lists them.
     pub fn set_playlists(&mut self, generation: u64, items: Vec<Item>) {
@@ -318,6 +329,31 @@ impl Catalog {
         }
         self.stamp = Some(stamp);
         self.rows.clear();
+        let whole = (m.navigation.filter.is_empty()
+            && matches!(
+                m.screen,
+                Screen::Tracks | Screen::Albums | Screen::Artists | Screen::Genres
+            ))
+        .then(|| {
+            (
+                crate::library_stamp(tracks),
+                m.screen,
+                m.settings.artists_list,
+            )
+        });
+        if let Some(key) = whole {
+            self.whole.retain(|(k, _)| k.0 == key.0);
+            if let Some((_, rows)) = self.whole.iter().find(|(k, _)| *k == key) {
+                self.rows = rows.clone();
+                return;
+            }
+            self.build(m, tracks);
+            self.whole.push((key, self.rows.clone()));
+            return;
+        }
+        self.build(m, tracks);
+    }
+    fn build(&mut self, m: &AppModel, tracks: &[Track]) {
         match m.screen {
             Screen::Search => self.search_rows(m, tracks),
             Screen::Albums => {
@@ -445,35 +481,18 @@ impl Catalog {
                 // A folder as a file manager shows it (Beta 8.39): its
                 // folders, then its songs, both by name with numbers in
                 // number order; songs by file name, not by title or artist.
-                let mut folders: HashMap<&std::ffi::OsStr, usize> = HashMap::new();
-                let mut songs = vec![];
-                for (i, t) in tracks.iter().enumerate().filter(|(_, t)| t.is_music()) {
-                    let Ok(rest) = t.path.strip_prefix(parent) else {
-                        continue;
-                    };
-                    let mut parts = rest.components();
-                    let Some(first) = parts.next() else {
-                        continue;
-                    };
-                    if parts.next().is_none() {
-                        songs.push(i);
-                    } else {
-                        *folders.entry(first.as_os_str()).or_default() += 1;
-                    }
-                }
-                let mut folders: Vec<_> = folders.into_iter().collect();
-                folders.sort_by_cached_key(|(name, _)| name_key(&name.to_string_lossy()));
-                for (name, songs) in folders {
-                    let child = parent.join(name);
+                self.folders.ensure(tracks);
+                let (folders, songs) = self.folders.listing(tracks, parent);
+                for (child, songs) in folders {
+                    let name = child
+                        .file_name()
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_default();
                     self.push(
-                        Item::new(
-                            name.to_string_lossy(),
-                            format!("folder:{}", child.display()),
-                        )
-                        .with_secondary(crate::components::count(songs, "song", "songs")),
+                        Item::new(name, format!("folder:{}", child.display()))
+                            .with_secondary(crate::components::count(songs, "song", "songs")),
                     );
                 }
-                songs.sort_by_cached_key(|&i| name_key(&tracks[i].filename));
                 self.rows.extend(songs.into_iter().map(Row::FolderTrack));
             }
             Screen::Tracks | Screen::Album | Screen::Artist => {
@@ -572,6 +591,7 @@ impl Catalog {
     /// Folders' first page: the storages (Internal Storage, SD Card), or
     /// the songs' folders when none is online.
     fn folder_roots(&mut self, m: &AppModel, tracks: &[Track]) {
+        self.folders.ensure(tracks);
         let mut children = BTreeSet::new();
         for s in m.sources.iter().filter(|s| s.online) {
             children.insert(s.root.clone());
@@ -594,66 +614,23 @@ impl Catalog {
                     .map(|x| x.to_string_lossy().into_owned())
                     .unwrap_or_else(|| child.display().to_string()),
             };
+            // What a listener finds there (UI v4); free space is on Storage.
+            let songs = self.folders.total(&child);
+            let detail = match songs {
+                0 if source.is_none() => "Folder".into(),
+                0 => String::new(),
+                n => crate::components::count(n, "song", "songs"),
+            };
             self.push(
-                Item::new(label, format!("folder:{}", child.display()))
-                    .with_secondary(if source.is_some() { "" } else { "Folder" }),
+                Item::new(label, format!("folder:{}", child.display())).with_secondary(detail),
             );
         }
     }
 }
 /// A file or folder name's place in Folders (`natural_key`); the name
 /// itself breaks ties.
-fn name_key(name: &str) -> (String, String) {
+pub(crate) fn name_key(name: &str) -> (String, String) {
     (reborn_core::sort::natural_key(name), name.to_owned())
-}
-/// The songs below `root` in the order Folders lists them: in each folder
-/// its folders first, then its songs, both by name. Playing a folder plays
-/// in this order. Each folder's names are sorted once (a whole card is
-/// 120 000 songs in some 10 000 folders).
-pub(crate) fn folder_play_order(
-    root: &std::path::Path,
-    tracks: &[Track],
-    members: &[usize],
-) -> Vec<usize> {
-    use std::path::Path;
-    let mut songs: HashMap<&Path, Vec<usize>> = HashMap::new();
-    let mut folders: HashMap<&Path, Vec<&Path>> = HashMap::new();
-    let mut linked: std::collections::HashSet<&Path> = Default::default();
-    for &i in members {
-        let Some(parent) = tracks[i].path.parent() else {
-            continue;
-        };
-        songs.entry(parent).or_default().push(i);
-        // Each folder joins the one above it once, up to `root`.
-        let mut dir = parent;
-        while dir != root && dir.starts_with(root) && linked.insert(dir) {
-            let Some(up) = dir.parent() else {
-                break;
-            };
-            folders.entry(up).or_default().push(dir);
-            dir = up;
-        }
-    }
-    let mut order = Vec::with_capacity(members.len());
-    let mut stack = vec![root];
-    let name = |p: &Path| {
-        p.file_name()
-            .map_or_else(String::new, |n| n.to_string_lossy().into_owned())
-    };
-    while let Some(dir) = stack.pop() {
-        if let Some(mut subfolders) = folders.remove(dir) {
-            subfolders.sort_by_cached_key(|f| name_key(&name(f)));
-            // Songs come after the subfolders: they wait on the stack.
-            stack.push(dir);
-            stack.extend(subfolders.into_iter().rev());
-            continue;
-        }
-        if let Some(mut mine) = songs.remove(dir) {
-            mine.sort_by_cached_key(|&i| name_key(&tracks[i].filename));
-            order.extend(mine);
-        }
-    }
-    order
 }
 /// A song in Folders: its file name without the extension.
 fn file_item(i: usize, t: &Track) -> Item {

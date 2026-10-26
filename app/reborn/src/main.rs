@@ -1267,12 +1267,12 @@ impl Runtime {
         } else {
             self.model.settings.shuffle_mode()
         };
-        // The source's own order, for Shuffle off later.
-        let rank: std::collections::HashMap<usize, usize> = members
-            .iter()
-            .enumerate()
-            .map(|(rank, &member)| (member, rank))
-            .collect();
+        // The source's own order, for Shuffle off later (by library index:
+        // a whole card is 120 000 songs).
+        let mut rank = vec![usize::MAX; tracks.len()];
+        for (at, &member) in members.iter().enumerate() {
+            rank[member] = at;
+        }
         let (window, start) = if mode == ShuffleMode::Albums {
             // Whole albums in random order; a picked song's album first,
             // from that song on (Beta 8.39).
@@ -1309,7 +1309,7 @@ impl Runtime {
             .filter_map(|&member| tracks.get(member).cloned())
             .collect::<Vec<_>>();
         let mut natural: Vec<usize> = (0..chosen.len()).collect();
-        natural.sort_by_key(|&i| rank.get(&chosen[i]).copied().unwrap_or(usize::MAX));
+        natural.sort_by_key(|&i| rank.get(chosen[i]).copied().unwrap_or(usize::MAX));
         self.save_book();
         self.model.replace_queue(queue, start)?;
         self.model.set_source(source, Some(&natural));

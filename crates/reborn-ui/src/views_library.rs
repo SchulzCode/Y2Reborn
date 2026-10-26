@@ -387,6 +387,11 @@ pub(crate) fn album_detail(m: &AppModel, tracks: &[Track], key: &str) -> String 
         .iter()
         .filter(|t| crate::track_matches(t, key))
         .fold((0, 0u64), |(n, ms), t| (n + 1, ms + t.duration_ms));
+    album_line(songs, ms)
+}
+
+/// "12 songs · 48 min" (a short album in seconds).
+pub(crate) fn album_line(songs: usize, ms: u64) -> String {
     let length = if ms < 60_000 {
         components::time(ms)
     } else {
@@ -691,19 +696,8 @@ fn folder_roots(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interac
             tint,
         );
         c.text_mid(66., y + 24., 300., &row.label, Face::S17, color::TEXT);
-        // What a listener finds there (UI v4); free space is on Storage.
-        let songs = source.map_or(0, |s| {
-            tracks
-                .iter()
-                .filter(|t| t.online && t.source_id == s.id)
-                .count()
-        });
-        let detail = if songs > 0 {
-            components::count(songs, "song", "songs")
-        } else {
-            String::new()
-        };
-        c.text_mid(66., y + 44., 300., &detail, Face::R11, color::MUTED);
+        // What a listener finds there (UI v4), counted when Folders opened.
+        c.text_mid(66., y + 44., 300., &row.secondary, Face::R11, color::MUTED);
         components::chevron(c, WIDTH - 24., y + 32.);
     }
 }

@@ -76,10 +76,17 @@ pub fn album_shuffle<'a>(tracks: &[&'a Track], lead: Option<usize>, seed: u64) -
         }
         groups[group].push(i);
     }
+    // Disc and track first; file names only where those are equal.
     for group in &mut groups {
-        group.sort_by_cached_key(|&i| {
-            let t = tracks[i];
-            (t.disc, t.track, crate::sort::natural_key(&t.filename), i)
+        group.sort_by(|&a, &b| {
+            let (x, y) = (tracks[a], tracks[b]);
+            (x.disc, x.track)
+                .cmp(&(y.disc, y.track))
+                .then_with(|| {
+                    crate::sort::natural_key(&x.filename)
+                        .cmp(&crate::sort::natural_key(&y.filename))
+                })
+                .then(a.cmp(&b))
         });
     }
     let first = lead.and_then(|l| groups.iter().position(|g| g.contains(&l)));
