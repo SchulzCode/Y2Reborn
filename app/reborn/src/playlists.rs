@@ -56,13 +56,14 @@ pub struct Worker {
 }
 
 impl Worker {
-    pub fn spawn() -> Option<Self> {
+    /// `known` keeps the playlist files last found, across restarts.
+    pub fn spawn(known: Option<PathBuf>) -> Option<Self> {
         let (jobs, queue) = channel::<Job>();
         let (replies_tx, replies) = channel();
         std::thread::Builder::new()
             .name("playlists".into())
             .spawn(move || {
-                let mut known = Known::default();
+                let mut known = Known::load(known);
                 while let Ok(job) = queue.recv() {
                     let job = match job {
                         Job::Known(found) => {
@@ -116,29 +117,58 @@ fn on_card(job: &Job) -> bool {
     path.starts_with("/media/sd")
 }
 
-/// Playlist files known per storage root, from the last scan or walk.
+/// Playlist files known per storage root, from the last scan or walk, kept
+/// in `file` so a restart need not walk a storage before its scan ends.
 #[derive(Default)]
-struct Known(HashMap<PathBuf, BTreeSet<PathBuf>>);
+struct Known {
+    roots: HashMap<PathBuf, BTreeSet<PathBuf>>,
+    file: Option<PathBuf>,
+}
 
 impl Known {
+    fn load(file: Option<PathBuf>) -> Self {
+        let roots = file
+            .as_ref()
+            .and_then(|f| std::fs::read(f).ok())
+            .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+            .unwrap_or_default();
+        Self { roots, file }
+    }
+    fn save(&self) {
+        let Some(file) = &self.file else {
+            return;
+        };
+        if let Ok(bytes) = serde_json::to_vec(&self.roots) {
+            let temp = file.with_extension("tmp");
+            if std::fs::write(&temp, bytes).is_ok() {
+                let _ = std::fs::rename(&temp, file);
+            }
+        }
+    }
     fn learn(&mut self, found: Vec<(PathBuf, Vec<PathBuf>)>) {
         for (root, paths) in found {
-            self.0.insert(root, paths.into_iter().collect());
+            self.roots.insert(root, paths.into_iter().collect());
         }
+        self.save();
     }
     /// The playlist files under `roots`: the known ones and each storage's
     /// own Playlists folder (made on the player); a storage not yet known is
     /// walked once.
     fn paths(&mut self, roots: &[PathBuf]) -> Vec<PathBuf> {
         let mut out = BTreeSet::new();
+        let mut walked = false;
         for root in roots {
-            let known = self.0.entry(root.clone()).or_insert_with(|| {
+            let known = self.roots.entry(root.clone()).or_insert_with(|| {
+                walked = true;
                 files::discover(std::slice::from_ref(root))
                     .into_iter()
                     .collect()
             });
             out.extend(known.iter().cloned());
             out.extend(files::discover(&[root.join(files::FOLDER)]));
+        }
+        if walked {
+            self.save();
         }
         out.into_iter().take(files::MAX_PLAYLISTS).collect()
     }
@@ -153,7 +183,10 @@ impl Known {
             Reply::Deleted(path) => (Some(path), None),
             _ => (None, None),
         };
-        for (root, paths) in &mut self.0 {
+        if gone.is_none() && new.is_none() {
+            return;
+        }
+        for (root, paths) in &mut self.roots {
             if let Some(gone) = gone {
                 paths.remove(gone);
             }
@@ -161,6 +194,7 @@ impl Known {
                 paths.insert(new.clone());
             }
         }
+        self.save();
     }
 }
 
@@ -395,7 +429,16 @@ mod tests {
             [renamed, made.clone()]
         );
         known.learn(vec![(dir.clone(), vec![later.clone()])]);
-        assert_eq!(known.paths(std::slice::from_ref(&dir)), [later, made]);
+        assert_eq!(
+            known.paths(std::slice::from_ref(&dir)),
+            [later.clone(), made.clone()]
+        );
+        // Kept across a restart.
+        let file = dir.join("known.json");
+        known.file = Some(file.clone());
+        known.save();
+        let mut again = Known::load(Some(file));
+        assert_eq!(again.paths(std::slice::from_ref(&dir)), [later, made]);
         std::fs::remove_dir_all(dir).unwrap();
     }
 }

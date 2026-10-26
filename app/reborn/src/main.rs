@@ -4571,7 +4571,7 @@ fn run() -> Result<(), String> {
         },
         radio_art: None,
         radio_art_pending: None,
-        playlist_worker: playlists::Worker::spawn(),
+        playlist_worker: playlists::Worker::spawn(Some(root.join("cache/playlists.json"))),
         headless,
         last_activity: Instant::now(),
         query: Some(initial_catalog),
