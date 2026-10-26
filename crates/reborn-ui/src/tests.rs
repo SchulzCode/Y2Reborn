@@ -5812,11 +5812,28 @@ fn profile_folder_group_120k() {
         found.songs.len(),
         t.elapsed()
     );
+    let mut ui = Ui::default();
+    let mut m = app(Screen::Home);
+    m.library.tracks = tracks.clone();
+    let lib = m.library.tracks.clone();
+    m.library.tracks = vec![];
+    while ui.prewarm(&m, &lib) {}
+    let rows = ui.rows(&m, &lib);
+    m.navigation.focus = rows.iter().position(|r| r.key == "search").unwrap();
+    let t = std::time::Instant::now();
+    m.library.tracks = lib;
+    ui.model_action(&mut m, Action::Select);
+    eprintln!("search opened after prewarm in {:?}", t.elapsed());
+    for pass in 0..3 {
+        let t = std::time::Instant::now();
+        let _ = ui.draw(&m, &m.library.tracks, false);
+        eprintln!("search draw {pass} in {:?}", t.elapsed());
+    }
 }
 
 #[test]
 fn lists_made_ahead_match_lists_made_on_opening_and_leave_the_screen_alone() {
-    let (ui, mut m) = folder_app("folder:/data/music/Hardcore/Clubland 28");
+    let (mut ui, mut m) = folder_app("folder:/data/music/Hardcore/Clubland 28");
     let tracks = m.library.tracks.clone();
     let labels = |ui: &Ui, m: &AppModel| -> Vec<String> {
         ui.rows(m, &tracks).into_iter().map(|r| r.label).collect()
@@ -5827,10 +5844,18 @@ fn lists_made_ahead_match_lists_made_on_opening_and_leave_the_screen_alone() {
         pieces += 1;
         assert!(pieces < 20);
     }
+    // The last piece waits for the playlists to be read.
     assert_eq!(pieces, 8);
+    ui.playlists.set_lists(vec![]);
+    assert!(ui.prewarm(&m, &tracks));
     assert!(!ui.prewarm(&m, &tracks), "done once per library");
     assert_eq!(labels(&ui, &m), shown, "the folder on screen is unchanged");
-    for screen in [Screen::Tracks, Screen::Artists, Screen::Albums, Screen::Genres] {
+    for screen in [
+        Screen::Tracks,
+        Screen::Artists,
+        Screen::Albums,
+        Screen::Genres,
+    ] {
         m.screen = screen;
         m.navigation.filter.clear();
         let fresh = Ui::default();

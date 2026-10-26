@@ -738,10 +738,11 @@ impl Ui {
     /// While the screen is off, the work a long library's lists do when
     /// first opened is done ahead, one piece per call (each up to a second
     /// or two on the player with 120 000 songs): Music's counts, Songs,
-    /// Artists, Albums, Genres, Folders, the search and the album lines.
+    /// Artists, Albums, Genres, Folders, the search, the album lines and the
+    /// playlists' songs.
     /// Returns whether a piece was done (more may follow).
     pub fn prewarm(&self, m: &AppModel, tracks: &[Track]) -> bool {
-        const STEPS: usize = 8;
+        const STEPS: usize = 9;
         let library = crate::library_stamp(tracks);
         let (seen, step) = self.prewarmed.get();
         let step = if seen == Some(library) { step } else { 0 };
@@ -763,7 +764,15 @@ impl Ui {
             }
             5 => self.catalog.borrow_mut().folders.ensure(tracks),
             6 => self.catalog.borrow_mut().index.prepare(tracks),
-            _ => self.count_albums(tracks),
+            7 => self.count_albums(tracks),
+            // The playlists matched to the library (Playlists, the search),
+            // once they are read.
+            _ if !self.playlists.loaded => return false,
+            _ => {
+                for p in &self.playlists.lists {
+                    self.facts(tracks, p);
+                }
+            }
         }
         self.prewarmed.set((Some(library), step + 1));
         true
