@@ -6036,10 +6036,19 @@ fn run() -> Result<(), String> {
         // Screen off and no scan running: a long library's lists are made
         // now, one a pass, not when the screen is woken (Beta 8.39). Input
         // still comes between the pieces.
-        let prewarming = rt.model.screen_off
-            && !rt.model.library.scanning
-            && !rt.sleep_prepared
-            && rt.ui.prewarm(&rt.model, &rt.model.library.tracks);
+        let idle = rt.model.screen_off && !rt.model.library.scanning && !rt.sleep_prepared;
+        // The playlists are read then too, if nothing read them yet: the
+        // prewarm's last piece matches them to the library.
+        if idle
+            && rt.playlist_worker.is_some()
+            && !rt.ui.playlists.loaded
+            && !rt.ui.playlists.loading
+        {
+            if let Err(e) = rt.playlist(reborn_core::PlaylistRequest::Refresh) {
+                rt.fail("playlists", e);
+            }
+        }
+        let prewarming = idle && rt.ui.prewarm(&rt.model, &rt.model.library.tracks);
         let interval = if prewarming {
             Duration::from_millis(20)
         } else {

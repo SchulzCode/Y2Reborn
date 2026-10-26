@@ -5824,10 +5824,27 @@ fn profile_folder_group_120k() {
     m.library.tracks = lib;
     ui.model_action(&mut m, Action::Select);
     eprintln!("search opened after prewarm in {:?}", t.elapsed());
+    eprintln!("screen {:?} keyboard {}", m.screen, ui.keyboard.is_some());
+    let fresh = Ui::default();
+    let list = playlist(
+        "/media/sd/Mix.m3u8",
+        &["Y2Bench120k/Genre 1/Artist 1/Album 1 (1999)/01 - Title 1.mp3"],
+    );
+    let t = std::time::Instant::now();
+    let facts = fresh.facts(&m.library.tracks, &list);
+    eprintln!(
+        "playlist matched ({:?}) in {:?}",
+        facts.resolved,
+        t.elapsed()
+    );
     for pass in 0..3 {
         let t = std::time::Instant::now();
-        let _ = ui.draw(&m, &m.library.tracks, false);
-        eprintln!("search draw {pass} in {:?}", t.elapsed());
+        let quads = ui.draw(&m, &m.library.tracks, false);
+        eprintln!(
+            "search draw {pass}: {} quads in {:?}",
+            quads.len(),
+            t.elapsed()
+        );
     }
 }
 
