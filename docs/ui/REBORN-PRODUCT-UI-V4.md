@@ -478,3 +478,17 @@ anti-aliasing without MSAA, and no beading because the pieces share their joints
 a third more), bass swells it, highs ripple it; without levels (nothing measured) it waves as before. Not a spectrum
 visualizer (the owner: "not yet"). Previews `14e-now-playing-loud`, `14f-now-playing-quiet`.
 
+## Folders, Shuffle Albums, playlist Sort (Beta 8.39, user report)
+
+A folder-first listener with 120 000 songs and loose tags. **Folders** shows a folder as a file manager does: its
+folders, then its songs, both by name (case and accents folded, numbers as numbers), songs by file name without the
+extension, the line under it the artist; folder rows say how many songs they hold. A song plays its folder's songs
+in that order; Play on a folder plays its folders first, then its songs, all the way down. Storages are titled SD Card
+and Internal Storage. **Shuffle** steps Off → Songs → Albums (Now Playing's menu, Settings → Playback): Albums plays
+whole albums in random order, each in disc/track/file order (an album = its folder, CD/Disc folders folded, and its
+album tag); Shuffle Albums is also in the menus of folders, artists, genres, playlists and an artist's Play, not an
+album's. **Sort** in a playlist's menus (and on holding its Play or Shuffle) steps Playlist Order → Album → Artist →
+Title → File Name, the menu staying open; the page shows and plays in that order, the file is unchanged, Move only in
+Playlist Order. Previews `13-folder`, `13b-folder-songs`. Tests
+`a_folder_lists_its_folders_then_its_songs_by_file_name`, `playing_a_folder_follows_folders_order_and_offers_shuffle_albums`,
+`shuffle_steps_through_off_songs_and_albums`, `a_playlist_sorts_its_page_and_plays_in_that_order`.

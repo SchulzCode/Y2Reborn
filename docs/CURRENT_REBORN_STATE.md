@@ -1,6 +1,18 @@
 # Current Reborn state on the Y2
 
-## 1.0.0-beta.8.38 — Y2Linux 1.0 Beta 8.38 (Baseline 146), 2026-10-25 (latest): Bluetooth pause, live wave
+## 1.0.0-beta.8.39 — Y2Linux 1.0 Beta 8.39 (Baseline 153), 2026-10-26 (latest): Folders by file name, Shuffle Albums, playlist Sort, 120 000 songs
+
+Published as `baseline-153` (Reborn `7cf527d`; features `894a99c`; sequence 10470). Folders list folders then songs
+by name (`sort::natural_key`), songs by file name (`catalog::Row::FolderTrack`), from `folders::FolderIndex` (per
+library: each folder's songs, folders, song count); a song plays its folder in that order, a folder's Play goes
+folders first (`FolderIndex::play_order`). `ShuffleMode` Off/Songs/Albums (`settings.shuffle` + `shuffle_albums`,
+`queue::album_shuffle`, `shuffle_source_albums`; skins `shuffle_albums`). `PlaylistSort` per playlist
+(`settings.playlist_sort`, `Ui::shown_order`). For 120 000 songs: whole-library lists kept per library, album totals,
+`Ui::prewarm` while the screen is off, playlists from the scan (`ScanMetrics::playlists`, worker `Job::Known`,
+`cache/playlists.json`), search folds names once; metrics `ui_action_ms`, `ui_layout_ms`. Device numbers:
+[Y2Linux Beta 8.39 report](https://github.com/SchulzCode/Y2Linux/blob/main/docs/validation/Y2-LINUX-1.0-BETA-8.39.md).
+
+## 1.0.0-beta.8.38 — Y2Linux 1.0 Beta 8.38 (Baseline 146), 2026-10-25: Bluetooth pause, live wave
 
 Published as `baseline-146` (Reborn `6c37d9f`; F43 `990443f`; sequence 10310). On Bluetooth, `Runtime::pause`
 releases the sink and Play reopens at the position (BlueALSA in-place resumes stayed silent with AirPods Pro 2,
