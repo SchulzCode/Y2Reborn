@@ -353,6 +353,29 @@ impl Catalog {
         }
         self.build(m, tracks);
     }
+    /// A whole-library list built ahead (`Ui::prewarm`); the rows on screen
+    /// stay as they are.
+    pub(crate) fn prewarm(&mut self, m: &AppModel, tracks: &[Track], screen: Screen) {
+        let key = (
+            crate::library_stamp(tracks),
+            screen,
+            m.settings.artists_list,
+        );
+        if self.whole.iter().any(|(k, _)| *k == key) {
+            return;
+        }
+        let view = AppModel {
+            screen,
+            settings: m.settings.clone(),
+            sources: m.sources.clone(),
+            ..Default::default()
+        };
+        let shown = std::mem::take(&mut self.rows);
+        self.build(&view, tracks);
+        self.whole.retain(|(k, _)| k.0 == key.0);
+        self.whole
+            .push((key, std::mem::replace(&mut self.rows, shown)));
+    }
     fn build(&mut self, m: &AppModel, tracks: &[Track]) {
         match m.screen {
             Screen::Search => self.search_rows(m, tracks),

@@ -508,6 +508,8 @@ pub struct Ui {
     album_totals: RefCell<AlbumTotals>,
     /// The song count a group's menu shows, for (library, group).
     group_count: RefCell<GroupCount>,
+    /// How far `prewarm` got, for which library.
+    prewarmed: std::cell::Cell<(Option<(usize, usize)>, usize)>,
     /// The skin in use; `None` is Reborn's own look.
     pub skin: Option<std::rc::Rc<skin::Skin>>,
     /// Installed skins, as last scanned for the picker.
@@ -715,6 +717,58 @@ impl Ui {
         (reported + ahead).min(length)
     }
 
+    /// Every album's songs and length, counted once per library.
+    fn count_albums(&self, tracks: &[Track]) {
+        let library = crate::library_stamp(tracks);
+        let mut totals = self.album_totals.borrow_mut();
+        if totals.as_ref().is_some_and(|(l, _)| *l == library) {
+            return;
+        }
+        let mut map: HashMap<(String, String), (usize, u64)> = HashMap::new();
+        for t in tracks.iter().filter(|t| t.is_music()) {
+            let entry = map
+                .entry((t.album_artist.clone(), t.album.clone()))
+                .or_default();
+            entry.0 += 1;
+            entry.1 += t.duration_ms;
+        }
+        *totals = Some((library, map));
+    }
+
+    /// While the screen is off, the work a long library's lists do when
+    /// first opened is done ahead, one piece per call (each up to a second
+    /// or two on the player with 120 000 songs): Music's counts, Songs,
+    /// Artists, Albums, Genres, Folders, the search and the album lines.
+    /// Returns whether a piece was done (more may follow).
+    pub fn prewarm(&self, m: &AppModel, tracks: &[Track]) -> bool {
+        const STEPS: usize = 8;
+        let library = crate::library_stamp(tracks);
+        let (seen, step) = self.prewarmed.get();
+        let step = if seen == Some(library) { step } else { 0 };
+        if step >= STEPS || tracks.is_empty() {
+            return false;
+        }
+        match step {
+            0 => {
+                self.library_counts(m, tracks);
+            }
+            1..=4 => {
+                let screen = [
+                    Screen::Tracks,
+                    Screen::Artists,
+                    Screen::Albums,
+                    Screen::Genres,
+                ][step - 1];
+                self.catalog.borrow_mut().prewarm(m, tracks, screen);
+            }
+            5 => self.catalog.borrow_mut().folders.ensure(tracks),
+            6 => self.catalog.borrow_mut().index.prepare(tracks),
+            _ => self.count_albums(tracks),
+        }
+        self.prewarmed.set((Some(library), step + 1));
+        true
+    }
+
     /// "9 songs · 38 min" for the album with filter `key`, computed once per
     /// album and library rather than on every animation frame.
     pub(crate) fn album_detail(&self, m: &AppModel, tracks: &[Track], key: &str) -> String {
@@ -729,18 +783,8 @@ impl Ui {
         // genre (only that genre's songs) is counted on its own.
         let text = match album_parts(key) {
             Some((artist, album, None)) => {
-                let mut totals = self.album_totals.borrow_mut();
-                if totals.as_ref().is_none_or(|(l, _)| *l != library) {
-                    let mut map: HashMap<(String, String), (usize, u64)> = HashMap::new();
-                    for t in tracks.iter().filter(|t| t.is_music()) {
-                        let entry = map
-                            .entry((t.album_artist.clone(), t.album.clone()))
-                            .or_default();
-                        entry.0 += 1;
-                        entry.1 += t.duration_ms;
-                    }
-                    *totals = Some((library, map));
-                }
+                self.count_albums(tracks);
+                let totals = self.album_totals.borrow();
                 let (songs, ms) = totals
                     .as_ref()
                     .and_then(|(_, map)| map.get(&(artist.to_owned(), album.to_owned())))

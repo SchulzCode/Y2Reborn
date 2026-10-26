@@ -5804,4 +5804,36 @@ fn profile_folder_group_120k() {
     let t = std::time::Instant::now();
     let _ = ui.album_detail(&m, &tracks, &crate::album_filter(&tracks[1900]));
     eprintln!("album_detail next album in {:?}", t.elapsed());
+    let mut index = crate::search::Index::default();
+    let t = std::time::Instant::now();
+    let found = index.search(&tracks, "a");
+    eprintln!(
+        "search index + 'a' ({} songs) in {:?}",
+        found.songs.len(),
+        t.elapsed()
+    );
+}
+
+#[test]
+fn lists_made_ahead_match_lists_made_on_opening_and_leave_the_screen_alone() {
+    let (ui, mut m) = folder_app("folder:/data/music/Hardcore/Clubland 28");
+    let tracks = m.library.tracks.clone();
+    let labels = |ui: &Ui, m: &AppModel| -> Vec<String> {
+        ui.rows(m, &tracks).into_iter().map(|r| r.label).collect()
+    };
+    let shown = labels(&ui, &m);
+    let mut pieces = 0;
+    while ui.prewarm(&m, &tracks) {
+        pieces += 1;
+        assert!(pieces < 20);
+    }
+    assert_eq!(pieces, 8);
+    assert!(!ui.prewarm(&m, &tracks), "done once per library");
+    assert_eq!(labels(&ui, &m), shown, "the folder on screen is unchanged");
+    for screen in [Screen::Tracks, Screen::Artists, Screen::Albums, Screen::Genres] {
+        m.screen = screen;
+        m.navigation.filter.clear();
+        let fresh = Ui::default();
+        assert_eq!(labels(&ui, &m), labels(&fresh, &m), "{screen:?}");
+    }
 }

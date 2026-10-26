@@ -6,7 +6,7 @@ use reborn_core::{
     sort::{fold, sort_key_folded, SortAs},
     Track,
 };
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 /// Earlier searches kept for narrowing and for Delete (one per keystroke).
 const CACHED_SEARCHES: usize = 48;
@@ -95,6 +95,10 @@ pub fn words_match(query: &str, name: &str) -> bool {
 }
 
 impl Index {
+    /// Index the library now (ahead of the first search).
+    pub fn prepare(&mut self, tracks: &[Track]) {
+        self.ensure(tracks);
+    }
     fn ensure(&mut self, tracks: &[Track]) {
         let stamp = crate::library_stamp(tracks);
         if self.stamp == Some(stamp) {
@@ -104,9 +108,17 @@ impl Index {
             stamp: Some(stamp),
             ..Default::default()
         };
-        let folded: Vec<[String; 3]> = tracks
+        // Artists and albums repeat over thousands of songs: each name is
+        // folded once (a card of 120 000 songs took 2.6 s to index).
+        let mut names: Vec<String> = vec![];
+        let mut known: HashMap<&str, usize> = HashMap::new();
+        let folded: Vec<(String, usize, usize)> = tracks
             .iter()
-            .map(|t| [fold(crate::track_title(t)), fold(&t.artist), fold(&t.album)])
+            .map(|t| {
+                let artist = intern(&mut known, &mut names, &t.artist);
+                let album = intern(&mut known, &mut names, &t.album);
+                (fold(crate::track_title(t)), artist, album)
+            })
             .collect();
         // Artists: name -> (cover track, albums).
         type Entry<'a> = (usize, std::collections::BTreeSet<&'a str>, Vec<u32>);
@@ -147,21 +159,28 @@ impl Index {
             .map(|i| {
                 let t = &tracks[i];
                 let owner = if t.album_artist.is_empty() {
-                    folded[i][1].clone()
+                    names[folded[i].1].clone()
                 } else {
                     fold(&t.album_artist)
                 };
-                (i, format!("{} {owner}", folded[i][2]))
+                (i, format!("{} {owner}", names[folded[i].2]))
             })
             .collect();
-        albums.sort_by_cached_key(|(i, _)| sort_key_folded(folded[*i][2].clone(), SortAs::Title));
+        albums.sort_by_cached_key(|(i, _)| {
+            sort_key_folded(names[folded[*i].2].clone(), SortAs::Title)
+        });
         self.albums = albums;
         let mut songs: Vec<(usize, String)> = folded
             .iter()
             .enumerate()
-            .map(|(i, [title, artist, album])| (i, format!("{title} {artist} {album}")))
+            .map(|(i, (title, artist, album))| {
+                (i, format!("{title} {} {}", names[*artist], names[*album]))
+            })
             .collect();
-        songs.sort_by_cached_key(|(i, _)| sort_key_folded(folded[*i][0].clone(), SortAs::Title));
+        // A to Z by title, compared in place (no copy of each title).
+        songs.sort_by(|(a, _), (b, _)| {
+            without_article(&folded[*a].0).cmp(without_article(&folded[*b].0))
+        });
         self.songs = songs;
     }
 
@@ -271,6 +290,26 @@ impl Index {
         self.cache.push((folded.to_owned(), found.clone()));
         found
     }
+}
+
+/// `text` folded once: its place in `names`.
+fn intern<'a>(
+    known: &mut HashMap<&'a str, usize>,
+    names: &mut Vec<String>,
+    text: &'a str,
+) -> usize {
+    *known.entry(text).or_insert_with(|| {
+        names.push(fold(text));
+        names.len() - 1
+    })
+}
+
+/// A folded title as `sort_key_folded` orders it, without copying it.
+fn without_article(folded: &str) -> &str {
+    ["the ", "a ", "an "]
+        .iter()
+        .find(|a| folded.len() > a.len() && folded.starts_with(*a))
+        .map_or(folded, |a| &folded[a.len()..])
 }
 
 #[cfg(test)]

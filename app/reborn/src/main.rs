@@ -6033,16 +6033,27 @@ fn run() -> Result<(), String> {
                 rt.dirty.rendered();
             }
         }
-        let interval = main_loop_interval(
-            rt.model.screen_off,
-            rt.dirty.render,
-            rt.ui.gliding(),
-            matches!(
-                rt.model.playback,
-                PlaybackState::Playing | PlaybackState::Buffering
-            ),
-            render_time.elapsed(),
-        );
+        // Screen off and no scan running: a long library's lists are made
+        // now, one a pass, not when the screen is woken (Beta 8.39). Input
+        // still comes between the pieces.
+        let prewarming = rt.model.screen_off
+            && !rt.model.library.scanning
+            && !rt.sleep_prepared
+            && rt.ui.prewarm(&rt.model, &rt.model.library.tracks);
+        let interval = if prewarming {
+            Duration::from_millis(20)
+        } else {
+            main_loop_interval(
+                rt.model.screen_off,
+                rt.dirty.render,
+                rt.ui.gliding(),
+                matches!(
+                    rt.model.playback,
+                    PlaybackState::Playing | PlaybackState::Buffering
+                ),
+                render_time.elapsed(),
+            )
+        };
         if let Some(input) = &inputs {
             if input.wait_with(interval, Some(server.wake_fd())).is_err() {
                 thread::sleep(interval);
