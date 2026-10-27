@@ -333,6 +333,11 @@ struct Runtime {
     dark_since: Option<Instant>,
     /// Last request or active work; bounds retries and the pause-to-sleep delay.
     sleep_attempt: Option<Instant>,
+    /// Sleeps refused in a row after preparation; spaces automatic tries.
+    sleep_refusals: u32,
+    /// Power asked to sleep (the screen went dark at once); a wake before the
+    /// platform prepares means the person changed their mind (F48).
+    sleep_requested_at: Option<Instant>,
     /// When the current pause with Bluetooth headphones connected began.
     headset_paused: Option<Instant>,
     /// Wi-Fi was blocked at runtime by that policy and must be restored on wake.
@@ -350,7 +355,7 @@ fn sleep_control_allowed(command: &Command) -> bool {
             | Command::Snapshot
             | Command::Events { .. }
             | Command::Logs { .. }
-            | Command::SleepRestore
+            | Command::SleepRestore { .. }
     )
 }
 
@@ -1423,6 +1428,15 @@ impl Runtime {
         if self.sleep_prepared {
             return Err("sleep_operation_in_progress".into());
         }
+        // Power turned the screen off with the request; lit again now means a
+        // second press woke it. Stay awake instead of blanking it once more.
+        let requested = self
+            .sleep_requested_at
+            .take()
+            .is_some_and(|at| at.elapsed() < Duration::from_secs(30));
+        if requested && !self.model.screen_off {
+            return Err("wake_event_in_progress".into());
+        }
         if matches!(
             self.model.playback,
             PlaybackState::Playing | PlaybackState::Buffering
@@ -1482,7 +1496,7 @@ impl Runtime {
         Ok(json!({"sleep_ready":true,"screen_off":self.model.screen_off}))
     }
 
-    fn restore_sleep(&mut self) -> Result<Value, String> {
+    fn restore_sleep(&mut self, dark: bool) -> Result<Value, String> {
         // A failed display restore must also discard the wake gesture before
         // input is accepted again, so its release cannot request another sleep.
         self.input_resume = true;
@@ -1495,6 +1509,24 @@ impl Runtime {
             false,
         );
         self.model.platform.snapshot.sleep.phase = reborn_core::platform::SleepPhase::Waking;
+        if dark {
+            // F47: the sleep was refused with nobody waking the player; the
+            // screen stays off (it lit every two minutes for hours on a player
+            // whose kernel refused every sleep) and the next try waits longer.
+            self.sleep_refusals = self.sleep_refusals.saturating_add(1);
+            self.sleep_attempt = Some(Instant::now());
+            self.log.emit(
+                Level::Info,
+                "power",
+                "sleep_refused_dark",
+                "Sleep refused after preparation; the screen stays off",
+                None,
+                json!({"refusals":self.sleep_refusals,
+                    "retry_s":reborn_core::platform::sleep_retry_seconds(self.sleep_refusals)}),
+            );
+            return Ok(json!({"sleep_ready":true,"screen_off":self.model.screen_off}));
+        }
+        self.sleep_refusals = 0;
         self.effect_inner(Effect::ScreenWake)?;
         if let Some(graphics) = self.graphics.as_mut() {
             let presented = graphics.render(&self.ui.draw(
@@ -2332,6 +2364,18 @@ impl Runtime {
         match e {
             Effect::None => {}
             Effect::Platform(task) => {
+                if task == reborn_core::PlatformTask::SleepRequest
+                    && !matches!(
+                        self.model.playback,
+                        PlaybackState::Playing | PlaybackState::Buffering
+                    )
+                {
+                    // F48: Power turns the screen off at once, as on stock. It
+                    // stayed lit ≈1.7 s until the platform prepared, people
+                    // pressed again, and that press cancelled the sleep.
+                    self.effect_inner(Effect::ScreenSleep)?;
+                    self.sleep_requested_at = Some(Instant::now());
+                }
                 if self.model.platform.busy.is_some() {
                     self.queue_platform(task);
                     return Ok(());
@@ -2729,6 +2773,10 @@ impl Runtime {
                 }
                 self.model.apply(Event::ScreenWake);
                 self.woke_at = Some(Instant::now());
+                // Awake again: a sleep still waiting for its turn is dropped.
+                if self.queued_platform == Some(reborn_core::PlatformTask::SleepRequest) {
+                    self.queued_platform = None;
+                }
                 self.last_activity = Instant::now();
                 self.dark_since = None;
                 self.wifi_idle_restore();
@@ -3707,7 +3755,7 @@ impl Runtime {
                 .is_some_and(|since| since.elapsed().as_secs() >= 15)
             && matches!(power::sleep_owner_present(), Ok(false))
         {
-            let result = self.restore_sleep();
+            let result = self.restore_sleep(false);
             self.model.platform.snapshot.sleep.phase =
                 reborn_core::platform::SleepPhase::RestoreFailed;
             self.model.platform.snapshot.sleep.problem =
@@ -3761,7 +3809,10 @@ impl Runtime {
             self.sleep_attempt.map(|since| since.elapsed().as_secs()),
             playing,
             busy,
-        ) {
+        ) && self.sleep_attempt.is_none_or(|at| {
+            at.elapsed().as_secs()
+                >= reborn_core::platform::sleep_retry_seconds(self.sleep_refusals)
+        }) {
             // Platform owns fresh USB/battery/workload checks and the operation
             // locks. Preparation drains the DB and closes PCM before entry.
             let _ = self.effect(Effect::Platform(reborn_core::PlatformTask::SleepRequest));
@@ -4673,6 +4724,8 @@ fn run() -> Result<(), String> {
         sleep_prepared_since: None,
         dark_since: None,
         sleep_attempt: None,
+        sleep_refusals: 0,
+        sleep_requested_at: None,
         headset_paused: None,
         wifi_idle_off: false,
         wifi_idle_failed: false,
@@ -5689,7 +5742,7 @@ fn run() -> Result<(), String> {
             let result: Result<Value, String> = match req.command.clone() {
                 Command::Status => Ok(rt.status()),
                 Command::SleepPrepare => rt.prepare_sleep(),
-                Command::SleepRestore => rt.restore_sleep(),
+                Command::SleepRestore { dark } => rt.restore_sleep(dark),
                 Command::Audio => Ok(
                     json!({"audio":rt.playback.audio_state(),"ffmpeg":reborn_media::runtime_components_if_loaded()}),
                 ),
@@ -7624,7 +7677,8 @@ mod codec_reconnect_tests {
             Command::Health,
             Command::Metrics,
             Command::Snapshot,
-            Command::SleepRestore,
+            Command::SleepRestore { dark: false },
+            Command::SleepRestore { dark: true },
         ] {
             assert!(sleep_control_allowed(&command));
         }

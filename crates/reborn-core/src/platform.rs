@@ -93,6 +93,14 @@ pub fn automatic_sleep_due(
         && since_attempt_seconds.is_none_or(|seconds| seconds >= 60)
 }
 
+/// The wait before the next automatic sleep after `refusals` sleeps in a row
+/// were refused once Reborn had prepared (Y2Linux F47: a UART that never
+/// let the kernel sleep was retried every minute for hours). Each try quiets
+/// the radios for seconds, so the wait doubles up to half an hour.
+pub fn sleep_retry_seconds(refusals: u32) -> u64 {
+    (60u64 << refusals.min(5)).min(30 * 60)
+}
+
 /// With Bluetooth headphones connected, a pause keeps the player awake this
 /// long so the headphones' own play button can continue (Beta 8.18): asleep,
 /// the radio is off and nothing hears the button.
@@ -676,6 +684,10 @@ mod tests {
             false
         ));
         assert!(automatic_sleep_due(true, Some(60), 60, None, false, false));
+        // Refused sleeps in a row: 1, 2, 4, 8, 16, then 30 minutes apart.
+        let waits: Vec<u64> = (0..8).map(sleep_retry_seconds).collect();
+        assert_eq!(waits, [60, 120, 240, 480, 960, 1800, 1800, 1800]);
+        assert_eq!(sleep_retry_seconds(u32::MAX), 1800);
         // Headphones connected: a pause stays awake for 15 minutes, then sleeps.
         assert!(headset_pause_awake(Some(0)));
         assert!(headset_pause_awake(Some(HEADSET_PAUSE_AWAKE_SECS - 1)));

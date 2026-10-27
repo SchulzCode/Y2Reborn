@@ -991,6 +991,20 @@ pub fn sleep(value: &Value) -> SleepState {
         _ => SleepPhase::Awake,
     };
     let same_boot = value["same_boot"].as_bool();
+    // F48: Power (or the wake timer) during the preparation cancels the sleep
+    // on purpose; that is a wake, not a task the player was busy with.
+    if phase == SleepPhase::SleepRefused
+        && value["reason"]
+            .as_str()
+            .is_some_and(|s| s.contains("wake_event"))
+    {
+        return SleepState {
+            phase: SleepPhase::Restored,
+            problem: None,
+            same_boot,
+            wake: WakeReason::Power,
+        };
+    }
     let problem = if phase == SleepPhase::Restored
         && (same_boot != Some(true) || value["kernel_completed"] != true)
     {
@@ -2097,6 +2111,22 @@ mod feature_completion_tests {
         assert_eq!(sleep(&v).phase, SleepPhase::RestoreFailed);
         v["schema"] = json!("org.y2linux.sleep/v2");
         assert_eq!(sleep(&v), SleepState::default());
+    }
+
+    #[test]
+    fn a_wake_during_preparation_is_a_wake_not_a_busy_player() {
+        let v = json!({"schema":"org.y2linux.sleep/v1", "state":"refused",
+            "reason":"wake_event_in_progress", "same_boot":true});
+        let s = sleep(&v);
+        assert_eq!(s.phase, SleepPhase::Restored);
+        assert_eq!(s.wake, WakeReason::Power);
+        assert_eq!(s.problem, None);
+        let busy = json!({"schema":"org.y2linux.sleep/v1", "state":"refused",
+            "reason":"sleep_operation_in_progress"});
+        assert_eq!(sleep(&busy).problem, Some(SleepProblem::Busy));
+        let kernel = json!({"schema":"org.y2linux.sleep/v1", "state":"refused",
+            "reason":"kernel_suspend_refused"});
+        assert_eq!(sleep(&kernel).problem, Some(SleepProblem::Other));
     }
 
     #[test]

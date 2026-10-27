@@ -28,7 +28,12 @@ pub struct Request {
 pub enum Command {
     Status,
     SleepPrepare,
-    SleepRestore,
+    /// After a sleep: `dark` when it was refused, so the screen the person
+    /// turned off (or that went dark) stays off (Y2Linux F47).
+    SleepRestore {
+        #[serde(default)]
+        dark: bool,
+    },
     Audio,
     Health,
     Metrics,
