@@ -230,6 +230,9 @@ struct Runtime {
     /// Headphones in the jack, as the kernel last reported (#28 speaker);
     /// None until it has read the detector.
     headphones: Option<bool>,
+    /// A jack change still to act on: it waits while an output start is
+    /// pending (a reconfiguration takes one change at a time).
+    jack_pending: Option<bool>,
     playback_hints: reborn_platform::workload::Hints,
     interaction_hints: reborn_platform::workload::Hints,
     model: AppModel,
@@ -4586,6 +4589,7 @@ fn run() -> Result<(), String> {
         sleep_fading: false,
         sleep_minutes_shown: None,
         headphones: None,
+        jack_pending: None,
         playback_hints: reborn_platform::workload::Hints::default(),
         interaction_hints: reborn_platform::workload::Hints::default(),
         model,
@@ -5189,8 +5193,16 @@ fn run() -> Result<(), String> {
             action_router.reset();
         }
         if let Some(plugged) = jack.as_mut().and_then(reborn_platform::jack::Jack::poll) {
-            if let Err(e) = rt.jack_changed(plugged) {
-                rt.fail("audio", e);
+            rt.jack_pending = Some(plugged);
+        }
+        // As a user action: the reconfiguration it starts is polled to its
+        // end (a bare load() left the new output prepared and never fed:
+        // "Starting" for good after headphones went in, test build 157).
+        if rt.pending_reconfiguration.is_none() {
+            if let Some(plugged) = rt.jack_pending.take() {
+                if let Err(e) = rt.with_model_action(|runtime| runtime.jack_changed(plugged)) {
+                    rt.fail("audio", e);
+                }
             }
         }
         if let Some(input) = &mut inputs {
@@ -5769,6 +5781,15 @@ fn run() -> Result<(), String> {
                     r.map(|_| json!({"accepted":true,"radio":radio,"action":action}))
                 }
                 Command::Playback { action } => rt.play_control(action).map(|_| rt.status()),
+                Command::Jack { plugged } => {
+                    // Taken where a kernel report is: the next loop acts on it.
+                    if plugged.is_some() {
+                        rt.jack_pending = plugged;
+                    }
+                    Ok(json!({"headphones":rt.headphones,"pending":rt.jack_pending,
+                        "speaker_active":rt.model.speaker_active,"speaker":rt.model.settings.speaker,
+                        "playback":rt.model.playback,"output":rt.model.output}))
+                }
                 Command::Action { action } => {
                     // As the router would hand it over (device tests).
                     rt.last_activity = Instant::now();

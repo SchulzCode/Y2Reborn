@@ -77,6 +77,11 @@ pub enum Command {
     Theme {
         id: Option<String>,
     },
+    /// A headphone jack change as the kernel reports one (#28 speaker device
+    /// tests); without `plugged`, only Reborn's view of the jack.
+    Jack {
+        plugged: Option<bool>,
+    },
 }
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

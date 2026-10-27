@@ -65,6 +65,7 @@ fn command(a: &[String]) -> Result<Command, String> {
         });
     }
     Ok(match first{
+ "jack"=>Command::Jack{plugged:match next{Some("in")=>Some(true),Some("out")=>Some(false),None=>None,_=>return Err("jack in|out".into())}},
  "theme"=>Command::Theme{id:next.filter(|s|!s.starts_with("--")).map(|s|if s=="reborn"{String::new()}else{s.to_owned()})},
  "status"=>Command::Status,"audio"=>Command::Audio,"health"=>Command::Health,"metrics"=>Command::Metrics,"snapshot"=>Command::Snapshot,"diagnose"=>Command::Diagnose,"scan"=>Command::Scan,
  "logs"=>Command::Logs{last:number(a,"--last",100)? as usize,subsystem:arg(a,"--subsystem").map(str::to_owned),level:arg(a,"--level").map(|s|Level::parse(s).ok_or("invalid log level")).transpose()?,since_ms:arg(a,"--since").map(|s|s.trim_end_matches('s').parse::<u64>().map(|n|n.saturating_mul(1000)).map_err(|_|"invalid --since")).transpose()?},
@@ -77,7 +78,7 @@ fn command(a: &[String]) -> Result<Command, String> {
 fn run() -> Result<i32, String> {
     let args = std::env::args().skip(1).collect::<Vec<_>>();
     if args.iter().any(|s| s == "--help") {
-        io::stdout().write_all(b"rebornctl status|audio|health|metrics|snapshot|logs|events|log-level|diagnose|test|scan|input|play|pause|resume|stop|seek|output [--json] [--socket PATH]\nrebornctl wifi|bluetooth scan|on|off [--json]\nrebornctl bluetooth codec Auto|SBC|SBC-XQ|AAC|aptX|aptX-HD|LDAC ADDRESS (pause playback first)\nRadio scan enables that radio and reports progress through status.\n").map_err(|e|e.to_string())?;
+        io::stdout().write_all(b"rebornctl status|audio|health|metrics|snapshot|logs|events|log-level|diagnose|test|scan|input|play|pause|resume|stop|seek|output|jack [in|out] [--json] [--socket PATH]\nrebornctl wifi|bluetooth scan|on|off [--json]\nrebornctl bluetooth codec Auto|SBC|SBC-XQ|AAC|aptX|aptX-HD|LDAC ADDRESS (pause playback first)\nRadio scan enables that radio and reports progress through status.\n").map_err(|e|e.to_string())?;
         return Ok(0);
     }
     let path = PathBuf::from(arg(&args, "--socket").unwrap_or("/run/reborn/control.sock"));
