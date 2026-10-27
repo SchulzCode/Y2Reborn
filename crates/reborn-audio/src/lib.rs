@@ -36,6 +36,9 @@ pub struct SinkSpec {
     pub transport_generation: u64,
     pub fallback: bool,
     pub fallback_reason: String,
+    /// Wired: the internal speaker instead of the headphone jack (#28). The
+    /// kernel routes the DAC to the amplifier while its Speaker pin is on.
+    pub speaker: bool,
 }
 impl SinkSpec {
     pub fn validate_bluetooth_observation(&self, pcm: &BluetoothPcm) -> Result<(), String> {
@@ -107,6 +110,7 @@ mod bluetooth_contract_tests {
             transport_generation: pcm.transport_generation,
             fallback: false,
             fallback_reason: String::new(),
+            speaker: false,
         }
     }
 

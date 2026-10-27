@@ -17,6 +17,9 @@ pub(crate) struct VolumeRamp {
     /// Per-channel factor of a stereo stream: the balance lowers the side
     /// away from it, never raises the other (no clipping).
     channels: [f64; 2],
+    /// Both channels carry (L+R)/2: the internal speaker plays one channel
+    /// (the DAC's speaker route takes the left slot only, #28).
+    mono: bool,
 }
 impl VolumeRamp {
     pub(crate) fn new(volume: u8, rate: u32) -> Self {
@@ -29,6 +32,7 @@ impl VolumeRamp {
             ramp_frames: (rate as usize / 200).max(1), // five milliseconds
             fading: false,
             channels: [1.0; 2],
+            mono: false,
         }
     }
     /// Start from silence and reach `volume` over `ms`: the first stream after
@@ -90,46 +94,37 @@ impl VolumeRamp {
             _ => [1.0; 2],
         };
     }
+    /// Mix both channels into one for the internal speaker; the balance
+    /// does not apply to it.
+    pub(crate) fn mono(&mut self, on: bool) {
+        self.mono = on;
+    }
     /// Render speculatively; the sink may accept only part (or none) of it.
     /// Call advance only for frames actually accepted by the sink.
     pub(crate) fn render(&self, data: &[u8], format: PcmFormat) -> Vec<u8> {
         // Frames are always stereo (PcmFormat::bytes_per_frame).
-        let balanced = self.channels == [1.0; 2];
-        if self.remaining == 0 && self.gain == 1.0 && balanced {
+        let balanced = self.mono || self.channels == [1.0; 2];
+        if self.remaining == 0 && self.gain == 1.0 && balanced && !self.mono {
             return data.to_vec();
         }
+        let width = format.bytes_per_sample();
         let mut result = Vec::with_capacity(data.len());
         for (index, frame) in data.chunks_exact(format.bytes_per_frame()).enumerate() {
             let frame_gain = self.at(index + 1);
-            for (channel, sample) in frame.chunks_exact(format.bytes_per_sample()).enumerate() {
+            let mut values = [
+                decode(&frame[..width], format),
+                decode(&frame[width..], format),
+            ];
+            if self.mono {
+                values = [(values[0] + values[1]) / 2.0; 2];
+            }
+            for (channel, value) in values.into_iter().enumerate() {
                 let gain = if balanced {
                     frame_gain
                 } else {
                     frame_gain * self.channels[channel]
                 };
-                match format {
-                    PcmFormat::S16LE => {
-                        let value = i16::from_le_bytes(sample.try_into().unwrap());
-                        let value = (f64::from(value) * gain)
-                            .round()
-                            .clamp(f64::from(i16::MIN), f64::from(i16::MAX))
-                            as i16;
-                        result.extend_from_slice(&value.to_le_bytes());
-                    }
-                    PcmFormat::S24LE | PcmFormat::S32LE => {
-                        let value = i32::from_le_bytes(sample.try_into().unwrap());
-                        let (value, min, max) = if format == PcmFormat::S24LE {
-                            ((value << 8) >> 8, -8_388_608, 8_388_607)
-                        } else {
-                            (value, i32::MIN, i32::MAX)
-                        };
-                        let value = (f64::from(value) * gain)
-                            .round()
-                            .clamp(f64::from(min), f64::from(max))
-                            as i32;
-                        result.extend_from_slice(&value.to_le_bytes());
-                    }
-                }
+                encode(value * gain, format, &mut result);
             }
         }
         result
@@ -148,6 +143,35 @@ impl VolumeRamp {
     }
 }
 
+/// One little-endian sample of `format` as a number (S24 in 32 bits, sign
+/// extended from its low three bytes).
+fn decode(sample: &[u8], format: PcmFormat) -> f64 {
+    match format {
+        PcmFormat::S16LE => f64::from(i16::from_le_bytes(sample.try_into().unwrap())),
+        PcmFormat::S24LE => f64::from((i32::from_le_bytes(sample.try_into().unwrap()) << 8) >> 8),
+        PcmFormat::S32LE => f64::from(i32::from_le_bytes(sample.try_into().unwrap())),
+    }
+}
+/// Round, clamp to the format's range and append.
+fn encode(value: f64, format: PcmFormat, out: &mut Vec<u8>) {
+    match format {
+        PcmFormat::S16LE => {
+            let value = value
+                .round()
+                .clamp(f64::from(i16::MIN), f64::from(i16::MAX)) as i16;
+            out.extend_from_slice(&value.to_le_bytes());
+        }
+        PcmFormat::S24LE | PcmFormat::S32LE => {
+            let (min, max) = if format == PcmFormat::S24LE {
+                (-8_388_608, 8_388_607)
+            } else {
+                (i32::MIN, i32::MAX)
+            };
+            let value = value.round().clamp(f64::from(min), f64::from(max)) as i32;
+            out.extend_from_slice(&value.to_le_bytes());
+        }
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -237,6 +261,34 @@ mod tests {
             assert!((step - 3.0).abs() < 1e-9, "{v}: {step}");
         }
         assert!((20.0 * VolumeRamp::gain(1).log10() + 81.0).abs() < 1e-9);
+    }
+    #[test]
+    fn mono_carries_both_channels_on_each_and_ignores_the_balance() {
+        let mut ramp = VolumeRamp::new(100, 1000);
+        ramp.mono(true);
+        ramp.balance(6);
+        let frame = [10_000i16, -2_000]
+            .iter()
+            .flat_map(|v| v.to_le_bytes())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            values(&ramp.render(&frame, PcmFormat::S16LE)),
+            [4_000, 4_000]
+        );
+        // Full-scale opposite channels cancel, equal ones stay (no clipping).
+        let loud = [i16::MAX, i16::MAX]
+            .iter()
+            .flat_map(|v| v.to_le_bytes())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            values(&ramp.render(&loud, PcmFormat::S16LE)),
+            [i16::MAX, i16::MAX]
+        );
+        ramp.mono(false);
+        assert_eq!(
+            values(&ramp.render(&frame, PcmFormat::S16LE)),
+            [5012, -2_000]
+        );
     }
     #[test]
     fn balance_lowers_only_the_other_side() {

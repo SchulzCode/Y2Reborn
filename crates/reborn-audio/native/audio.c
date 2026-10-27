@@ -54,6 +54,8 @@ typedef struct {
   long left, right;
   int sw;
   int restore;
+  /* The output pin the stream switched on: "Headphone" or "Speaker". */
+  const char *pin;
 } RbSink;
 const char *rb_alsa_error(int e) { return snd_strerror(e); }
 
@@ -65,6 +67,9 @@ const char *rb_alsa_error(int e) { return snd_strerror(e); }
  * the level the amplifier really runs at. Until that is known, and on kernels
  * without the control, Master is -24 dB (quiet at any full scale). */
 #define RB_MASTER_CDB_LEGACY -2400
+/* #28 speaker: the stock speaker volume's top step (cs43131_refresh_volume_for_
+ * route, (15 - 15) * 4 + 6 half-dB = -3 dB) at the speaker's full scale. */
+#define RB_MASTER_CDB_SPEAKER -300
 static int wired_level, wired_slow, wired_phase, wired_nos;
 static int wired_masters[3] = {RB_MASTER_CDB_LEGACY, RB_MASTER_CDB_LEGACY,
                                RB_MASTER_CDB_LEGACY};
@@ -381,7 +386,7 @@ void rb_sink_close(RbSink *s) {
   }
   if (s->mixer) {
     if (s->restore) {
-      snd_mixer_elem_t *m = element(s, "Master"), *h = element(s, "Headphone");
+      snd_mixer_elem_t *m = element(s, "Master"), *h = element(s, s->pin);
       if (m) {
         snd_mixer_selem_set_playback_volume(m, SND_MIXER_SCHN_FRONT_LEFT,
                                             s->left);
@@ -397,9 +402,10 @@ void rb_sink_close(RbSink *s) {
     close(s->lease);
   free(s);
 }
+/* wired: 0 Bluetooth, 1 the headphone jack, 2 the internal speaker (#28). */
 int rb_sink_open(const char *name, unsigned rate, unsigned format, int wired,
                  RbSink **out, RbParams *params) {
-  int r;
+  int r, speaker = wired == 2;
   if (!name || !out || !params)
     return -EINVAL;
   *out = NULL;
@@ -412,6 +418,7 @@ int rb_sink_open(const char *name, unsigned rate, unsigned format, int wired,
   if (!s)
     return -ENOMEM;
   s->lease = -1;
+  s->pin = speaker ? "Speaker" : "Headphone";
   if (access("/run/y2", F_OK) == 0) {
     s->lease = open("/run/y2/activity.lock", O_CREAT | O_RDWR | O_CLOEXEC, 0600);
     if (s->lease < 0 || flock(s->lease, LOCK_SH | LOCK_NB)) {
@@ -420,7 +427,7 @@ int rb_sink_open(const char *name, unsigned rate, unsigned format, int wired,
     }
   }
   /* The level must be in place before the stream powers the amplifier. */
-  int levels = 0, master = RB_MASTER_CDB_LEGACY;
+  int levels = 0, master = speaker ? RB_MASTER_CDB_SPEAKER : RB_MASTER_CDB_LEGACY;
   params->hp_level_live = -1;
   if (wired) {
     snd_ctl_t *ctl = NULL;
@@ -480,7 +487,7 @@ int rb_sink_open(const char *name, unsigned rate, unsigned format, int wired,
       goto fail;
     if ((r = snd_mixer_load(s->mixer)) < 0)
       goto fail;
-    snd_mixer_elem_t *m = element(s, "Master"), *h = element(s, "Headphone");
+    snd_mixer_elem_t *m = element(s, "Master"), *h = element(s, s->pin);
     if (!m || !h) {
       r = -ENOENT;
       goto fail;
@@ -501,7 +508,8 @@ int rb_sink_open(const char *name, unsigned rate, unsigned format, int wired,
       goto fail;
     /* The pin completes the path: the amplifier is up now, at this level. */
     snd_ctl_t *ctl = NULL;
-    if (levels && snd_ctl_open(&ctl, "hw:Y2Audio", 0) >= 0) {
+    /* The speaker runs at its own full scale and Master, not a level's. */
+    if (levels && !speaker && snd_ctl_open(&ctl, "hw:Y2Audio", 0) >= 0) {
       int live = ctl_enum(ctl, "HP Output Level Live");
       snd_ctl_close(ctl);
       if (live >= 0 && live <= 2) {

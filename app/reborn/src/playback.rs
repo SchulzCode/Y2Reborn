@@ -1475,6 +1475,7 @@ impl Playback {
                                 rate = spec.rate;
                                 sink_format = spec.format;
                                 gain = opening_gain(volume, rate, false, false, carried).0;
+                                gain.mono(spec.speaker);
                                 started = false;
                                 eof = false;
                                 let wired = reborn_audio::wired_epoch();
@@ -1529,6 +1530,8 @@ impl Playback {
                                             }
                                             _ => ramp,
                                         };
+                                        // #28: the speaker plays one channel.
+                                        gain.mono(spec.speaker);
                                         if let Some((event, message, ms)) = fade {
                                             al.emit(
                                                 Level::Info,
@@ -2463,6 +2466,7 @@ mod tests {
             transport_generation: 0,
             fallback: false,
             fallback_reason: String::new(),
+            speaker: false,
         }
     }
     struct VolumeTestSink {

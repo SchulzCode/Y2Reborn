@@ -1194,6 +1194,13 @@ fn headphone_level_and_dac_filter_pickers_show_and_set_the_choice() {
     let rows = ui.rows(&m, &m.library.tracks);
     let row = |label: &str| rows.iter().find(|r| r.label == label).unwrap().clone();
     assert_eq!(row("Headphone Jack").kind, RowKind::Check(true));
+    // #28: the jack output's speaker, on by default; its name when it plays.
+    assert_eq!(row("Speaker").kind, RowKind::Toggle(true));
+    assert_eq!(pages::output_name(&ui, &m), "Headphone Jack");
+    m.speaker_active = true;
+    assert_eq!(pages::output_name(&ui, &m), "Speaker");
+    m.speaker_active = false;
+    assert_eq!(select_key(&mut ui, &mut m, "speaker"), Effect::SetSpeaker(false));
     assert_eq!(row("Headphone Level").secondary, "Low");
     assert_eq!(row("DAC Filter").secondary, "Fast");
     assert_eq!(

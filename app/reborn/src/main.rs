@@ -227,6 +227,9 @@ struct Runtime {
     sleep_fading: bool,
     /// The sleep timer's minutes left as last drawn (they change on screen).
     sleep_minutes_shown: Option<u64>,
+    /// Headphones in the jack, as the kernel last reported (#28 speaker);
+    /// None until it has read the detector.
+    headphones: Option<bool>,
     playback_hints: reborn_platform::workload::Hints,
     interaction_hints: reborn_platform::workload::Hints,
     model: AppModel,
@@ -1808,6 +1811,9 @@ impl Runtime {
         };
         let music_root = self.model.settings.music_directory.clone();
         let output = self.model.output.clone();
+        // #28: the jack output plays on the speaker while nothing is in it.
+        let speaker = self.speaker_route();
+        self.model.speaker_active = speaker;
         let bluetooth_pcm = match &output {
             AudioOutput::Bluetooth(address) => Some(self.bt_state.playback_pcm(address)?),
             AudioOutput::Wired => None,
@@ -1860,7 +1866,9 @@ impl Runtime {
         run_sink_reconfiguration(
             playback,
             generation,
-            |kept| keeps_wired_sink(kept, &output).then(|| kept.clone()),
+            |kept| {
+                (keeps_wired_sink(kept, &output) && kept.speaker == speaker).then(|| kept.clone())
+            },
             || {
                 match bluetooth_pcm.as_ref() {
                     Some(pcm) => reborn_audio::AlsaSink::plan_bluetooth(
@@ -1871,7 +1879,10 @@ impl Runtime {
                     ),
                     None => reborn_audio::AlsaSink::plan(&plan_output, log.clone(), correlation),
                 }
-                .map(|(spec, _planned)| spec)
+                .map(|(mut spec, _planned)| {
+                    spec.speaker = speaker;
+                    spec
+                })
             },
             move |playback, spec| {
                 let (
@@ -1994,9 +2005,12 @@ impl Runtime {
     }
     /// Continue a pause held in place: no decoder, file or device restart.
     fn resume_in_place(&mut self) -> bool {
+        // A held stream on the other route (headphones went in or out while
+        // paused; the kernel turned a held speaker off) opens anew instead.
         if self.model.playback != PlaybackState::Paused
             || !self.playback.is_held()
             || self.pending_reconfiguration.is_some()
+            || self.model.speaker_active != self.speaker_route()
         {
             return false;
         }
@@ -2144,6 +2158,49 @@ impl Runtime {
                 }
             }
         }
+    }
+    /// The jack output plays on the internal speaker: wired, Speaker on and
+    /// the kernel has seen the jack empty (unknown counts as headphones; the
+    /// kernel also refuses the speaker while it reads a plug).
+    fn speaker_route(&self) -> bool {
+        matches!(self.model.output, AudioOutput::Wired)
+            && self.model.settings.speaker
+            && self.headphones == Some(false)
+    }
+    /// The jack changed (#28). As stock: headphones in move a playing
+    /// speaker to them; headphones out pause what played in them.
+    fn jack_changed(&mut self, plugged: bool) -> Result<(), String> {
+        let before = self.headphones.replace(plugged);
+        if before == Some(plugged) {
+            return Ok(());
+        }
+        let active = matches!(
+            self.model.playback,
+            PlaybackState::Playing | PlaybackState::Buffering
+        );
+        let wired = matches!(self.model.output, AudioOutput::Wired);
+        self.log.emit(
+            Level::Info,
+            "audio",
+            "jack",
+            if plugged {
+                "Headphones plugged in"
+            } else {
+                "Headphones unplugged"
+            },
+            None,
+            json!({"plugged":plugged,"playing":active,"speaker_active":self.model.speaker_active}),
+        );
+        if wired && active && plugged && self.model.speaker_active {
+            self.load()?;
+        } else if wired && active && !plugged && before == Some(true) && !self.model.speaker_active
+        {
+            self.pause();
+        } else if !active && self.model.playback != PlaybackState::Paused {
+            self.model.speaker_active = self.speaker_route();
+        }
+        self.dirty.mark_both();
+        Ok(())
     }
     fn switch(&mut self, out: AudioOutput) -> Result<(), String> {
         if let AudioOutput::Bluetooth(address) = &out {
@@ -2996,6 +3053,21 @@ impl Runtime {
             Effect::SetHaptics(strength) => {
                 self.model.settings.haptics = strength;
                 self.checkpoint();
+            }
+            Effect::SetSpeaker(on) => {
+                self.model.settings.speaker = on;
+                self.checkpoint();
+                // Playing on the jack output: follow the new route at once.
+                if matches!(
+                    self.model.playback,
+                    PlaybackState::Playing | PlaybackState::Buffering
+                ) && self.model.speaker_active != self.speaker_route()
+                {
+                    self.load()?;
+                } else if self.model.playback == PlaybackState::Stopped {
+                    self.model.speaker_active = self.speaker_route();
+                }
+                self.dirty.mark_both();
             }
             Effect::SetShuffle(mode) => {
                 let was = self.model.settings.shuffle_mode();
@@ -4513,6 +4585,7 @@ fn run() -> Result<(), String> {
         paused_at: None,
         sleep_fading: false,
         sleep_minutes_shown: None,
+        headphones: None,
         playback_hints: reborn_platform::workload::Hints::default(),
         interaction_hints: reborn_platform::workload::Hints::default(),
         model,
@@ -4688,6 +4761,16 @@ fn run() -> Result<(), String> {
         })
         .map_err(|e| e.to_string())?;
     let mut inputs = inputs;
+    // #28: the headphone jack, when the kernel reports it.
+    let mut jack = if headless {
+        None
+    } else {
+        reborn_platform::jack::Jack::open().ok()
+    };
+    if let Some(j) = &jack {
+        rt.headphones = j.current();
+        rt.model.speaker_active = rt.speaker_route();
+    }
     // #28: the vibration motor, when the kernel has one (Linux with VIBR).
     let mut motor = if headless {
         None
@@ -5104,6 +5187,11 @@ fn run() -> Result<(), String> {
                 input.resumed();
             }
             action_router.reset();
+        }
+        if let Some(plugged) = jack.as_mut().and_then(reborn_platform::jack::Jack::poll) {
+            if let Err(e) = rt.jack_changed(plugged) {
+                rt.fail("audio", e);
+            }
         }
         if let Some(input) = &mut inputs {
             if input_screen_off != rt.model.screen_off {
@@ -6935,6 +7023,7 @@ mod runtime_reconfiguration_tests {
             transport_generation: 0,
             fallback: false,
             fallback_reason: String::new(),
+            speaker: false,
         }
     }
 

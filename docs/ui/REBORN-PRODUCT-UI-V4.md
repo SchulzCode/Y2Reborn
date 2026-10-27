@@ -434,6 +434,14 @@ Haptics (#28): Customize > **Haptics** Off (default) / Light / Strong (`Settings
 key press (framework `config_virtualKeyVibePattern`); wheel steps do not tick (30 ms per-step ticks
 felt buzzy on the owner's player). Light is 2.0 V, Strong the stock 2.8 V.
 
+Internal speaker (#28 speaker): Settings > Sound > Output > **Speaker** (on by default, as stock's
+"Speaker"). The Headphone Jack output plays on the speaker while the kernel reads the jack empty
+(`reborn_platform::jack`, "Y2Audio Headphone" SW events; unknown counts as headphones). The output's
+name then reads "Speaker". The DAC's speaker route plays one channel, so the gain stage mixes (L+R)/2
+(`VolumeRamp::mono`); the sink switches the card's Speaker pin with Master −3 dB (stock's top speaker
+step). Headphones in while the speaker plays: the kernel turns the speaker off at once and playback
+reopens on the headphones; headphones out while they play: pause, as stock. Not yet heard on a player.
+
 ## Sleep timer lengths (Beta 8.37, Y2Reborn #29)
 
 Now Playing's *Sleep Timer* row opens a picker instead of stepping on each press: Off, End of Song (End of

@@ -1133,9 +1133,13 @@ pub struct Settings {
     /// What the wheel and its buttons do while the screen is off (Beta 8.18).
     #[serde(default)]
     pub screen_off_buttons: ScreenOffButtons,
-    /// A tick of the vibration motor on each wheel step and button (#28).
+    /// A tick of the vibration motor on each button press (#28).
     #[serde(default)]
     pub haptics: Haptics,
+    /// Play on the internal speaker while no headphones are plugged in, as
+    /// stock's "Speaker" setting (#28 speaker).
+    #[serde(default = "default_true")]
+    pub speaker: bool,
     /// Audiobooks stand on Home once the library holds one (Beta 8.19).
     #[serde(default = "default_true")]
     pub audiobooks_on_home: bool,
@@ -1469,6 +1473,7 @@ impl Default for Settings {
             wrap_around: WrapAround::Menus,
             screen_off_buttons: ScreenOffButtons::Buttons,
             haptics: Haptics::Off,
+            speaker: true,
             audiobooks_on_home: true,
             playlist_sort: Default::default(),
             codec_revision: CODEC_REVISION,
@@ -1631,6 +1636,10 @@ pub struct AppModel {
     pub history: Vec<queue::HistoryEntry>,
     pub position_ms: u64,
     pub output: AudioOutput,
+    /// The headphone jack output plays on the internal speaker now: no
+    /// headphones are in and the speaker is on (#28). Set by the runtime.
+    #[serde(skip)]
+    pub speaker_active: bool,
     #[serde(skip)]
     pub screen: Screen,
     pub settings: Settings,
@@ -1791,6 +1800,7 @@ pub enum Effect {
     SetWrapAround(WrapAround),
     SetScreenOffButtons(ScreenOffButtons),
     SetHaptics(Haptics),
+    SetSpeaker(bool),
     /// Play the audiobook with this key.
     PlayBook(String, BookStart),
     /// Mark the book finished (it starts over) or not.

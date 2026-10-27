@@ -394,6 +394,7 @@ impl AlsaSink {
             transport_generation: observed.map_or(0, |pcm| pcm.transport_generation),
             fallback: raw.fallback != 0,
             fallback_reason: text(&raw.fallback_reason),
+            speaker: false,
         };
         let params = parameters(&raw, Some(&spec))?;
         if let Some(observed) = observed {
@@ -463,13 +464,19 @@ impl AlsaSink {
         let name = CString::new(device).map_err(|_| "NUL in PCM device")?;
         let mut raw = std::ptr::null_mut();
         let mut p: RawParams = unsafe { std::mem::zeroed() };
+        // 0 Bluetooth, 1 the headphone jack, 2 the internal speaker (#28).
+        let route = if wired && planned.is_some_and(|spec| spec.speaker) {
+            2
+        } else {
+            i32::from(wired)
+        };
         // SAFETY: synchronous C constructor receives live input and output storage.
         let r = unsafe {
             rb_sink_open(
                 name.as_ptr(),
                 rate,
                 native_format(pcm_format),
-                i32::from(wired),
+                route,
                 &mut raw,
                 &mut p,
             )

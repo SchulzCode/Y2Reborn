@@ -261,6 +261,7 @@ pub fn page(ui: &Ui, m: &AppModel, tracks: &[Track]) -> Page {
 
 pub fn output_name(ui: &Ui, m: &AppModel) -> String {
     match &m.output {
+        reborn_core::AudioOutput::Wired if m.speaker_active => "Speaker".into(),
         reborn_core::AudioOutput::Wired => "Headphone Jack".into(),
         reborn_core::AudioOutput::Bluetooth(address) => ui
             .bluetooth
@@ -454,6 +455,8 @@ pub(crate) fn jack_summary(m: &AppModel) -> String {
 fn output(ui: &Ui, m: &AppModel) -> Page {
     let mut rows = vec![row("Headphone Jack", "output_set:wired", "")
         .with_kind(RowKind::Check(m.output == reborn_core::AudioOutput::Wired))];
+    // #28: the jack output plays on the speaker while nothing is plugged in.
+    rows.push(row("Speaker", "speaker", "").with_kind(RowKind::Toggle(m.settings.speaker)));
     rows.extend(ui.bluetooth.devices.iter().filter(|d| d.usable_audio()).map(|d| {
         let current = matches!(&m.output, reborn_core::AudioOutput::Bluetooth(a) if a.eq_ignore_ascii_case(&d.address));
         row(&d.name, &format!("output_set:{}", d.path), "Bluetooth")

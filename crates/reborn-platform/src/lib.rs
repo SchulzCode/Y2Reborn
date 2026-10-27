@@ -7,6 +7,7 @@ pub mod contract;
 pub mod geo;
 pub mod haptics;
 pub mod input;
+pub mod jack;
 pub mod kernel_events;
 pub mod lastfm;
 mod native;
