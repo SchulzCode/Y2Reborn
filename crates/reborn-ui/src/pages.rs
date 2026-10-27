@@ -221,6 +221,7 @@ pub fn page(ui: &Ui, m: &AppModel, tracks: &[Track]) -> Page {
                 "screen_off_buttons",
                 m.settings.screen_off_buttons.label(),
             ),
+            row("Haptics", "haptics", m.settings.haptics.label()),
         ]),
         Screen::TimeZone => Page::rows(crate::time_zone::rows(ui, m)),
         Screen::DateTime => {

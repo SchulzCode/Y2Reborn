@@ -2687,6 +2687,7 @@ impl Ui {
             "screen_off_buttons" => {
                 Effect::SetScreenOffButtons(m.settings.screen_off_buttons.next())
             }
+            "haptics" => Effect::SetHaptics(m.settings.haptics.next()),
             "album_view" => Effect::SetAlbumView(m.settings.album_view.next()),
             "artists_list" => Effect::SetArtistsList(m.settings.artists_list.next()),
             "now_playing_wheel" => Effect::SetNowPlayingWheel(m.settings.now_playing_wheel.next()),

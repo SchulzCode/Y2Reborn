@@ -5,6 +5,7 @@ pub mod client;
 pub mod codecs;
 pub mod contract;
 pub mod geo;
+pub mod haptics;
 pub mod input;
 pub mod kernel_events;
 pub mod lastfm;

@@ -1133,6 +1133,9 @@ pub struct Settings {
     /// What the wheel and its buttons do while the screen is off (Beta 8.18).
     #[serde(default)]
     pub screen_off_buttons: ScreenOffButtons,
+    /// A tick of the vibration motor on each wheel step and button (#28).
+    #[serde(default)]
+    pub haptics: Haptics,
     /// Audiobooks stand on Home once the library holds one (Beta 8.19).
     #[serde(default = "default_true")]
     pub audiobooks_on_home: bool,
@@ -1395,6 +1398,33 @@ impl ScreenOffButtons {
         }
     }
 }
+/// The vibration motor's tick on the wheel and buttons (#28). Off until
+/// chosen: an update does not start buzzing on its own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum Haptics {
+    #[default]
+    Off,
+    Light,
+    Strong,
+}
+impl Haptics {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Off => "Off",
+            Self::Light => "Light",
+            Self::Strong => "Strong",
+        }
+    }
+    /// The next choice, as one press on its row steps through them.
+    pub fn next(self) -> Self {
+        match self {
+            Self::Off => Self::Light,
+            Self::Light => Self::Strong,
+            Self::Strong => Self::Off,
+        }
+    }
+}
 fn default_true() -> bool {
     true
 }
@@ -1438,6 +1468,7 @@ impl Default for Settings {
             artists_list: ArtistsList::All,
             wrap_around: WrapAround::Menus,
             screen_off_buttons: ScreenOffButtons::Buttons,
+            haptics: Haptics::Off,
             audiobooks_on_home: true,
             playlist_sort: Default::default(),
             codec_revision: CODEC_REVISION,
@@ -1759,6 +1790,7 @@ pub enum Effect {
     SetArtistsList(ArtistsList),
     SetWrapAround(WrapAround),
     SetScreenOffButtons(ScreenOffButtons),
+    SetHaptics(Haptics),
     /// Play the audiobook with this key.
     PlayBook(String, BookStart),
     /// Mark the book finished (it starts over) or not.

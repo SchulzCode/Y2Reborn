@@ -2993,6 +2993,10 @@ impl Runtime {
                 self.model.settings.screen_off_buttons = mode;
                 self.checkpoint();
             }
+            Effect::SetHaptics(strength) => {
+                self.model.settings.haptics = strength;
+                self.checkpoint();
+            }
             Effect::SetShuffle(mode) => {
                 let was = self.model.settings.shuffle_mode();
                 self.model.settings.set_shuffle_mode(mode);
@@ -4684,6 +4688,23 @@ fn run() -> Result<(), String> {
         })
         .map_err(|e| e.to_string())?;
     let mut inputs = inputs;
+    // #28: the vibration motor, when the kernel has one (Linux with VIBR).
+    let mut motor = if headless {
+        None
+    } else {
+        reborn_platform::haptics::Motor::open()
+            .map_err(|e| {
+                log.emit(
+                    Level::Info,
+                    "input",
+                    "haptics_unavailable",
+                    &e.to_string(),
+                    None,
+                    json!({}),
+                )
+            })
+            .ok()
+    };
     let mut workload_tick = Instant::now();
     let (mut periodic, mut checkpoint, mut render_time) = (
         Instant::now(),
@@ -5117,6 +5138,7 @@ fn run() -> Result<(), String> {
                         .is_some_and(reborn_ui::keyboard::Keyboard::live),
                 );
                 action_router.set_screen_off_buttons(rt.model.settings.screen_off_buttons);
+                let lit = !rt.model.screen_off;
                 let actions = action_router.route(&event, !rt.model.screen_off);
                 for &action in &actions {
                     let action_started = Instant::now();
@@ -5145,6 +5167,24 @@ fn run() -> Result<(), String> {
                     );
                     if performance.enabled() {
                         performance.record("state", json!({"action":action,"screen":rt.model.screen,"focus":rt.model.navigation.focus,"action_ms":action_started.elapsed().as_secs_f64()*1000.,"playback":rt.model.playback,"volume":rt.model.settings.volume}));
+                    }
+                }
+                // #28: one tick for a handled wheel step or button on a lit
+                // screen (not for the press that wakes it). The setting is
+                // read after the action, so choosing a strength ticks at it.
+                if lit && !actions.is_empty() {
+                    if let Some(m) = &mut motor {
+                        if let Err(e) = m.tick(rt.model.settings.haptics, Instant::now()) {
+                            log.emit(
+                                Level::Warn,
+                                "input",
+                                "haptics_failed",
+                                &e.to_string(),
+                                None,
+                                json!({}),
+                            );
+                            motor = None;
+                        }
                     }
                 }
                 if let Some((_, _, _, events)) = &mut monitor {

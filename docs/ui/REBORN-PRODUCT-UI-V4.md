@@ -428,7 +428,10 @@ Customize holds preferences, one order for shared actions, no growth without rem
 * **Artist page** shows the artist it is for (not its first song's whole tag).
 
 Previews `51c-customize`, `09b-album-from-genre`, `17e`–`17h`, `b2-audiobooks` (Cover Flow).
-Haptics (#28) is not part of this: Linux does not drive the vibration motor yet (PMIC VIBR).
+Haptics (#28): Customize > **Haptics** Off (default) / Light / Strong (`Settings::haptics`,
+`reborn_core::Haptics`). `reborn_platform::haptics::Motor` plays one 30 ms rumble on the kernel's
+`regulator-haptic` input (PMIC VIBR) for each wheel step or button that produced an action on a lit
+screen, at most one per 45 ms. Light is 2.0 V, Strong the stock vibrator's 2.8 V. Not yet felt on a player.
 
 ## Sleep timer lengths (Beta 8.37, Y2Reborn #29)
 

@@ -1335,7 +1335,8 @@ fn customize_holds_how_reborn_behaves() {
             "artists_list",
             "now_playing_wheel",
             "wrap_around",
-            "screen_off_buttons"
+            "screen_off_buttons",
+            "haptics"
         ]
     );
     let labels: Vec<String> = ui.rows(&m, &tracks).into_iter().map(|r| r.label).collect();
@@ -1347,9 +1348,22 @@ fn customize_holds_how_reborn_behaves() {
             "Artists",
             "Now Playing Wheel",
             "Wrap Around",
-            "When Screen Off"
+            "When Screen Off",
+            "Haptics"
         ]
     );
+    // #28: Off by default, Select steps Light, Strong, Off.
+    assert_eq!(row(&ui, &m, "haptics").unwrap().secondary, "Off");
+    assert_eq!(
+        select_key(&mut ui, &mut m, "haptics"),
+        Effect::SetHaptics(reborn_core::Haptics::Light)
+    );
+    m.settings.haptics = reborn_core::Haptics::Strong;
+    assert_eq!(
+        select_key(&mut ui, &mut m, "haptics"),
+        Effect::SetHaptics(reborn_core::Haptics::Off)
+    );
+    m.settings.haptics = reborn_core::Haptics::Off;
     assert_eq!(row(&ui, &m, "artists_list").unwrap().secondary, "All");
     assert_eq!(
         select_key(&mut ui, &mut m, "artists_list"),
