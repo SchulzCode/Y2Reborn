@@ -2618,7 +2618,9 @@ impl Runtime {
                     return Ok(());
                 }
                 self.model.apply(Event::LibraryScanStarted);
-                if let Err(error) = self.scanner.scan(self.model.sources.clone()) {
+                // Asked for: every folder is read again (a tag edit made on a
+                // computer may leave the folder and the free space unchanged).
+                if let Err(error) = self.scanner.scan_all(self.model.sources.clone()) {
                     self.model.apply(Event::LibraryScanFailed(error.clone()));
                     return Err(error);
                 }

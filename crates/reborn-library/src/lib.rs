@@ -5,11 +5,11 @@ mod platform_tests;
 use reborn_core::{MediaSource, Source, Track};
 use reborn_media::{Cancel, MediaFile};
 use reborn_observability::{HealthState, Level, Observer};
-use rusqlite::{params, Connection, ErrorCode};
+use rusqlite::{params, Connection, ErrorCode, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     fs,
     os::{fd::AsRawFd, unix::fs::MetadataExt},
     path::{Path, PathBuf},
@@ -60,6 +60,12 @@ pub struct ScanMetrics {
     pub ffmpeg_info_runs: u64,
     #[serde(default)]
     pub ffmpeg_io_bytes: u64,
+    /// The walk trusted the folders of the last complete walk (`Folder`).
+    #[serde(default)]
+    pub quick: bool,
+    /// Folders not read again: their modification time had not changed.
+    #[serde(default)]
+    pub folders_skipped: u64,
 }
 #[derive(Debug, Clone, Default)]
 pub struct Filter {
@@ -84,6 +90,9 @@ enum DbCommand {
     Batch(Vec<Track>, i64, SyncSender<Result<(), String>>),
     Retain(String, i64, Vec<PathBuf>, SyncSender<Result<(), String>>),
     Finish(Source, i64, bool, SyncSender<Result<ScanFinish, String>>),
+    Folders(String, u64, SyncSender<Result<Option<Vec<Folder>>, String>>),
+    SeenFolders(String, i64, Vec<String>, SyncSender<Result<(), String>>),
+    SaveFolders(String, Option<(u64, Vec<Folder>)>),
     Test(SyncSender<Result<serde_json::Value, String>>),
     #[cfg(test)]
     TestSql(String, SyncSender<Result<(), String>>),
@@ -238,6 +247,10 @@ fn open(path: &Path) -> Result<Connection, OpenFailure> {
  COMMIT;")
             .map_err(|error| classify_open_error(error, OpenStage::Migration))?;
     }
+    // Additive (quick scan, Beta 8.42): older Reborn ignores both tables.
+    c.execute_batch("CREATE TABLE IF NOT EXISTS scan_folders(source_id TEXT NOT NULL,path TEXT NOT NULL,parent TEXT NOT NULL,mtime INTEGER NOT NULL,files INTEGER NOT NULL,unreadable INTEGER NOT NULL,playlists TEXT NOT NULL,PRIMARY KEY(source_id,path)) WITHOUT ROWID;
+        CREATE TABLE IF NOT EXISTS scan_volumes(source_id TEXT PRIMARY KEY,free_bytes INTEGER NOT NULL,revision INTEGER NOT NULL);")
+        .map_err(|error| classify_open_error(error, OpenStage::Migration))?;
     c.execute_batch("CREATE TEMP TABLE scan_seen(id INTEGER PRIMARY KEY);
         CREATE TEMP TABLE scan_candidates(position INTEGER PRIMARY KEY,path TEXT NOT NULL,size INTEGER NOT NULL,mtime INTEGER NOT NULL);")
         .map_err(|error| classify_open_error(error, OpenStage::Setup))?;
@@ -414,6 +427,103 @@ fn finish(c: &mut Connection, source: &Source, complete: bool) -> Result<ScanFin
         verified: prune,
         removed,
     })
+}
+/// A folder as the last complete walk of its storage found it. A quick scan
+/// (`Scanner::scan`) does not read a folder again while its modification time
+/// is unchanged: its songs, subfolders and playlists are taken from here.
+#[derive(Clone, Debug, Default, PartialEq)]
+struct Folder {
+    path: String,
+    parent: String,
+    mtime: i64,
+    /// Supported files directly inside, and how many of them were unreadable.
+    files: u64,
+    unreadable: u64,
+    playlists: Vec<String>,
+}
+/// The folders of `source` if its storage still has the free space it had
+/// after the walk that recorded them (and tags are read as then).
+fn folders(c: &Connection, source: &str, free: u64) -> Result<Option<Vec<Folder>>, String> {
+    let volume = c
+        .query_row(
+            "SELECT free_bytes,revision FROM scan_volumes WHERE source_id=?1",
+            [source],
+            |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)),
+        )
+        .optional()
+        .map_err(err)?;
+    if volume != Some((free as i64, METADATA_REVISION)) {
+        return Ok(None);
+    }
+    let mut q = c
+        .prepare_cached("SELECT path,parent,mtime,files,unreadable,playlists FROM scan_folders WHERE source_id=?1")
+        .map_err(err)?;
+    let rows = q
+        .query_map([source], |r| {
+            Ok(Folder {
+                path: r.get(0)?,
+                parent: r.get(1)?,
+                mtime: r.get(2)?,
+                files: r.get::<_, i64>(3)? as u64,
+                unreadable: r.get::<_, i64>(4)? as u64,
+                playlists: serde_json::from_str(&r.get::<_, String>(5)?).unwrap_or_default(),
+            })
+        })
+        .map_err(err)?;
+    let found = rows.collect::<rusqlite::Result<Vec<_>>>().map_err(err)?;
+    Ok((!found.is_empty()).then_some(found))
+}
+/// The rows of the files directly inside skipped folders count as seen.
+fn seen_folders(c: &mut Connection, source: &str, folders: &[String]) -> Result<(), String> {
+    let tx = c.transaction().map_err(err)?;
+    {
+        // A range on UNIQUE(source_id,path): '/' sorts just before '0'.
+        let mut q = tx
+            .prepare_cached("INSERT OR IGNORE INTO scan_seen SELECT id FROM tracks WHERE source_id=?1 AND path>?2 AND path<?3 AND instr(substr(path,length(?2)+1),'/')=0")
+            .map_err(err)?;
+        for folder in folders {
+            q.execute(params![source, format!("{folder}/"), format!("{folder}0")])
+                .map_err(err)?;
+        }
+    }
+    tx.commit().map_err(err)
+}
+/// Replace the folders of `source` after a complete walk, or forget them.
+fn save_folders(
+    c: &mut Connection,
+    source: &str,
+    walked: Option<(u64, Vec<Folder>)>,
+) -> Result<(), String> {
+    let tx = c.transaction().map_err(err)?;
+    tx.execute("DELETE FROM scan_folders WHERE source_id=?1", [source])
+        .map_err(err)?;
+    tx.execute("DELETE FROM scan_volumes WHERE source_id=?1", [source])
+        .map_err(err)?;
+    if let Some((free, folders)) = walked {
+        {
+            let mut q = tx
+                .prepare_cached("INSERT INTO scan_folders VALUES(?1,?2,?3,?4,?5,?6,?7)")
+                .map_err(err)?;
+            for f in &folders {
+                q.execute(params![
+                    source,
+                    f.path,
+                    f.parent,
+                    f.mtime,
+                    f.files as i64,
+                    f.unreadable as i64,
+                    serde_json::to_string(&f.playlists).map_err(|e| e.to_string())?
+                ])
+                .map_err(err)?;
+            }
+        }
+        tx.execute(
+            "INSERT INTO scan_volumes VALUES(?1,?2,?3)",
+            params![source, free as i64, METADATA_REVISION],
+        )
+        .map_err(err)?;
+    }
+    tx.commit().map_err(err)
 }
 fn update_sources(c: &mut Connection, sources: &[Source]) -> Result<(), String> {
     let tx = c.transaction().map_err(err)?;
@@ -898,6 +1008,23 @@ impl Database {
                             }
                             r.map(|_| ())
                         }
+                        DbCommand::Folders(source, free, reply) => {
+                            let r = folders(&c, &source, free);
+                            let _ = reply.try_send(r.clone());
+                            r.map(|_| ())
+                        }
+                        DbCommand::SeenFolders(source, token, paths, reply) => {
+                            let r = if active_scan.as_ref() == Some(&(source.clone(), token)) {
+                                seen_folders(&mut c, &source, &paths)
+                            } else {
+                                Err("scan superseded".into())
+                            };
+                            let _ = reply.try_send(r.clone());
+                            r
+                        }
+                        DbCommand::SaveFolders(source, walked) => {
+                            save_folders(&mut c, &source, walked)
+                        }
                         DbCommand::Test(reply) => {
                             let _ = reply.try_send(validate(&c));
                             Ok(())
@@ -988,6 +1115,31 @@ impl Database {
         rx.recv_timeout(Duration::from_secs(15))
             .map_err(|e| e.to_string())?
     }
+    fn folders(&self, source: String, free: u64) -> Result<Option<Vec<Folder>>, String> {
+        let (tx, rx) = sync_channel(1);
+        self.tx
+            .send(DbCommand::Folders(source, free, tx))
+            .map_err(|e| e.to_string())?;
+        rx.recv_timeout(Duration::from_secs(15))
+            .map_err(|e| e.to_string())?
+    }
+    fn seen_folders(&self, source: String, token: i64, paths: Vec<String>) -> Result<(), String> {
+        let (tx, rx) = sync_channel(1);
+        self.tx
+            .send(DbCommand::SeenFolders(source, token, paths, tx))
+            .map_err(|e| e.to_string())?;
+        rx.recv_timeout(Duration::from_secs(15))
+            .map_err(|e| e.to_string())?
+    }
+    fn save_folders(
+        &self,
+        source: String,
+        walked: Option<(u64, Vec<Folder>)>,
+    ) -> Result<(), String> {
+        self.tx
+            .send(DbCommand::SaveFolders(source, walked))
+            .map_err(|e| e.to_string())
+    }
     pub fn stop(&self) {
         let _ = self.tx.try_send(DbCommand::Stop);
     }
@@ -1053,10 +1205,15 @@ pub fn unchanged(old: &Track, size: u64, mtime: i64) -> bool {
     old.size == size && old.mtime == mtime
 }
 fn mount_id_for_path(path: &Path, mountinfo: &str) -> Option<u64> {
+    mount_for_path(path, mountinfo).map(|(id, _)| id)
+}
+/// The mount holding `path`: its id and filesystem type.
+fn mount_for_path(path: &Path, mountinfo: &str) -> Option<(u64, String)> {
     mountinfo
         .lines()
         .filter_map(|line| {
-            let (mount, _) = line.split_once(" - ")?;
+            let (mount, rest) = line.split_once(" - ")?;
+            let filesystem = rest.split_whitespace().next()?.to_owned();
             let fields = mount.split_whitespace().collect::<Vec<_>>();
             let id = fields.first()?.parse::<u64>().ok()?;
             let mount_path = fields
@@ -1066,11 +1223,29 @@ fn mount_id_for_path(path: &Path, mountinfo: &str) -> Option<u64> {
                 .replace("\\012", "\n")
                 .replace("\\134", "\\");
             let mount_path = Path::new(&mount_path);
-            path.starts_with(mount_path)
-                .then_some((mount_path.components().count(), id))
+            path.starts_with(mount_path).then_some((
+                mount_path.components().count(),
+                id,
+                filesystem,
+            ))
         })
-        .max_by_key(|(length, _)| *length)
-        .map(|(_, id)| id)
+        .max_by_key(|(length, _, _)| *length)
+        .map(|(_, id, filesystem)| (id, filesystem))
+}
+/// Free bytes of the storage at `root` when a quick scan may trust its folder
+/// times, else None (every folder is read). Linux updates a folder's time when
+/// an entry is added, removed or renamed in it; other systems writing to a
+/// card may not, so the free space must be unchanged as well. exFAT counts it
+/// from the card's own allocation bitmap at mount and ext4 keeps exact
+/// counters, whoever wrote last. FAT32 keeps a free count (FSInfo) that other
+/// systems often leave stale, so a FAT32 card is always walked whole.
+fn quick_fingerprint(root: &Path) -> Option<u64> {
+    let mountinfo = fs::read_to_string("/proc/self/mountinfo").ok()?;
+    let (_, filesystem) = mount_for_path(root, &mountinfo)?;
+    if !matches!(filesystem.as_str(), "exfat" | "ext4") {
+        return None;
+    }
+    reborn_platform::free_bytes(root).ok()
 }
 fn sd_id_matches_uuid(id: &str, uuid: &str) -> bool {
     let base = format!("uuid:{uuid}");
@@ -1098,8 +1273,21 @@ fn source_identity_is_current(source: &Source) -> bool {
     fs::read_to_string("/proc/self/mountinfo")
         .is_ok_and(|mountinfo| source_identity_matches_at(source, &mountinfo))
 }
+/// How a scan treats what is already indexed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ScanMode {
+    /// Every file is read again (Rebuild Library).
+    Rebuild,
+    /// Every folder is read; unchanged files keep their rows (Scan for Music).
+    Walk,
+    /// Like Walk, but a folder whose modification time is unchanged since the
+    /// last complete walk is not read again while the storage's free space is
+    /// exactly as then (`quick_fingerprint`). Edits on a computer that keep
+    /// a file within its clusters (most tag edits) show after Scan for Music.
+    Quick,
+}
 pub struct Scanner {
-    tx: SyncSender<(Vec<Source>, bool)>,
+    tx: SyncSender<(Vec<Source>, ScanMode)>,
     pub results: Receiver<Result<ScanMetrics, String>>,
     cancel: Arc<AtomicBool>,
     prepared: Arc<AtomicBool>,
@@ -1107,7 +1295,7 @@ pub struct Scanner {
 }
 impl Scanner {
     pub fn spawn(db: Database, log: Observer) -> Result<Self, String> {
-        let (tx, rx) = sync_channel::<(Vec<Source>, bool)>(1);
+        let (tx, rx) = sync_channel::<(Vec<Source>, ScanMode)>(1);
         let (rt, rr) = sync_channel(2);
         let cancel = Arc::new(AtomicBool::new(false));
         let stop = cancel.clone();
@@ -1120,18 +1308,19 @@ impl Scanner {
                 let mut unreadable = Unreadable::default();
                 while !stop.load(Ordering::Relaxed) {
                     log.heartbeat("scanner", 30);
-                    let (sources, reuse) = match rx.recv_timeout(Duration::from_secs(1)) {
+                    let (sources, mode) = match rx.recv_timeout(Duration::from_secs(1)) {
                         Ok(request) => request,
                         Err(RecvTimeoutError::Timeout) => continue,
                         Err(_) => break,
                     };
-                    let result = scan_sources_with_identity_and_reuse(
+                    let result = scan_sources(
                         &db,
                         &sources,
                         &log,
                         &stop,
                         source_identity_is_current,
-                        reuse,
+                        mode,
+                        quick_fingerprint,
                         &mut unreadable,
                     );
                     let _ = rt.try_send(result);
@@ -1147,15 +1336,20 @@ impl Scanner {
             pending,
         })
     }
-    /// Incremental scan: unchanged files keep their indexed metadata.
+    /// Automatic incremental scan (start, storage change, after a USB copy):
+    /// unchanged folders and files keep their indexed metadata (`ScanMode::Quick`).
     pub fn scan(&self, s: Vec<Source>) -> Result<(), String> {
-        self.submit(s, true)
+        self.submit(s, ScanMode::Quick)
+    }
+    /// Scan for Music: every folder is read; unchanged files keep their metadata.
+    pub fn scan_all(&self, s: Vec<Source>) -> Result<(), String> {
+        self.submit(s, ScanMode::Walk)
     }
     /// Rebuild every supported file, preserving rows until replacement publication.
     pub fn rebuild(&self, s: Vec<Source>) -> Result<(), String> {
-        self.submit(s, false)
+        self.submit(s, ScanMode::Rebuild)
     }
-    fn submit(&self, sources: Vec<Source>, reuse: bool) -> Result<(), String> {
+    fn submit(&self, sources: Vec<Source>, mode: ScanMode) -> Result<(), String> {
         if self.prepared.load(Ordering::Acquire) {
             return Err("sleep_operation_in_progress".into());
         }
@@ -1164,7 +1358,7 @@ impl Scanner {
             self.pending.fetch_sub(1, Ordering::AcqRel);
             return Err("sleep_operation_in_progress".into());
         }
-        if self.tx.try_send((sources, reuse)).is_err() {
+        if self.tx.try_send((sources, mode)).is_err() {
             self.pending.fetch_sub(1, Ordering::AcqRel);
             return Err("scanner busy".into());
         }
@@ -1327,6 +1521,8 @@ struct ScanBatch<'a> {
     id: u64,
     stop: &'a AtomicBool,
     unreadable: &'a mut Unreadable,
+    /// Unreadable files per folder, for the folder records (`Folder`).
+    unreadable_in: &'a mut HashMap<PathBuf, u64>,
     /// Threads reading tags (`scan_workers`).
     workers: usize,
 }
@@ -1359,6 +1555,7 @@ impl ScanBatch<'_> {
             );
             if self.reuse && self.unreadable.contains(&key) {
                 self.stats.unreadable += 1;
+                self.count_unreadable(&file.path);
                 retained.push(file.path);
                 continue;
             }
@@ -1388,6 +1585,7 @@ impl ScanBatch<'_> {
                 Decoded::Changed => {}
                 Decoded::Unreadable => {
                     self.stats.unreadable += 1;
+                    self.count_unreadable(&file.path);
                     self.unreadable.insert(key);
                     retained.push(file.path);
                 }
@@ -1428,6 +1626,11 @@ impl ScanBatch<'_> {
             self.stats.db_us += started.elapsed().as_micros() as u64;
         }
         Ok(())
+    }
+    fn count_unreadable(&mut self, path: &Path) {
+        if let Some(folder) = path.parent() {
+            *self.unreadable_in.entry(folder.to_path_buf()).or_default() += 1;
+        }
     }
     /// Account for one file's `read_tags` result and turn it into a track.
     fn apply(&mut self, file: &FileStamp, read: TagRead) -> Result<Decoded, String> {
@@ -1525,6 +1728,7 @@ fn scan_sources_with_identity(
         &mut Unreadable::default(),
     )
 }
+#[cfg(test)]
 fn scan_sources_with_identity_and_reuse(
     db: &Database,
     sources: &[Source],
@@ -1534,6 +1738,123 @@ fn scan_sources_with_identity_and_reuse(
     reuse: bool,
     unreadable: &mut Unreadable,
 ) -> Result<ScanMetrics, String> {
+    let mode = if reuse {
+        ScanMode::Walk
+    } else {
+        ScanMode::Rebuild
+    };
+    scan_sources(
+        db,
+        sources,
+        log,
+        stop,
+        identity_is_current,
+        mode,
+        |_| None,
+        unreadable,
+    )
+}
+/// A directory being walked: its entries, or (unchanged since the last
+/// complete walk) its recorded subfolders.
+enum Listing {
+    Read(fs::ReadDir),
+    Known(std::vec::IntoIter<String>),
+}
+struct Frame {
+    listing: Listing,
+    depth: usize,
+    /// Its record in `FolderWalk::walked`.
+    folder: usize,
+}
+/// The folder records of one storage: those the last complete walk left
+/// (quick scan only) and those of this walk.
+#[derive(Default)]
+struct FolderWalk {
+    known: HashMap<String, Folder>,
+    children: HashMap<String, Vec<String>>,
+    walked: Vec<Folder>,
+    /// Skipped folders whose rows are not yet marked seen.
+    skipped: Vec<String>,
+}
+impl FolderWalk {
+    fn new(known: Vec<Folder>) -> Self {
+        let mut walk = Self::default();
+        for folder in known {
+            walk.children
+                .entry(folder.parent.clone())
+                .or_default()
+                .push(folder.path.clone());
+            walk.known.insert(folder.path.clone(), folder);
+        }
+        walk
+    }
+    /// Start the folder `logical` (at `physical`): its time first, then its
+    /// record when the time is unchanged, else its entries. None: unreadable.
+    fn enter(
+        &mut self,
+        physical: &Path,
+        logical: &Path,
+        parent: &str,
+        depth: usize,
+        stats: &mut ScanMetrics,
+        playlists: &mut Vec<PathBuf>,
+    ) -> Option<Frame> {
+        let mtime = file_mtime(&fs::metadata(physical).ok()?)?;
+        let path = logical.to_string_lossy().into_owned();
+        let folder = self.walked.len();
+        if let Some(known) = self.known.get(&path).filter(|known| known.mtime == mtime) {
+            stats.discovered += known.files;
+            stats.reused += known.files.saturating_sub(known.unreadable);
+            stats.unreadable += known.unreadable;
+            stats.folders_skipped += 1;
+            for playlist in &known.playlists {
+                if playlists.len() < reborn_platform::playlists::MAX_PLAYLISTS {
+                    playlists.push(PathBuf::from(playlist));
+                }
+            }
+            let children = self.children.get(&path).cloned().unwrap_or_default();
+            self.walked.push(Folder {
+                parent: parent.to_owned(),
+                ..known.clone()
+            });
+            self.skipped.push(path);
+            return Some(Frame {
+                listing: Listing::Known(children.into_iter()),
+                depth,
+                folder,
+            });
+        }
+        let entries = fs::read_dir(physical).ok()?;
+        self.walked.push(Folder {
+            path,
+            parent: parent.to_owned(),
+            mtime,
+            ..Default::default()
+        });
+        Some(Frame {
+            listing: Listing::Read(entries),
+            depth,
+            folder,
+        })
+    }
+}
+enum Entry {
+    /// A recorded subfolder of an unchanged folder (logical path).
+    Known(String),
+    Read(fs::DirEntry),
+}
+#[allow(clippy::too_many_arguments)]
+fn scan_sources(
+    db: &Database,
+    sources: &[Source],
+    log: &Observer,
+    stop: &AtomicBool,
+    identity_is_current: impl Fn(&Source) -> bool,
+    mode: ScanMode,
+    fingerprint: impl Fn(&Path) -> Option<u64>,
+    unreadable: &mut Unreadable,
+) -> Result<ScanMetrics, String> {
+    let reuse = mode != ScanMode::Rebuild;
     let mut workload = reborn_platform::workload::CpuWorkloadLease::acquire_workload_hint(
         reborn_platform::workload::Class::LibraryScan,
     );
@@ -1554,7 +1875,7 @@ fn scan_sources_with_identity_and_reuse(
             "Full library rebuild"
         },
         Some(id),
-        json!({"sources":sources.len(),"reuse":reuse}),
+        json!({"sources":sources.len(),"reuse":reuse,"mode":format!("{mode:?}")}),
     );
     for source in sources.iter().filter(|s| s.online) {
         if !identity_is_current(source) {
@@ -1578,134 +1899,197 @@ fn scan_sources_with_identity_and_reuse(
             stats.failures += 1;
             continue;
         }
+        // Taken before the walk: a change while it runs makes the next scan a walk.
+        let free = fingerprint(&source.root);
+        let mut walk = match (mode, free) {
+            // Without a usable record the walk reads every folder.
+            (ScanMode::Quick, Some(free)) => FolderWalk::new(
+                db.folders(source.id.clone(), free)
+                    .ok()
+                    .flatten()
+                    .unwrap_or_default(),
+            ),
+            _ => FolderWalk::default(),
+        };
+        stats.quick |= !walk.known.is_empty();
         let seen = db.begin_scan(source.id.clone())?;
-        let mut directories = match fs::read_dir(&pinned_root) {
-            Ok(entries) => vec![(entries, 0usize)],
-            Err(_) => {
+        let mut unreadable_in = HashMap::new();
+        let mut batch_items = Vec::with_capacity(64);
+        let mut complete = true;
+        let mut playlists = vec![];
+        let mut directories = match walk.enter(
+            &pinned_root,
+            &source.root,
+            "",
+            0,
+            &mut stats,
+            &mut playlists,
+        ) {
+            Some(frame) => vec![frame],
+            None => {
                 stats.complete = false;
                 stats.failures += 1;
                 continue;
             }
         };
-        let mut batch_items = Vec::with_capacity(64);
-        let mut complete = true;
-        let mut playlists = vec![];
-        while let Some((entries, depth)) = directories.last_mut() {
+        while let Some(frame) = directories.last_mut() {
             workload.renew();
             log.heartbeat("scanner", 30);
             if stop.load(Ordering::Relaxed) {
                 return Err("scan cancelled".into());
             }
-            let depth = *depth;
-            let Some(entry) = entries.next() else {
+            let depth = frame.depth;
+            let folder = frame.folder;
+            let next = match &mut frame.listing {
+                Listing::Known(children) => children.next().map(Entry::Known),
+                Listing::Read(entries) => match entries.next() {
+                    Some(Ok(entry)) => Some(Entry::Read(entry)),
+                    Some(Err(_)) => {
+                        complete = false;
+                        stats.failures += 1;
+                        continue;
+                    }
+                    None => None,
+                },
+            };
+            let Some(next) = next else {
                 directories.pop();
                 continue;
             };
-            let entry = match entry {
-                Ok(entry) => entry,
-                Err(_) => {
-                    complete = false;
-                    stats.failures += 1;
-                    continue;
-                }
-            };
-            let file_type = match entry.file_type() {
-                Ok(kind) => kind,
-                Err(_) => {
-                    complete = false;
-                    stats.failures += 1;
-                    continue;
-                }
-            };
-            if file_type.is_symlink() {
-                continue;
+            if walk.skipped.len() >= 64 {
+                db.seen_folders(source.id.clone(), seen, std::mem::take(&mut walk.skipped))?;
             }
-            let path = entry.path();
-            if file_type.is_dir() {
-                if system_folder(&entry.file_name()) {
-                    continue;
-                }
-                if !identity_is_current(source) {
-                    complete = false;
-                    stats.failures += 1;
-                    break;
-                }
-                if depth >= 32 {
-                    complete = false;
-                    stats.failures += 1;
-                    continue;
-                }
-                match fs::read_dir(&path) {
-                    Ok(entries) => directories.push((entries, depth + 1)),
-                    Err(_) => {
-                        complete = false;
-                        stats.failures += 1;
-                    }
-                }
-                continue;
-            }
-            if file_type.is_file()
-                && reborn_platform::playlists::is_playlist(&path)
-                && playlists.len() < reborn_platform::playlists::MAX_PLAYLISTS
-            {
-                if let Ok(inside) = path.strip_prefix(&pinned_root) {
-                    let logical = source.root.join(inside);
-                    if reborn_platform::playlists::listed(&source.root, &logical) {
-                        playlists.push(logical);
-                    }
-                }
-                continue;
-            }
-            if !file_type.is_file() || !supported(&path) {
-                continue;
-            }
-            let logical_path = source
-                .root
-                .join(path.strip_prefix(&pinned_root).map_err(|e| e.to_string())?);
-            let meta = match entry.metadata() {
-                Ok(meta) => meta,
-                Err(_) => {
-                    complete = false;
-                    stats.failures += 1;
-                    continue;
-                }
-            };
-            stats.discovered += 1;
             if stats.discovered > 250000 {
                 return Err("scan file limit exceeded".into());
             }
-            let Some(mtime) = file_mtime(&meta) else {
+            let (path, logical_dir) = match next {
+                Entry::Known(child) => {
+                    let logical = PathBuf::from(child);
+                    let Ok(inside) = logical.strip_prefix(&source.root) else {
+                        complete = false;
+                        stats.failures += 1;
+                        continue;
+                    };
+                    (pinned_root.join(inside), Some(logical))
+                }
+                Entry::Read(entry) => {
+                    let file_type = match entry.file_type() {
+                        Ok(kind) => kind,
+                        Err(_) => {
+                            complete = false;
+                            stats.failures += 1;
+                            continue;
+                        }
+                    };
+                    if file_type.is_symlink() {
+                        continue;
+                    }
+                    let path = entry.path();
+                    if file_type.is_dir() {
+                        if system_folder(&entry.file_name()) {
+                            continue;
+                        }
+                        let logical = source
+                            .root
+                            .join(path.strip_prefix(&pinned_root).map_err(|e| e.to_string())?);
+                        (path, Some(logical))
+                    } else {
+                        if file_type.is_file()
+                            && reborn_platform::playlists::is_playlist(&path)
+                            && playlists.len() < reborn_platform::playlists::MAX_PLAYLISTS
+                        {
+                            if let Ok(inside) = path.strip_prefix(&pinned_root) {
+                                let logical = source.root.join(inside);
+                                if reborn_platform::playlists::listed(&source.root, &logical) {
+                                    walk.walked[folder]
+                                        .playlists
+                                        .push(logical.to_string_lossy().into_owned());
+                                    playlists.push(logical);
+                                }
+                            }
+                            continue;
+                        }
+                        if !file_type.is_file() || !supported(&path) {
+                            continue;
+                        }
+                        let logical_path = source
+                            .root
+                            .join(path.strip_prefix(&pinned_root).map_err(|e| e.to_string())?);
+                        let meta = match entry.metadata() {
+                            Ok(meta) => meta,
+                            Err(_) => {
+                                complete = false;
+                                stats.failures += 1;
+                                continue;
+                            }
+                        };
+                        stats.discovered += 1;
+                        walk.walked[folder].files += 1;
+                        let Some(mtime) = file_mtime(&meta) else {
+                            complete = false;
+                            stats.failures += 1;
+                            continue;
+                        };
+                        batch_items.push(FileStamp {
+                            path: logical_path,
+                            size: meta.len(),
+                            mtime,
+                            metadata: Some(meta),
+                        });
+                        if batch_items.len() == 64 {
+                            if !identity_is_current(source) {
+                                complete = false;
+                                stats.failures += 1;
+                                break;
+                            }
+                            ScanBatch {
+                                db,
+                                source,
+                                token: seen,
+                                pinned_root: &pinned_root,
+                                reuse,
+                                stats: &mut stats,
+                                complete: &mut complete,
+                                log,
+                                id,
+                                stop,
+                                unreadable: &mut *unreadable,
+                                unreadable_in: &mut unreadable_in,
+                                workers,
+                            }
+                            .process(std::mem::take(&mut batch_items))?;
+                        }
+                        continue;
+                    }
+                }
+            };
+            let Some(logical) = logical_dir else {
+                continue;
+            };
+            if !identity_is_current(source) {
+                complete = false;
+                stats.failures += 1;
+                break;
+            }
+            if depth >= 32 {
                 complete = false;
                 stats.failures += 1;
                 continue;
-            };
-            batch_items.push(FileStamp {
-                path: logical_path,
-                size: meta.len(),
-                mtime,
-                metadata: Some(meta),
-            });
-            if batch_items.len() == 64 {
-                if !identity_is_current(source) {
+            }
+            let parent = walk.walked[folder].path.clone();
+            match walk.enter(
+                &path,
+                &logical,
+                &parent,
+                depth + 1,
+                &mut stats,
+                &mut playlists,
+            ) {
+                Some(frame) => directories.push(frame),
+                None => {
                     complete = false;
                     stats.failures += 1;
-                    break;
                 }
-                ScanBatch {
-                    db,
-                    source,
-                    token: seen,
-                    pinned_root: &pinned_root,
-                    reuse,
-                    stats: &mut stats,
-                    complete: &mut complete,
-                    log,
-                    id,
-                    stop,
-                    unreadable: &mut *unreadable,
-                    workers,
-                }
-                .process(std::mem::take(&mut batch_items))?;
             }
         }
         if !batch_items.is_empty() {
@@ -1722,6 +2106,7 @@ fn scan_sources_with_identity_and_reuse(
                     id,
                     stop,
                     unreadable: &mut *unreadable,
+                    unreadable_in: &mut unreadable_in,
                     workers,
                 }
                 .process(batch_items)?;
@@ -1729,6 +2114,9 @@ fn scan_sources_with_identity_and_reuse(
                 complete = false;
                 stats.failures += 1;
             }
+        }
+        if !walk.skipped.is_empty() {
+            db.seen_folders(source.id.clone(), seen, std::mem::take(&mut walk.skipped))?;
         }
         if !identity_is_current(source) {
             complete = false;
@@ -1746,6 +2134,17 @@ fn scan_sources_with_identity_and_reuse(
             complete = false;
             stats.failures += 1;
         }
+        // Only a complete walk is a base for the next quick scan.
+        let walked = free.filter(|_| complete).map(|free| {
+            for record in &mut walk.walked {
+                record.unreadable += unreadable_in
+                    .get(Path::new(&record.path))
+                    .copied()
+                    .unwrap_or(0);
+            }
+            (free, std::mem::take(&mut walk.walked))
+        });
+        db.save_folders(source.id.clone(), walked)?;
         if complete {
             stats.playlists.push((source.root.clone(), playlists));
         }
@@ -3224,5 +3623,179 @@ mod parallel_read_tests {
             .collect();
         fs::remove_file(garbage).unwrap();
         assert_eq!(parallel, expected);
+    }
+}
+#[cfg(test)]
+mod quick_scan_tests {
+    use super::*;
+
+    struct Library {
+        media: PathBuf,
+        source: Source,
+        db: Database,
+        log: Observer,
+    }
+    impl Library {
+        fn new(label: &str) -> Self {
+            let root = std::env::temp_dir().join(format!(
+                "reborn-quick-{label}-{}-{}",
+                std::process::id(),
+                reborn_observability::wall_ms()
+            ));
+            // The database lives beside the music: its writes must not touch the scanned folders.
+            let media = root.join("media");
+            let album = media.join("Artist/Album");
+            fs::create_dir_all(&album).unwrap();
+            fs::create_dir_all(media.join("Other")).unwrap();
+            let tone =
+                Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/fixtures/tone.flac");
+            fs::copy(&tone, album.join("1.flac")).unwrap();
+            fs::copy(&tone, album.join("2.flac")).unwrap();
+            fs::copy(&tone, media.join("top.flac")).unwrap();
+            fs::write(media.join("Other/broken.mp3"), b"this is not audio").unwrap();
+            fs::write(media.join("Other/mix.m3u"), b"../top.flac\n").unwrap();
+            let log = Observer::new(&root.join("logs")).unwrap();
+            let db = Database::spawn(root.join("library.db"), log.clone()).unwrap();
+            let source = Source {
+                id: "internal".into(),
+                kind: MediaSource::Internal,
+                root: media.clone(),
+                online: true,
+                mount: "test".into(),
+                mount_id: None,
+            };
+            db.sources(vec![source.clone()]).unwrap();
+            Self {
+                media,
+                source,
+                db,
+                log,
+            }
+        }
+        fn scan(&self, mode: ScanMode, free: Option<u64>) -> ScanMetrics {
+            let stats = scan_sources(
+                &self.db,
+                std::slice::from_ref(&self.source),
+                &self.log,
+                &AtomicBool::new(false),
+                |_| true,
+                mode,
+                |_| free,
+                &mut Unreadable::default(),
+            )
+            .unwrap();
+            assert!(stats.complete, "{stats:?}");
+            stats
+        }
+        fn paths(&self) -> Vec<PathBuf> {
+            let mut paths: Vec<_> = self
+                .db
+                .list(Filter {
+                    limit: 100,
+                    ..Default::default()
+                })
+                .unwrap()
+                .recv_timeout(Duration::from_secs(3))
+                .unwrap()
+                .unwrap()
+                .into_iter()
+                .map(|t| t.path.strip_prefix(&self.media).unwrap().to_path_buf())
+                .collect();
+            paths.sort();
+            paths
+        }
+    }
+
+    #[test]
+    fn unchanged_folders_are_not_read_again_and_count_as_before() {
+        let lib = Library::new("unchanged");
+        let first = lib.scan(ScanMode::Quick, Some(7));
+        // Nothing recorded yet: a whole walk.
+        assert!(!first.quick);
+        assert_eq!(
+            (first.discovered, first.rescanned, first.unreadable),
+            (4, 3, 1)
+        );
+        let again = lib.scan(ScanMode::Quick, Some(7));
+        assert!(again.quick);
+        assert_eq!(again.folders_skipped, 4);
+        assert_eq!(
+            (
+                again.discovered,
+                again.reused,
+                again.unreadable,
+                again.rescanned,
+                again.removed
+            ),
+            (4, 3, 1, 0, 0)
+        );
+        assert_eq!(again.playlists, first.playlists);
+        assert_eq!(again.playlists[0].1, vec![lib.media.join("Other/mix.m3u")]);
+        assert_eq!(lib.paths().len(), 3, "rows of skipped folders are kept");
+        // And the record carries over to the scan after.
+        assert_eq!(lib.scan(ScanMode::Quick, Some(7)).folders_skipped, 4);
+        lib.db.stop();
+    }
+
+    #[test]
+    fn a_folder_with_a_new_time_is_read_and_its_deletions_pruned() {
+        let lib = Library::new("changed");
+        lib.scan(ScanMode::Quick, Some(7));
+        fs::remove_file(lib.media.join("Artist/Album/2.flac")).unwrap();
+        // Same free space (a rename on the player, say): only the album is read.
+        let stats = lib.scan(ScanMode::Quick, Some(7));
+        assert!(stats.quick);
+        assert_eq!(stats.folders_skipped, 3);
+        assert_eq!((stats.removed, stats.discovered), (1, 3));
+        assert_eq!(
+            lib.paths(),
+            vec![
+                PathBuf::from("Artist/Album/1.flac"),
+                PathBuf::from("top.flac")
+            ]
+        );
+        lib.db.stop();
+    }
+
+    #[test]
+    fn other_free_space_or_scan_for_music_reads_every_folder() {
+        let lib = Library::new("free");
+        lib.scan(ScanMode::Quick, Some(7));
+        let tone = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/fixtures/tone.flac");
+        // A computer adds a song without changing the album's time: the free space tells.
+        let album = lib.media.join("Artist/Album");
+        let time = fs::metadata(&album).unwrap().modified().unwrap();
+        fs::copy(&tone, album.join("3.flac")).unwrap();
+        fs::File::open(&album).unwrap().set_modified(time).unwrap();
+        let unchanged_free = lib.scan(ScanMode::Quick, Some(7));
+        assert_eq!(
+            unchanged_free.rescanned, 0,
+            "the trade-off: trusted folder time"
+        );
+        let stats = lib.scan(ScanMode::Quick, Some(8));
+        assert!(!stats.quick);
+        assert_eq!((stats.folders_skipped, stats.rescanned), (0, 1));
+        // Scan for Music never trusts the record, but leaves one for the next scan.
+        let all = lib.scan(ScanMode::Walk, Some(8));
+        assert_eq!(
+            (all.quick, all.folders_skipped, all.discovered),
+            (false, 0, 5)
+        );
+        assert!(lib.scan(ScanMode::Quick, Some(8)).quick);
+        // No fingerprint (a FAT32 card): every folder, and the record is dropped.
+        assert!(!lib.scan(ScanMode::Quick, None).quick);
+        assert!(!lib.scan(ScanMode::Quick, Some(8)).quick);
+        lib.db.stop();
+    }
+
+    #[test]
+    fn mount_type_comes_from_the_longest_matching_mount() {
+        let info = "22 1 179:5 / / ro - ext4 /dev/mmcblk0p5 ro\n\
+                    34 22 179:9 / /media/sd ro,noatime - exfat /dev/mmcblk1p1 ro\n";
+        assert_eq!(
+            mount_for_path(Path::new("/media/sd/Music"), info),
+            Some((34, "exfat".into()))
+        );
+        assert_eq!(mount_id_for_path(Path::new("/data"), info), Some(22));
     }
 }
