@@ -429,9 +429,10 @@ Customize holds preferences, one order for shared actions, no growth without rem
 
 Previews `51c-customize`, `09b-album-from-genre`, `17e`–`17h`, `b2-audiobooks` (Cover Flow).
 Haptics (#28): Customize > **Haptics** Off (default) / Light / Strong (`Settings::haptics`,
-`reborn_core::Haptics`). `reborn_platform::haptics::Motor` plays one 30 ms rumble on the kernel's
-`regulator-haptic` input (PMIC VIBR) for each wheel step or button that produced an action on a lit
-screen, at most one per 45 ms. Light is 2.0 V, Strong the stock vibrator's 2.8 V. Not yet felt on a player.
+`reborn_core::Haptics`). `reborn_platform::haptics::Motor` plays one 60 ms rumble on the kernel's
+`regulator-haptic` input (PMIC VIBR) for each button press on a lit screen, as the stock firmware's
+key press (framework `config_virtualKeyVibePattern`); wheel steps do not tick (30 ms per-step ticks
+felt buzzy on the owner's player). Light is 2.0 V, Strong the stock 2.8 V.
 
 ## Sleep timer lengths (Beta 8.37, Y2Reborn #29)
 

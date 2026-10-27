@@ -5169,10 +5169,11 @@ fn run() -> Result<(), String> {
                         performance.record("state", json!({"action":action,"screen":rt.model.screen,"focus":rt.model.navigation.focus,"action_ms":action_started.elapsed().as_secs_f64()*1000.,"playback":rt.model.playback,"volume":rt.model.settings.volume}));
                     }
                 }
-                // #28: one tick for a handled wheel step or button on a lit
-                // screen (not for the press that wakes it). The setting is
-                // read after the action, so choosing a strength ticks at it.
-                if lit && !actions.is_empty() {
+                // #28: as stock, one tick per button press on a lit screen
+                // (not the press that wakes it), none for wheel steps. The
+                // setting is read after the action, so choosing a strength
+                // ticks at it.
+                if lit && matches!(event.input, reborn_core::NormalizedInput::Press(_)) {
                     if let Some(m) = &mut motor {
                         if let Err(e) = m.tick(rt.model.settings.haptics, Instant::now()) {
                             log.emit(

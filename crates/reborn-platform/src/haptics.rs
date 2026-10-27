@@ -17,12 +17,12 @@ use reborn_core::Haptics;
 const DEVICE_NAME: &str = "regulator-haptic";
 const EV_FF: u16 = 0x15;
 const FF_RUMBLE: u16 = 0x50;
-/// One tick. The stock vibrator raises 10..49 ms requests to 50 ms; an ERM
-/// motor needs some time to spin up before it is felt at all.
-pub const TICK_MS: u16 = 30;
-/// Ticks closer than this are dropped, so a fast spin stays a train of
-/// ticks instead of one long buzz.
-pub const MIN_GAP: Duration = Duration::from_millis(45);
+/// One tick: the stock firmware's key press (framework-res
+/// `config_virtualKeyVibePattern` = 60 ms at the stock 2.8 V). Shorter
+/// wheel-step ticks felt buzzy on the owner's player (2026-10-27).
+pub const TICK_MS: u16 = 60;
+/// A press during a running tick is dropped instead of extending it.
+pub const MIN_GAP: Duration = Duration::from_millis(TICK_MS as u64);
 
 /// `_IOW('E', 0x80, struct ff_effect)`.
 const EVIOCSFF: u64 = (1 << 30)
@@ -154,7 +154,8 @@ mod tests {
         assert!(due(None, t));
         assert!(!due(Some(t), t + Duration::from_millis(20)));
         assert!(due(Some(t), t + MIN_GAP));
-        assert!(TICK_MS < MIN_GAP.as_millis() as u16);
+        assert_eq!(TICK_MS, 60); // stock key press
+        assert!(TICK_MS <= MIN_GAP.as_millis() as u16);
     }
 
     #[test]
