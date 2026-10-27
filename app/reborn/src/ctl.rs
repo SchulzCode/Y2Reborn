@@ -65,7 +65,7 @@ fn command(a: &[String]) -> Result<Command, String> {
         });
     }
     Ok(match first{
- "jack"=>Command::Jack{plugged:match next{Some("in")=>Some(true),Some("out")=>Some(false),None=>None,_=>return Err("jack in|out".into())}},
+ "jack"=>Command::Jack{plugged:match next.filter(|s|!s.starts_with("--")){Some("in")=>Some(true),Some("out")=>Some(false),None=>None,_=>return Err("jack in|out".into())}},
  "theme"=>Command::Theme{id:next.filter(|s|!s.starts_with("--")).map(|s|if s=="reborn"{String::new()}else{s.to_owned()})},
  "status"=>Command::Status,"audio"=>Command::Audio,"health"=>Command::Health,"metrics"=>Command::Metrics,"snapshot"=>Command::Snapshot,"diagnose"=>Command::Diagnose,"scan"=>Command::Scan,
  "logs"=>Command::Logs{last:number(a,"--last",100)? as usize,subsystem:arg(a,"--subsystem").map(str::to_owned),level:arg(a,"--level").map(|s|Level::parse(s).ok_or("invalid log level")).transpose()?,since_ms:arg(a,"--since").map(|s|s.trim_end_matches('s').parse::<u64>().map(|n|n.saturating_mul(1000)).map_err(|_|"invalid --since")).transpose()?},
