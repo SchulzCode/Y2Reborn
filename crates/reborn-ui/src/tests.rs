@@ -1200,7 +1200,10 @@ fn headphone_level_and_dac_filter_pickers_show_and_set_the_choice() {
     m.speaker_active = true;
     assert_eq!(pages::output_name(&ui, &m), "Speaker");
     m.speaker_active = false;
-    assert_eq!(select_key(&mut ui, &mut m, "speaker"), Effect::SetSpeaker(false));
+    assert_eq!(
+        select_key(&mut ui, &mut m, "speaker"),
+        Effect::SetSpeaker(false)
+    );
     assert_eq!(row("Headphone Level").secondary, "Low");
     assert_eq!(row("DAC Filter").secondary, "Fast");
     assert_eq!(
