@@ -1,6 +1,17 @@
 # Current Reborn state on the Y2
 
-## 1.0.0-beta.8.40 — Y2Linux 1.0 Beta 8.40 (Baseline 154), 2026-10-27 (latest): identity only
+## 1.0.0-beta.8.41 — Y2Linux 1.0 Beta 8.41 (Baseline 159), 2026-10-27 (latest): internal speaker, haptics
+
+Published as `baseline-159` (Reborn `1358702`; sequence 10700). The Headphone Jack output plays on the internal
+speaker while the kernel reads the jack empty (Settings > Sound > Output > Speaker, on by default): `reborn_platform::jack`
+(the card's "Y2Audio Headphone" SW events, the DAC on either I2C bus), `SinkSpec.speaker` and native route 2 (Speaker
+pin, Master −3 dB), `VolumeRamp::mono` ((L+R)/2: the DAC's speaker route plays the left slot). Headphones in move a
+playing speaker to them, headphones out pause; jack changes run as model actions (test build 157 hung at "Starting"
+without). Haptics (#28): Customize > Haptics Off/Light/Strong, `reborn_platform::haptics::Motor`, one 60 ms tick per
+button press as stock. `rebornctl jack [in|out]` for device tests. Details:
+[Y2Linux Beta 8.41 report](https://github.com/SchulzCode/Y2Linux/blob/main/docs/validation/Y2-LINUX-1.0-BETA-8.41.md).
+
+## 1.0.0-beta.8.40 — Y2Linux 1.0 Beta 8.40 (Baseline 154), 2026-10-27: identity only
 
 Published as `baseline-154` (Reborn `77c54e2`; sequence 10500). No Reborn change: the release is a kernel fix
 (Power Off on a charger restarts into the charging screen, ledger F46). Details:
