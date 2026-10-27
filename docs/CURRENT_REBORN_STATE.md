@@ -1,5 +1,22 @@
 # Current Reborn state on the Y2
 
+## 1.0.0-beta.8.42 — work in progress, not published (2026-10-27)
+
+On `main`, not pushed. Sleep (Y2Linux F47/F48): Power turns the screen off at once, as stock, and no longer opens
+the Sleep page; a press that wakes the player during the preparation returns where it was; a refused sleep keeps the
+screen dark (`57b47b2`, `9ee61f0`; test build 160 on the owner's player).
+
+Quick scan (`c2ef3af`, report `d32f8f3c`: 62–70 s per restart to list 70 500 files on exFAT). `ScanMode` Rebuild /
+Walk / Quick in `reborn-library`. The automatic scans (`Scanner::scan`: start, storage change, after a USB copy) are
+Quick: a folder whose modification time is unchanged since the last complete walk is not read again while the
+storage's free space equals the free space then (`quick_fingerprint`: exFAT or ext4 from mountinfo, FAT32 always
+walked whole because other systems leave its free count stale). Skipped folders keep their songs, counts, playlists
+and subfolders from the additive tables `scan_folders` / `scan_volumes` (written only after a complete verified walk,
+with `METADATA_REVISION`); their rows count as seen, so deleted files are still pruned. Scan for Music and the
+control `scan` command are `Scanner::scan_all` (every folder). A tag edit made on a computer that changes neither a
+folder's time nor the free space shows after Scan for Music. `scan_completed` gains `quick` and `folders_skipped`.
+Tests `quick_scan_tests`; workspace tests, strict Clippy and fmt pass. Not built since; device timing owed.
+
 ## 1.0.0-beta.8.41 — Y2Linux 1.0 Beta 8.41 (Baseline 159), 2026-10-27 (latest): internal speaker, haptics
 
 Published as `baseline-159` (Reborn `1358702`; sequence 10700). The Headphone Jack output plays on the internal
