@@ -2427,7 +2427,11 @@ fn power_short_sleeps_when_paused_and_blanks_during_playback() {
         ui.model_action(&mut m, Action::PowerShort),
         Effect::Platform(PlatformTask::SleepRequest)
     );
-    assert_eq!(m.screen, Screen::Sleep);
+    assert_eq!(
+        m.screen,
+        Screen::Home,
+        "a wake returns where the person was"
+    );
     for state in [
         reborn_core::PlaybackState::Playing,
         reborn_core::PlaybackState::Buffering,

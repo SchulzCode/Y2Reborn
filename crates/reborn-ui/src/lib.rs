@@ -1873,7 +1873,9 @@ impl Ui {
                 ) {
                     return Effect::ScreenSleep;
                 }
-                Self::go(m, Screen::Sleep, "");
+                // As stock: the screen goes off at once and a wake returns to
+                // where the person was (the Sleep page showed "Preparing to
+                // Sleep…" to a press during the preparation; Y2Linux F48).
                 return Effect::Platform(reborn_core::PlatformTask::SleepRequest);
             }
             Action::PowerHold => {

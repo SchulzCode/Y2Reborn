@@ -3342,7 +3342,6 @@ impl Runtime {
             return;
         };
         let mut refresh = false;
-        let mut blank_screen = false;
         // The one-step update installs right after its download (Beta 7.1).
         let mut install_next = false;
         let mut restart_after_setup = false;
@@ -3352,10 +3351,9 @@ impl Runtime {
                 p.busy = None;
                 match result {
                     Ok(state) => {
-                        // Full sleep is gated (not yet qualified) or refused while
-                        // charging. Power must still save display power; the page keeps saying the player
-                        // stayed awake, so this never implies deep sleep.
-                        blank_screen = state.refused_but_screen_can_blank();
+                        // A refusal leaves the screen as it is: the request
+                        // turned it off already, and lit now means a press
+                        // woke it (F48: it went dark again ≈1 s after a wake).
                         if state.phase == reborn_core::platform::SleepPhase::SleepRefused {
                             self.log.emit(
                                 Level::Info,
@@ -3656,11 +3654,6 @@ impl Runtime {
                     p.busy = None;
                 }
                 p.failure = Some(error);
-            }
-        }
-        if blank_screen && !self.model.screen_off {
-            if let Err(error) = self.effect(Effect::ScreenSleep) {
-                self.ui.flash(error);
             }
         }
         if restart_after_setup {
