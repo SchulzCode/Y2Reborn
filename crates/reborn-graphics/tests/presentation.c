@@ -15,7 +15,7 @@
 
 static struct fb test_fb = {.id = 77, .fd = 1234};
 static int tokens[3], next_token, released, modesets, flips;
-static bool no_event, queue_error, modeset_error;
+static bool no_event, queue_error, modeset_error, not_master;
 static void *completion;
 
 EGLBoolean fake_swap(EGLDisplay display, EGLSurface surface) {
@@ -33,7 +33,8 @@ int fake_master(int fd) { assert(fd == 1234); return 0; }
 int fake_modeset(int fd, uint32_t crtc, uint32_t fb_id, uint32_t x, uint32_t y,
                  uint32_t *connectors, int count, drmModeModeInfoPtr mode) {
   (void)crtc; (void)x; (void)y; (void)connectors; (void)count; (void)mode;
-  assert(fd == 1234); assert(fb_id == 77); modesets++;
+  assert(fd == 1234); assert(fb_id == 77 || (!fb_id && !mode)); modesets++;
+  if (not_master) { errno = EACCES; return -1; }
   if (modeset_error) { errno = EIO; return -1; }
   return 0;
 }
@@ -58,7 +59,7 @@ int fake_poll(struct pollfd *fds, nfds_t count, int timeout) {
 
 static RbGraphics context(void) {
   next_token = released = modesets = flips = 0;
-  no_event = queue_error = modeset_error = false;
+  no_event = queue_error = modeset_error = not_master = false;
   return (RbGraphics){.fd = 1234};
 }
 int main(void) {
@@ -86,5 +87,18 @@ int main(void) {
   no_event = true;
   assert(rb_graphics_present(&g) == -ETIMEDOUT);
   assert(g.current && g.pending && g.failed && released == 1);
+
+  /* F17 (3e55b45e): before Reborn's first frame the splash is DRM master; the
+   * off has nothing of Reborn's to stop and must not fail the wake retry. */
+  g = context(); not_master = true;
+  assert(rb_graphics_sleep(&g, 1) == 0 && g.sleeping && modesets == 1);
+  assert(rb_graphics_sleep(&g, 0) == 0 && !g.sleeping && modesets == 1);
+  /* Once Reborn owns the scanout, a refused off is still an error. */
+  g = context();
+  assert(rb_graphics_present(&g) == 0 && g.modeset);
+  not_master = true;
+  assert(rb_graphics_sleep(&g, 1) == -EACCES && !g.sleeping);
+  g = context(); modeset_error = true;
+  assert(rb_graphics_sleep(&g, 1) == -EIO && !g.sleeping);
   return 0;
 }

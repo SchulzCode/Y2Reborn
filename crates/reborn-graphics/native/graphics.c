@@ -151,7 +151,12 @@ int rb_graphics_sleep(RbGraphics *g, int off) {
       ret = drmModeSetCrtc(g->fd, g->crtc, f->id, 0, 0,
                            &g->connector, 1, &g->mode);
     }
-    if (ret) return -errno;
+    /* F17 (3e55b45e): before its first frame Reborn is not DRM master while
+     * the splash holds the display (there every handoff timed out behind the
+     * splash's stalled modeset). Reborn has no scanout to stop then; the
+     * refused off ended the wake retry in "screen sleep -13" before it could
+     * try a new handoff. */
+    if (ret && !(off && !g->modeset && errno == EACCES)) return -errno;
   }
   g->sleeping = !!off;
   return 0;
