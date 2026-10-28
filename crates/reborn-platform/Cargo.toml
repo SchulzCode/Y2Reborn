@@ -10,4 +10,5 @@ serde_json.workspace = true
 libc.workspace = true
 dbus.workspace = true
 reborn-core = { path = "../reborn-core" }
+y2p-contract = { path = "../y2p-contract" }
 reborn-observability = { path = "../reborn-observability" }

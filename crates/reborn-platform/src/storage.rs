@@ -618,7 +618,7 @@ pub fn usb_changes() -> (u64, bool) {
     let boot = fs::read_to_string("/proc/sys/kernel/random/boot_id").unwrap_or_default();
     receipt
         .filter(|r| {
-            r["schema"] == "org.y2linux.usb-transfer/v1"
+            r["schema"] == y2p_contract::schema::USB_TRANSFER
                 && !boot.trim().is_empty()
                 && r["boot_id"].as_str() == Some(boot.trim())
         })

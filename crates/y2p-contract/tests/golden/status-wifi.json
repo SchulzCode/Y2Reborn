@@ -1,0 +1,45 @@
+{
+ "record": {
+  "boot_id": "boot-a",
+  "build_id": "fixture-build",
+  "collection_duration_ns": 17497888,
+  "evidence_level": "IMPLEMENTED",
+  "failure": null,
+  "kernel": "6.18.0-fixture",
+  "monotonic_ns": 17782941440678,
+  "parameters": {},
+  "reborn_commit": "reborn",
+  "result": "observed",
+  "rootfs_release": "v1.0",
+  "units": {
+   "collection_duration": "ns"
+  },
+  "wall_timestamp": "2026-10-28T19:26:03.369435+00:00",
+  "workload": "observation",
+  "y2linux_commit": "linux-commit"
+ },
+ "schema": "org.y2linux.status/v1",
+ "wifi": {
+  "association": null,
+  "association_id": null,
+  "coexistence": null,
+  "default_route": [],
+  "dns_ready": false,
+  "events": null,
+  "failed_network_id": null,
+  "ip_addresses": [],
+  "power_save": null,
+  "radio_present": false,
+  "reason": "radio_off",
+  "reconnect_owner": "wpa_supplicant",
+  "rssi_dbm": null,
+  "signal_observation": null,
+  "state": "Off",
+  "supplicant_observation": {
+   "duration_ns": null,
+   "ok": null,
+   "reason": "radio_off"
+  },
+  "traffic_counters": {}
+ }
+}

@@ -32,9 +32,10 @@ use std::{
 
 const LIMIT: u64 = 1024 * 1024;
 const PROGRAM: &str = "/usr/sbin/y2-platform";
-pub const STATUS_SCHEMA: &str = "org.y2linux.status/v1";
-pub const CAPABILITIES_SCHEMA: &str = "org.y2linux.capabilities/v1";
-pub const HEALTH_SCHEMA: &str = "org.y2linux.health/v1";
+use y2p_contract::schema as schemas;
+pub use y2p_contract::schema::{
+    CAPABILITIES as CAPABILITIES_SCHEMA, HEALTH as HEALTH_SCHEMA, STATUS as STATUS_SCHEMA,
+};
 
 /// A typed reply for one task.
 pub enum Reply {
@@ -237,7 +238,7 @@ fn execute(task: PlatformTask) -> Reply {
         SleepRequest => {
             return Reply::Sleep(
                 call(&["sleep", "request"], 30)
-                    .and_then(|v| schema(v, "org.y2linux.sleep/v1"))
+                    .and_then(|v| schema(v, schemas::SLEEP))
                     .map(|v| sleep(&v))
                     .map_err(|e| friendly_error(&e)),
             );
@@ -613,7 +614,7 @@ pub fn usb(status: &Value) -> UsbTransfer {
         return UsbTransfer::Disconnected;
     }
     let transfer = &status["system"]["usb"]["file_transfer"];
-    if transfer["schema"] == "org.y2linux.usb-transfer/v1"
+    if transfer["schema"] == schemas::USB_TRANSFER
         && transfer["boot_id"] == status["record"]["boot_id"]
         && transfer["boot_id"].as_str().is_some()
     {
@@ -898,7 +899,7 @@ pub fn radio_firmware(status: &Value) -> RadioFirmware {
 
 fn usb_refresh_generation(status: &Value) -> u64 {
     let transfer = &status["system"]["usb"]["file_transfer"];
-    if transfer["schema"] == "org.y2linux.usb-transfer/v1"
+    if transfer["schema"] == schemas::USB_TRANSFER
         && transfer["boot_id"] == status["record"]["boot_id"]
         && transfer["boot_id"].as_str().is_some()
     {
@@ -935,7 +936,7 @@ fn sbc_quality(value: &Value) -> Option<SbcQuality> {
 }
 
 pub fn bluetooth_quality(value: &Value) -> BluetoothQuality {
-    if value["schema"] != "org.y2linux.codec-settings/v1" {
+    if value["schema"] != schemas::CODEC_SETTINGS {
         return BluetoothQuality::default();
     }
     BluetoothQuality {
@@ -977,7 +978,7 @@ pub fn bluetooth_quality(value: &Value) -> BluetoothQuality {
 /// A successful kernel exit is insufficient: only the service's complete
 /// restoration record and same-boot identity may present a restored player.
 pub fn sleep(value: &Value) -> SleepState {
-    if value["schema"] != "org.y2linux.sleep/v1" {
+    if value["schema"] != schemas::SLEEP {
         return SleepState::default();
     }
     let mut phase = match value["state"].as_str() {

@@ -1,0 +1,119 @@
+{
+ "checks": [
+  {
+   "name": "root",
+   "reason": "source_missing_or_wrong_controller",
+   "state": "FAILED"
+  },
+  {
+   "name": "data",
+   "reason": "source_missing_or_wrong_controller",
+   "state": "FAILED"
+  },
+  {
+   "name": "sd",
+   "reason": "not_uniquely_mounted",
+   "state": "UNAVAILABLE"
+  },
+  {
+   "name": "internal_media",
+   "reason": "not_uniquely_mounted",
+   "state": "UNAVAILABLE"
+  },
+  {
+   "errors": [],
+   "name": "filesystem_errors",
+   "reason": "counter_unavailable",
+   "state": "UNAVAILABLE",
+   "unreadable": []
+  },
+  {
+   "name": "render_node",
+   "reason": "interface_missing",
+   "state": "UNAVAILABLE"
+  },
+  {
+   "name": "display",
+   "reason": "interface_missing",
+   "state": "UNAVAILABLE"
+  },
+  {
+   "name": "audio",
+   "reason": "interface_missing",
+   "state": "UNAVAILABLE"
+  },
+  {
+   "name": "input",
+   "reason": "interface_missing",
+   "state": "UNAVAILABLE"
+  },
+  {
+   "name": "rtc",
+   "reason": "interface_missing",
+   "state": "UNAVAILABLE"
+  },
+  {
+   "name": "thermal",
+   "reason": "interface_missing",
+   "state": "UNAVAILABLE"
+  },
+  {
+   "name": "power_supply",
+   "reason": "observed",
+   "state": "OK"
+  },
+  {
+   "name": "usb",
+   "reason": "interface_missing",
+   "state": "UNAVAILABLE"
+  },
+  {
+   "name": "wifi",
+   "reason": "radio_off",
+   "state": "UNAVAILABLE"
+  },
+  {
+   "name": "bluetooth",
+   "reason": "dbus_observation_unavailable",
+   "state": "UNAVAILABLE"
+  },
+  {
+   "name": "update",
+   "reason": "data_state_unavailable",
+   "state": "UNAVAILABLE"
+  },
+  {
+   "name": "highres_timer",
+   "reason": "runtime_unavailable",
+   "state": "UNAVAILABLE"
+  },
+  {
+   "name": "tickless_idle",
+   "reason": "runtime_unavailable",
+   "state": "UNAVAILABLE"
+  }
+ ],
+ "record": {
+  "boot_id": "boot-a",
+  "build_id": "fixture-build",
+  "evidence_level": "IMPLEMENTED",
+  "failure": [
+   "root",
+   "data"
+  ],
+  "kernel": "6.18.0-fixture",
+  "monotonic_ns": 17782841631416,
+  "parameters": {
+   "mode": "quick"
+  },
+  "reborn_commit": "reborn",
+  "result": "FAILED",
+  "rootfs_release": "v1.0",
+  "units": {},
+  "wall_timestamp": "2026-10-28T19:26:03.269629+00:00",
+  "workload": "health",
+  "y2linux_commit": "linux-commit"
+ },
+ "schema": "org.y2linux.health/v1",
+ "state": "FAILED"
+}

@@ -1,0 +1,485 @@
+{
+ "audio": {
+  "cards": null,
+  "enabled_profile": null,
+  "headphone_jack_present": null,
+  "headphone_jack_reason": "codec_irq_not_qualified",
+  "hw_params": {},
+  "pcm": null,
+  "pcm_contract": null,
+  "qualified_profile": null
+ },
+ "bluetooth": {
+  "adapter": null,
+  "negotiated_codec": null,
+  "pcm": null,
+  "reason": "dbus_observation_unavailable",
+  "reconnect": null,
+  "reconnect_owner": "y2-bt-reconnect",
+  "selected_peer": null,
+  "state": "Unavailable",
+  "transport": null
+ },
+ "cpu": {
+  "cirq": null,
+  "clock_blockers": {},
+  "counters": {
+   "ctxt": null,
+   "intr": null,
+   "processes": null,
+   "procs_blocked": null,
+   "procs_running": null,
+   "softirq": null
+  },
+  "dormant_preflight": null,
+  "dvfs_ceiling_khz": null,
+  "dvfs_diagnostics": {},
+  "dvfs_fault": null,
+  "idle": [],
+  "idle_completion": {
+   "C1": {
+    "enabled": null,
+    "entries": null,
+    "failures": null,
+    "per_cpu": [],
+    "registered": false,
+    "residency_us": null
+   },
+   "C2": {
+    "attribution": {},
+    "blocker_owners": null,
+    "enabled": null,
+    "entries": null,
+    "failures": null,
+    "last_blocker": null,
+    "per_cpu": [],
+    "registered": false,
+    "residency_us": null,
+    "shared_dma_owners": [
+     {
+      "name": "18070000.connectivity",
+      "runtime_status": null
+     },
+     {
+      "name": "11007000.i2c",
+      "runtime_status": null
+     },
+     {
+      "name": "11008000.i2c",
+      "runtime_status": null
+     }
+    ]
+   },
+   "C3": {
+    "blocker_owners": null,
+    "boot_policy": {},
+    "context": null,
+    "display_idle": {},
+    "enabled": null,
+    "entries": null,
+    "entry_budget": null,
+    "failures": null,
+    "per_cpu": [],
+    "preflight": null,
+    "prerequisites": {},
+    "registered": false,
+    "residency_us": null,
+    "uart_clock_handoff": null,
+    "uart_sleep": {},
+    "unmet": [],
+    "unused_clock_handoff": null
+   }
+  },
+  "idle_diagnostics": {},
+  "load_average": null,
+  "mmc_runtime_pm": {},
+  "online": null,
+  "policies": [],
+  "pwrap_readiness": null,
+  "radio_boot_retries": null,
+  "recovery_options": {},
+  "slidle_attribution": {},
+  "slidle_clock_owners": null,
+  "spm": null,
+  "stock_bin": null,
+  "suspend_persistent": {
+   "backstop": null,
+   "current": null,
+   "device_callbacks": null,
+   "device_callbacks_previous_boot": null,
+   "durable": null,
+   "previous_boot": null,
+   "radio_restore": null,
+   "reset_status": null,
+   "retention": null,
+   "selftest": null,
+   "usb_restore": {}
+  },
+  "suspend_stage": null,
+  "system_idle": {},
+  "throttling_reason": null,
+  "ticks": {
+   "cpu": [
+    100,
+    0,
+    50,
+    1000,
+    5,
+    0,
+    1,
+    0
+   ],
+   "cpu0": [
+    100,
+    0,
+    50,
+    1000,
+    5,
+    0,
+    1,
+    0
+   ]
+  },
+  "ticks_unit": "USER_HZ_ticks",
+  "timer": {
+   "admission": {},
+   "broadcast_clockevent": null,
+   "clockevents": {},
+   "clocksource": null,
+   "highres_active": null,
+   "no_hz_active": null,
+   "per_cpu": [],
+   "reason": "runtime_timer_state_unavailable",
+   "source": "/proc/timer_list"
+  },
+  "utilization_percent": null,
+  "voltage_ownership": null,
+  "voltage_uv": null,
+  "wakeup_count": null,
+  "wakeup_count_reason": "fixture",
+  "workload_qos": {
+   "implemented": false,
+   "interactive_max_ms": 500,
+   "lease_max_ms": 30000,
+   "leases": null
+  }
+ },
+ "memory": {
+  "meminfo": {
+   "MemAvailable": 160000,
+   "MemFree": 120000,
+   "MemTotal": 245760
+  },
+  "pressure": null,
+  "processes": [],
+  "unit": "KiB",
+  "vmstat": null
+ },
+ "power": {
+  "battery": {},
+  "low_battery": {
+   "reason": "policy_not_running_or_stale",
+   "state": "Unavailable"
+  },
+  "measured_current_ua": null,
+  "normal_boot": null,
+  "pack_temperature": null,
+  "sleep": {
+   "boot_id": "boot-a",
+   "kernel_completed": false,
+   "reason": null,
+   "request_boot_id": null,
+   "same_boot": null,
+   "schema": "org.y2linux.sleep/v1",
+   "state": "idle",
+   "wake_reason": "unknown"
+  },
+  "soc_confidence": null,
+  "soc_percent": null,
+  "soc_source": null,
+  "supplies": [
+   {
+    "constant_charge_current": null,
+    "constant_charge_current_max": null,
+    "constant_charge_voltage": null,
+    "constant_charge_voltage_max": null,
+    "health": null,
+    "input_current_limit": null,
+    "name": "BAT0",
+    "online": null,
+    "present": null,
+    "status": "Charging",
+    "type": "Battery",
+    "usb_type": null,
+    "voltage_max_design": null,
+    "voltage_min_design": null,
+    "voltage_now": "4149316"
+   },
+   {
+    "constant_charge_current": null,
+    "constant_charge_current_max": null,
+    "constant_charge_voltage": null,
+    "constant_charge_voltage_max": null,
+    "health": null,
+    "input_current_limit": null,
+    "name": "y2-usb-presence",
+    "online": "1",
+    "present": null,
+    "status": null,
+    "type": "USB",
+    "usb_type": null,
+    "voltage_max_design": null,
+    "voltage_min_design": null,
+    "voltage_now": null
+   }
+  ],
+  "unavailable_reason": "not_exposed_by_qualified_y2_battery_driver",
+  "units": {
+   "configured_current": "uA",
+   "voltage": "uV"
+  }
+ },
+ "readiness": {
+  "audio": {
+   "reason": "profile_does_not_imply_current_physical_acceptance",
+   "state": "Unavailable"
+  },
+  "bluetooth": {
+   "reason": "dbus_observation_unavailable",
+   "state": "Unavailable"
+  },
+  "storage": {
+   "reason": "source_missing_or_wrong_controller",
+   "state": "Failed"
+  },
+  "update": {
+   "reason": "data_state_unavailable",
+   "state": "Unavailable"
+  },
+  "wifi": {
+   "reason": "radio_off",
+   "state": "Unavailable"
+  }
+ },
+ "record": {
+  "boot_id": "boot-a",
+  "build_id": "fixture-build",
+  "collection_duration_ns": 17664271,
+  "evidence_level": "IMPLEMENTED",
+  "failure": null,
+  "kernel": "6.18.0-fixture",
+  "monotonic_ns": 17782883256179,
+  "parameters": {},
+  "reborn_commit": "reborn",
+  "result": "observed",
+  "rootfs_release": "v1.0",
+  "units": {
+   "collection_duration": "ns"
+  },
+  "wall_timestamp": "2026-10-28T19:26:03.311250+00:00",
+  "workload": "observation",
+  "y2linux_commit": "linux-commit"
+ },
+ "schema": "org.y2linux.status/v1",
+ "storage": {
+  "blocks": [],
+  "bus_parameters": null,
+  "controllers": [],
+  "internal_setup": {
+   "state": "Unknown"
+  },
+  "media": {
+   "last_operation": null,
+   "lifecycle": null
+  },
+  "sd_bus_parameters": null,
+  "volumes": [
+   {
+    "available_bytes": 15794876416,
+    "available_inodes": 3978327,
+    "controller_valid": false,
+    "device_id": "179:2",
+    "filesystem": "ext4",
+    "free_bytes": 15794876416,
+    "generation": "boot-a:22:179:2",
+    "mount_id": 22,
+    "options": [
+     "ro"
+    ],
+    "path": "/",
+    "reason": "source_missing_or_wrong_controller",
+    "root": "/",
+    "source": "/dev/mmcblk0p2",
+    "source_instance": null,
+    "space_state": "Failed",
+    "state": "Failed",
+    "super_options": [
+     "ro"
+    ],
+    "total_bytes": 16352100352,
+    "uuid": null
+   },
+   {
+    "available_bytes": 15794876416,
+    "available_inodes": 3978327,
+    "controller_valid": false,
+    "device_id": "179:9",
+    "filesystem": "ext4",
+    "free_bytes": 15794876416,
+    "generation": "boot-a:30:179:9",
+    "mount_id": 30,
+    "options": [
+     "rw",
+     "noatime"
+    ],
+    "path": "/data",
+    "reason": "source_missing_or_wrong_controller",
+    "root": "/",
+    "source": "/dev/mmcblk0p9",
+    "source_instance": null,
+    "space_state": "Failed",
+    "state": "Failed",
+    "super_options": [
+     "rw"
+    ],
+    "total_bytes": 16352100352,
+    "uuid": null
+   },
+   {
+    "generation": null,
+    "path": "/media/sd",
+    "reason": "not_uniquely_mounted",
+    "space_state": "Unavailable",
+    "state": "Unavailable"
+   },
+   {
+    "generation": null,
+    "path": "/media/internal",
+    "reason": "not_uniquely_mounted",
+    "space_state": "Unavailable",
+    "state": "Unavailable"
+   }
+  ]
+ },
+ "system": {
+  "application_readiness": null,
+  "boot_history": null,
+  "boot_stages": [],
+  "crng_ready": null,
+  "entropy_available_bits": null,
+  "kernel_taint": 0,
+  "kernel_warning_count": null,
+  "kernel_warning_reason": "no_dedicated_counter; retain_bounded_owner_dmesg_capture",
+  "previous_boot_evidence": {
+   "reason": "no_previous_boot_record",
+   "state": "Unavailable"
+  },
+  "pstore_files": [],
+  "radio_core": null,
+  "radio_firmware": {
+   "file": "system.img",
+   "folder": "Firmware",
+   "location": "drive",
+   "state": "Missing"
+  },
+  "reborn_supervisor": null,
+  "reset_cause": null,
+  "reset_cause_reason": "no_qualified_retained_register",
+  "reset_status_raw": null,
+  "rtc": [],
+  "ssh": {
+   "reason": "ssh_record_stale_or_absent",
+   "state": "Unavailable"
+  },
+  "time": {
+   "anchor": {},
+   "build_epoch": null,
+   "clock_sane": false,
+   "entropy_ready": null,
+   "epoch": 1793215563.3267415,
+   "ntp_authenticated": false,
+   "reason": "clock_not_established",
+   "rtc_retention_qualified": false,
+   "schema": 1,
+   "source": null,
+   "tls_ready": false
+  },
+  "update": {
+   "channel": null,
+   "download": null,
+   "failure": "data_state_unavailable",
+   "full_system": true,
+   "last_check": null,
+   "physical_qualification": false,
+   "schema": 1,
+   "state": "Unavailable"
+  },
+  "uptime_seconds": "2730.79",
+  "usb": {
+   "charging": {
+    "class_ceiling_ua": null,
+    "host_allowance_ua": null,
+    "owner_charge_ceiling_ua": null,
+    "programmed_charge_ua": null,
+    "sense_current_basis": "bsp-200mohm-unvalidated-charger-path-estimate",
+    "sense_current_est_ua": null,
+    "source_type": null,
+    "state": "Charging",
+    "stock_request_ua": null,
+    "thermal_level": null,
+    "usb_online": "1"
+   },
+   "dma": null,
+   "file_transfer": {},
+   "functions": [],
+   "link": {},
+   "mode": "peripheral",
+   "mtp_roots": {},
+   "negotiated_speed": null,
+   "network": {
+    "address": null,
+    "operstate": null
+   },
+   "out_path": {},
+   "udcs": []
+  },
+  "versions": {
+   "build_git_commit": "linux-commit",
+   "feature_contract_version": 2,
+   "platform_api_version": 1,
+   "reborn_source_commit": "reborn",
+   "release_version": "1.0.0-fixture",
+   "rootfs_version": "v1.0"
+  },
+  "watchdogs": []
+ },
+ "thermal": {
+  "battery_temperature": null,
+  "battery_temperature_reason": "no_qualified_pack_sensor",
+  "cooling": [],
+  "zones": []
+ },
+ "wifi": {
+  "association": null,
+  "association_id": null,
+  "coexistence": null,
+  "default_route": [],
+  "dns_ready": false,
+  "events": null,
+  "failed_network_id": null,
+  "ip_addresses": [],
+  "power_save": null,
+  "radio_present": false,
+  "reason": "radio_off",
+  "reconnect_owner": "wpa_supplicant",
+  "rssi_dbm": null,
+  "signal_observation": null,
+  "state": "Off",
+  "supplicant_observation": {
+   "duration_ns": null,
+   "ok": null,
+   "reason": "radio_off"
+  },
+  "traffic_counters": {}
+ }
+}

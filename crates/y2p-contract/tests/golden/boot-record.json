@@ -1,0 +1,23 @@
+{
+ "boot_count": 1,
+ "boot_id": "boot-a",
+ "consecutive_unclean": 0,
+ "history": [],
+ "identity": {
+  "build_git_commit": "linux-commit",
+  "feature_contract_version": 2,
+  "platform_api_version": 1,
+  "reborn_source_commit": "reborn",
+  "release_version": "1.0.0-fixture",
+  "rootfs_version": "v1.0"
+ },
+ "last_stage": "platform_start",
+ "orderly_shutdown": false,
+ "previous_boot_id": null,
+ "recovery_recommended": false,
+ "reset_cause": null,
+ "reset_cause_reason": "not_observed",
+ "reset_status_raw": null,
+ "schema": 1,
+ "stage_monotonic_ns": 17782998682664
+}

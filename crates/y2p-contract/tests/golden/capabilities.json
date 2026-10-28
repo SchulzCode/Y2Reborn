@@ -1,0 +1,681 @@
+{
+ "api_version": 1,
+ "capabilities": {
+  "audio": {
+   "channels": 2,
+   "constraint_query": "y2-audio-contract",
+   "driver_rates_hz": [
+    44100
+   ],
+   "enabled": true,
+   "enabled_formats": [
+    "S16_LE"
+   ],
+   "enabled_rates_hz": [
+    44100
+   ],
+   "experimental": false,
+   "implemented": true,
+   "internal_source_rates_hz": [
+    44100,
+    48000,
+    88200,
+    96000
+   ],
+   "native_high_rates": false,
+   "preserved_24bit": false,
+   "prior_narrow_evidence": "2026-09-18-gpu01/audio.txt",
+   "qualified": false,
+   "reason": "S16 44.1 kHz only, as stock (#52: 48 kHz needs the codec PLL); other source rates convert to 44.1 kHz",
+   "s32": false
+  },
+  "audio_rate_conversion": {
+   "enabled": true,
+   "experimental": false,
+   "fallback": "S16/44.1",
+   "implemented": true,
+   "qualified": false,
+   "reason": "physical qualification pending",
+   "sink_rates_hz": [
+    44100
+   ],
+   "source_rates_hz": [
+    44100,
+    48000,
+    88200,
+    96000
+   ]
+  },
+  "automatic_bootimg_update": {
+   "enabled": true,
+   "experimental": false,
+   "implemented": true,
+   "qualified": false,
+   "reason": "installed by the Y2 recovery image; BOOTIMG is never written by the kernel it runs"
+  },
+  "battery_soc": {
+   "default_source": "voltage_estimate",
+   "enabled": true,
+   "experimental": false,
+   "implemented": true,
+   "profile_schema": 1,
+   "provisional": true,
+   "qualified": false,
+   "reason": "physical qualification pending",
+   "sources": [
+    "fuel_gauge",
+    "hybrid",
+    "voltage_estimate"
+   ]
+  },
+  "bluetooth": {
+   "automatic_connection_owner": "y2-bt-reconnect",
+   "avrcp": true,
+   "baseline_codec": "SBC",
+   "codec_auto": {
+    "eligible_codecs": [],
+    "enabled": true,
+    "experimental": false,
+    "implemented": true,
+    "interface": "rebornctl bluetooth codec Auto|SBC|SBC-XQ|AAC|aptX|aptX-HD|LDAC ADDRESS",
+    "qualified": false,
+    "reason": "Production qualification flags or explicit owner Experimental policy; negotiation observed separately"
+   },
+   "enabled": false,
+   "enabled_source": "/data/bluetooth/enabled",
+   "experimental": false,
+   "implemented": true,
+   "optional_codecs": [
+    "AAC",
+    "aptX",
+    "aptX-HD",
+    "LDAC"
+   ],
+   "qualified": false,
+   "reason": "physical qualification of this exact candidate pending"
+  },
+  "bluetooth_aac": {
+   "enabled": false,
+   "enablement_scope": "daemon policy; active PCM reported separately",
+   "experimental": true,
+   "fallback": "SBC",
+   "implemented": false,
+   "qualified": false,
+   "reason": "runtime enablement uses compiled inventory and explicit Experimental gate; physical qualification pending"
+  },
+  "bluetooth_aptx": {
+   "enabled": false,
+   "enablement_scope": "daemon policy; active PCM reported separately",
+   "experimental": true,
+   "fallback": "SBC",
+   "implemented": false,
+   "qualified": false,
+   "reason": "runtime enablement uses compiled inventory and explicit Experimental gate; physical qualification pending"
+  },
+  "bluetooth_aptx_hd": {
+   "enabled": false,
+   "enablement_scope": "daemon policy; active PCM reported separately",
+   "experimental": true,
+   "fallback": "SBC",
+   "implemented": false,
+   "qualified": false,
+   "reason": "runtime enablement uses compiled inventory and explicit Experimental gate; physical qualification pending"
+  },
+  "bluetooth_ldac": {
+   "enabled": false,
+   "enablement_scope": "daemon policy; active PCM reported separately",
+   "experimental": true,
+   "fallback": "SBC",
+   "implemented": false,
+   "qualified": false,
+   "reason": "runtime enablement uses compiled inventory and explicit Experimental gate; physical qualification pending"
+  },
+  "bluetooth_sbc": {
+   "enabled": false,
+   "enablement_scope": "daemon policy; active PCM reported separately",
+   "experimental": false,
+   "fallback": "SBC",
+   "implemented": false,
+   "qualified": false,
+   "reason": "runtime enablement uses compiled inventory and explicit Experimental gate; physical qualification pending"
+  },
+  "bluetooth_sbc_xq": {
+   "enabled": false,
+   "experimental": true,
+   "fallback": "SBC",
+   "implemented": true,
+   "qualified": false,
+   "reason": "runtime enablement uses compiled inventory and explicit Experimental gate; physical qualification pending"
+  },
+  "charging": {
+   "configured_current_steps_ua": [
+    70000,
+    200000,
+    300000,
+    450000,
+    550000,
+    650000,
+    700000,
+    800000,
+    900000,
+    1000000,
+    1100000
+   ],
+   "default_ceiling_ua": 650000,
+   "enabled": true,
+   "experimental": false,
+   "high_current_qualified": false,
+   "high_current_reason": "no cell charge rating or independent current/pack-temperature evidence; the owner ceiling above 650 mA is a root-only volatile qualification action",
+   "implemented": true,
+   "max_configured_voltage_uv": 4175000,
+   "qualified": false,
+   "reason": "physical qualification pending",
+   "source_class_ceilings_ua": {
+    "Apple": 800000,
+    "CDP": 650000,
+    "DCP": 1100000,
+    "SDP": 450000,
+    "nonstandard": 70000,
+    "unknown": 70000
+   },
+   "source_classes": [
+    "SDP",
+    "CDP",
+    "DCP",
+    "Apple",
+    "nonstandard"
+   ],
+   "stock_maximum_request_ua": 1100000
+  },
+  "cpu_hotplug": {
+   "automatic_offlining": false,
+   "cores": 4,
+   "enabled": true,
+   "experimental": false,
+   "implemented": true,
+   "qualified": false,
+   "reason": "physical qualification pending"
+  },
+  "cpu_power_down_idle": {
+   "default_disabled": true,
+   "enabled": false,
+   "experimental": true,
+   "implemented": true,
+   "qualified": false,
+   "reason": "stock 480-word runtime PCM, Linux context, CIRQ replay and GPT4 broadcast; experimental CPU0/other cores physically off; read-only prerequisite report (dormant_preflight)"
+  },
+  "cpufreq": {
+   "conservative_max_khz": 1040000,
+   "default_max_khz": 1300000,
+   "enabled": true,
+   "experimental": false,
+   "governor": "schedutil",
+   "implemented": true,
+   "opp_khz": [
+    598000,
+    747500,
+    1040000,
+    1196000,
+    1300000
+   ],
+   "qualified": false,
+   "reason": "physical qualification pending"
+  },
+  "cpuidle": {
+   "default_states": [
+    "WFI",
+    "SLIDLE",
+    "DORMANT"
+   ],
+   "dormant_boot_policy": "CPU0 enabled once by qualified boot policy after static foundations pass; all dynamic kernel admission and failure guards retained",
+   "dormant_recovery": "y2.deep_idle=off or y2.cpu_safe=1; y2-platform cpu-idle-policy stop for this boot",
+   "enabled": true,
+   "experimental": false,
+   "implemented": true,
+   "qualified": false,
+   "reason": "C1/C2/C3 physically qualified on preceding UART01 architecture; new Baseline02 boot policy/image physical qualification pending",
+   "states": [
+    "WFI",
+    "SLIDLE",
+    "DORMANT"
+   ]
+  },
+  "cs43131_controls": {
+   "automatic_high_gain": false,
+   "controls": [
+    "hardware volume",
+    "digital filters",
+    "power/DAPM"
+   ],
+   "enabled": true,
+   "experimental": false,
+   "implemented": true,
+   "qualified": false,
+   "reason": "physical qualification pending"
+  },
+  "deep_suspend": {
+   "diagnostics": "retained SRAM PM journal, event-based durable receipts, one-shot RGU recovery and failed-attempt quarantine; resets are failures",
+   "enabled": true,
+   "experimental": false,
+   "gate": "kernel_sleep_abi_and_live_inhibitors",
+   "implemented": true,
+   "qualification_command": "y2-suspend --owner-qualify",
+   "qualified": false,
+   "reason": "built_in_context_fix_and_product_policy; clean_image_endurance_pending"
+  },
+  "diagnostics": {
+   "enabled": true,
+   "experimental": false,
+   "implemented": true,
+   "qualified": false,
+   "reason": "physical qualification pending"
+  },
+  "display_off": {
+   "enabled": true,
+   "experimental": false,
+   "implemented": true,
+   "qualified": false,
+   "reason": "physical qualification pending"
+  },
+  "dvfs": {
+   "enabled": true,
+   "experimental": true,
+   "implemented": true,
+   "qualified": false,
+   "reason": "automatic exact-bin admission after PMIC/SPM readback and PWRAP readiness (mux, wrapper, full 7-bit arbiter incl. DVFSINF/WACS2); failure retains 1040 MHz",
+   "runtime_ceiling_khz": null,
+   "stock_high_opp_condition": "exact bin0 plus PMIC/SPM readback",
+   "stock_high_opp_enabled": false,
+   "voltage_floor_uv": 1150000
+  },
+  "emmc": {
+   "automatic_fault_fallback": true,
+   "boot_ceiling": "y2.emmc_mode=<level>; y2.mmc_safe=1 keeps legacy 13 MHz",
+   "ceiling": "HS200 (8-bit, 200 MHz, fixed VIO18 1.8 V IO, CMD21 tuning); HS400 card-only, MT6582 has no data strobe",
+   "enabled": true,
+   "experimental": false,
+   "fallback_clock_hz": [
+    50000000,
+    25000000,
+    13000000
+   ],
+   "fallback_ladder": [
+    "HS200",
+    "DDR52",
+    "HS52",
+    "HS-25MHz",
+    "legacy-13MHz"
+   ],
+   "implemented": true,
+   "max_standard_clock_hz": 200000000,
+   "qualified": false,
+   "reason": "physical qualification pending",
+   "runtime_clock_gating": "MT6582 register image verified across PERI CG gating; no card command/reset/rail change",
+   "signal_voltage_mv": 1800,
+   "status": "/sys/bus/platform/devices/11230000.mmc/y2_storage",
+   "timings": [
+    "legacy",
+    "MMC_HS_SDR",
+    "MMC_DDR52",
+    "MMC_HS200"
+   ],
+   "width": 8
+  },
+  "gpu_runtime_pm": {
+   "enabled": true,
+   "experimental": false,
+   "implemented": true,
+   "qualified": false,
+   "reason": "physical qualification pending"
+  },
+  "health": {
+   "enabled": true,
+   "experimental": false,
+   "implemented": true,
+   "qualified": false,
+   "reason": "physical qualification of this exact candidate pending"
+  },
+  "high_resolution_timers": {
+   "enabled": true,
+   "experimental": false,
+   "fallback": "legacy clockevent",
+   "implemented": true,
+   "qualified": false,
+   "reason": "physical qualification pending"
+  },
+  "local_timer": {
+   "boot_fallback": "y2.local_timer=off",
+   "broadcast": "GPT4 when counter validation succeeds",
+   "enabled": true,
+   "experimental": false,
+   "fallback": "GPT1 legacy clockevent with dummy per-CPU broadcast",
+   "frequency_hz": 13000000,
+   "implemented": true,
+   "qualified": false,
+   "reason": "physical qualification pending"
+  },
+  "low_battery_shutdown": {
+   "enabled": true,
+   "experimental": false,
+   "implemented": true,
+   "policy_schema": 2,
+   "provisional": true,
+   "qualified": false,
+   "reason": "conservative stock-boundary voltage floor; provisional SOC only warns",
+   "threshold_tuning_pending": true
+  },
+  "memory_telemetry": {
+   "enabled": true,
+   "experimental": false,
+   "implemented": true,
+   "metrics": [
+    "PSS",
+    "LOWMEM",
+    "HIGHMEM",
+    "cache",
+    "slab",
+    "growth"
+   ],
+   "qualified": false,
+   "reason": "physical qualification pending",
+   "reclaimed_reserved_regions": false
+  },
+  "no_hz_idle": {
+   "enabled": true,
+   "experimental": false,
+   "fallback": "periodic tick",
+   "implemented": true,
+   "qualified": false,
+   "reason": "physical qualification pending"
+  },
+  "ota": {
+   "channel": "GitHub Releases (SchulzCode/Y2Linux), daily check, never automatic install",
+   "enabled": true,
+   "experimental": false,
+   "health_deadline_seconds": 180,
+   "implemented": true,
+   "installer": "Y2 recovery image (RECOVERY) after power-off; MISC boot-recovery request",
+   "kernel_compatibility": "replaced with the release",
+   "physical_gate": "recovery entry, installation, interruption, readback and restore on the device",
+   "qualified": false,
+   "reason": "physical qualification of this exact candidate pending",
+   "rollback": "verified previous BOOTIMG and root; recovery on unconfirmed health",
+   "signature": "Ed25519",
+   "targets": [
+    "BOOTIMG",
+    "Y2ROOT",
+    "RECOVERY"
+   ],
+   "trust": "development"
+  },
+  "power_observation": {
+   "enabled": true,
+   "experimental": false,
+   "implemented": true,
+   "measured_current": false,
+   "pack_temperature": false,
+   "qualified": false,
+   "reason": "SOC estimate available; pack current/temperature remain unavailable unless real BAT0 properties exist",
+   "soc": true
+  },
+  "radio_coexistence": {
+   "enabled": true,
+   "experimental": false,
+   "implemented": true,
+   "provisional": true,
+   "qualified": false,
+   "reason": "instrumentation and policy hooks implemented; no final bitrate overrides"
+  },
+  "rtc_alarm": {
+   "enabled": true,
+   "experimental": true,
+   "implemented": true,
+   "interface": "y2-platform rtc-alarm SECONDS",
+   "qualified": false,
+   "reason": "same-boot RTC diagnostic returns observed; clean successor qualification pending"
+  },
+  "rtc_time": {
+   "enabled": true,
+   "experimental": false,
+   "implemented": true,
+   "ntp_sync_default": true,
+   "qualified": false,
+   "reason": "physical qualification pending"
+  },
+  "sd": {
+   "automatic_fault_fallback": true,
+   "boot_ceiling": "y2.sd_mode=<level>; y2.mmc_safe=1 keeps legacy 13 MHz",
+   "ceiling": "SDR104 (4-bit, 200 MHz, MT6323 VMC 3.3->1.8 V switch, stock 1.8 V pad drive, CMD19 tuning)",
+   "enabled": true,
+   "experimental": false,
+   "fallback_clock_hz": [
+    100000000,
+    50000000,
+    25000000,
+    13000000
+   ],
+   "fallback_ladder": [
+    "SDR104",
+    "DDR50",
+    "SDR50",
+    "HS",
+    "HS-25MHz",
+    "legacy-13MHz"
+   ],
+   "implemented": true,
+   "max_standard_clock_hz": 200000000,
+   "qualified": false,
+   "reason": "physical qualification pending",
+   "signal_voltage_mv": [
+    3300,
+    1800
+   ],
+   "status": "/sys/bus/platform/devices/11240000.mmc/y2_storage",
+   "timings": [
+    "legacy",
+    "SD_HS",
+    "UHS_SDR50",
+    "UHS_DDR50",
+    "UHS_SDR104"
+   ],
+   "uuid_required": false,
+   "width": 4
+  },
+  "shutdown": {
+   "application_grace_seconds": 10,
+   "enabled": true,
+   "experimental": false,
+   "implemented": true,
+   "interface": "/run/y2/power.sock",
+   "qualified": false,
+   "reason": "physical qualification of this exact candidate pending"
+  },
+  "slow_idle": {
+   "default_disabled": false,
+   "enabled": true,
+   "experimental": true,
+   "fallback": "WFI",
+   "implemented": true,
+   "qualified": false,
+   "reason": "automatic stock clock/CPU preflight with MSDC runtime clock gating and the stock bus-DCM baseline (0x00/0x0f); per-reason refusal counters; aborts to WFI"
+  },
+  "storage": {
+   "automatic_music_deletion": false,
+   "data_root": "/data",
+   "enabled": true,
+   "experimental": false,
+   "filesystems": [
+    "ext4",
+    "vfat",
+    "exfat"
+   ],
+   "implemented": true,
+   "media_root": "/media/sd",
+   "mount_identity": "boot_id:mount_id:device_id plus UUID and platform mount claim",
+   "qualified": false,
+   "reason": "physical qualification of this exact candidate pending",
+   "scratch_benchmarks": true,
+   "space_policy": true
+  },
+  "system_idle_coordinator": {
+   "enabled": true,
+   "experimental": true,
+   "implemented": true,
+   "qualified": false,
+   "reason": "screen-off, no workload lease, timers admitted; sustained (tau 30 s) load <=10% of four cores and <=25% time above 598 MHz; 60s restore hold, 30s quiet, 5s one-core park steps; input/display/workload restore synchronously, 1 s saturation restores with escalating hold unless a wake follows within 2 s"
+  },
+  "system_watchdog": {
+   "enabled": false,
+   "experimental": false,
+   "gate": "PHYSICAL_GATE",
+   "implemented": true,
+   "qualified": false,
+   "reason": "AP_watchdog_driver_available_recovery_policy_unqualified",
+   "recovery_policy_implemented": false
+  },
+  "telemetry": {
+   "enabled": true,
+   "experimental": false,
+   "implemented": true,
+   "qualified": false,
+   "reason": "physical qualification of this exact candidate pending"
+  },
+  "usb_device": {
+   "advanced_authenticated_owner_only": true,
+   "advanced_transfer_protocol": "SFTP",
+   "atomic_verified_uploads": true,
+   "authenticated_owner_only": false,
+   "developer_functions": [
+    "ACM",
+    "ECM"
+   ],
+   "enabled": true,
+   "experimental": false,
+   "filesystem_mass_storage": false,
+   "filesystem_owner": "linux",
+   "functions": [
+    "MTP",
+    "ECM"
+   ],
+   "host_views": [
+    "/media/internal/music",
+    "/media/sd"
+   ],
+   "implemented": true,
+   "qualified": false,
+   "reason": "consumer MTP plus advanced ECM; exact candidate desktop and physical qualification pending",
+   "sftp_reserve_bytes": 100663296,
+   "ssh_bind": "10.42.0.1:22",
+   "ssh_interface": "usb0",
+   "transfer_protocol": "MTP",
+   "transient_tolerance": "1 s PMIC supply-sample tolerance and 10 s write-free reconnect retry"
+  },
+  "usb_dma": {
+   "boot_fallback": "y2.usb_dma=off",
+   "enabled": true,
+   "experimental": false,
+   "fallback": "PIO",
+   "implemented": true,
+   "qualified": false,
+   "reason": "physical qualification pending",
+   "telemetry": "directional programmed bytes and bus faults; not delivered-byte counters; first terminal fault reason and read-only controller/DMA snapshot; storm guard counts only interrupts without DMA or PIO FIFO progress"
+  },
+  "usb_host": {
+   "classes": [
+    "snd-usb-audio",
+    "usb-storage",
+    "usbhid"
+   ],
+   "enabled": false,
+   "experimental": true,
+   "implemented": true,
+   "physical_gate": "vbus",
+   "qualified": false,
+   "reason": "VBUS physical validation pending; host role refused before session or VBUS write"
+  },
+  "usb_ncm": {
+   "enabled": false,
+   "experimental": true,
+   "fallback": "ECM",
+   "implemented": true,
+   "qualified": false,
+   "reason": "module compiled; ECM remains recovery default; NCM activation and FIFO integration pending"
+  },
+  "wifi": {
+   "enabled": false,
+   "enabled_source": "/data/network/enabled",
+   "experimental": false,
+   "implemented": true,
+   "qualified": false,
+   "readiness_requires": [
+    "authenticated",
+    "address",
+    "default_route",
+    "recent_dns_probe"
+   ],
+   "reason": "physical qualification of this exact candidate pending"
+  },
+  "wifi_power_save": {
+   "enabled": false,
+   "experimental": true,
+   "implemented": true,
+   "interface": "y2-platform wifi-power-policy",
+   "qualified": false,
+   "reason": "off/standard/automatic implemented; automatic defaults conservatively off"
+  },
+  "wired_48": {
+   "enabled": true,
+   "experimental": false,
+   "fallback": "S16/44.1",
+   "implemented": true,
+   "qualified": false,
+   "reason": "source-backed native S16 path enabled; full candidate qualification pending"
+  },
+  "wired_native_88200": {
+   "enabled": false,
+   "experimental": true,
+   "implemented": false,
+   "qualified": false,
+   "reason": "exact MT6582 DL1 wide-fetch/high-rate register path not defined in inspected pinned sources; source-backed conversion fallback implemented"
+  },
+  "wired_native_96000": {
+   "enabled": false,
+   "experimental": true,
+   "implemented": false,
+   "qualified": false,
+   "reason": "exact MT6582 DL1 wide-fetch/high-rate register path not defined in inspected pinned sources; source-backed conversion fallback implemented"
+  },
+  "wired_s32": {
+   "enabled": false,
+   "experimental": true,
+   "implemented": false,
+   "qualified": false,
+   "reason": "exact MT6582 DL1 wide-fetch/high-rate register path not defined in inspected pinned sources; source-backed conversion fallback implemented"
+  },
+  "workload_qos": {
+   "classes": [
+    "Idle",
+    "PlaybackNormal",
+    "PlaybackHeavy",
+    "Interactive",
+    "ArtworkDecode",
+    "LibraryScan",
+    "NetworkTransfer",
+    "Maintenance"
+   ],
+   "enabled": true,
+   "experimental": false,
+   "implemented": true,
+   "interactive_ms": 250,
+   "interface": "/dev/y2-workload",
+   "lease_max_ms": 30000,
+   "provisional": true,
+   "qualified": false,
+   "reason": "physical qualification pending"
+  }
+ },
+ "feature_contract_version": 2,
+ "platform_version": "1.0.0-fixture",
+ "qualification_scope": "No integrated physical or endurance qualification for this candidate",
+ "schema": "org.y2linux.capabilities/v1"
+}

@@ -1,0 +1,6 @@
+{
+ "reason": "unknown_boot_stage",
+ "schema": "org.y2linux.error/v1",
+ "state": "Failed",
+ "type": "ValueError"
+}

@@ -28,7 +28,7 @@ fn parse(raw: &[u8]) -> Result<Capabilities, String> {
         return Err("platform capability size limit".into());
     }
     let value: Capabilities = serde_json::from_slice(raw).map_err(|e| e.to_string())?;
-    if value.schema != "org.y2linux.capabilities/v1" {
+    if value.schema != y2p_contract::schema::CAPABILITIES {
         return Err("unsupported platform capability schema".into());
     }
     Ok(value)
