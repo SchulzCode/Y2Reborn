@@ -1492,6 +1492,44 @@ fn a_fast_spin_stops_at_the_end_of_a_long_list_before_wrapping() {
 }
 
 #[test]
+fn a_fast_spin_through_albums_shows_the_letter_it_passes() {
+    let mut ui = radios();
+    ui.motion_fixed = true;
+    let mut m = app(Screen::Albums);
+    // Forty-two albums of one song, six for each letter from A to G.
+    m.library.tracks = (0..42)
+        .map(|i| Track {
+            id: i,
+            title: format!("Song {i}"),
+            album: format!("{} Album {i:02}", char::from(b'A' + (i / 6) as u8)),
+            album_artist: "Artist".into(),
+            online: true,
+            ..Default::default()
+        })
+        .collect();
+    ui.invalidate_catalog();
+    // The bubble is the only quad in this colour on the album screens.
+    let bubble = |ui: &Ui, m: &AppModel| {
+        ui.draw(m, &m.library.tracks, false)
+            .iter()
+            .any(|q| q.color == 0x0E1014F5)
+    };
+    for view in [
+        reborn_core::AlbumView::CoverFlow,
+        reborn_core::AlbumView::Grid,
+    ] {
+        m.settings.album_view = view;
+        m.navigation.focus = 0;
+        ui.fast_scroll_until = None;
+        ui.model_action(&mut m, Action::WheelClockwise(1));
+        assert!(!bubble(&ui, &m), "{view:?}: one detent at a time");
+        ui.model_action(&mut m, Action::WheelClockwise(8));
+        assert_eq!(m.navigation.focus, 9);
+        assert!(bubble(&ui, &m), "{view:?}: spinning");
+    }
+}
+
+#[test]
 fn now_playing_wheel_is_a_fixed_volume_step_and_select_opens_options() {
     let mut ui = radios();
     let mut m = app(Screen::NowPlaying);

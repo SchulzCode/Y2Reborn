@@ -295,12 +295,19 @@ fn song_list(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interactiv
         components::scroll_rail(c, 44., 286., scroll, count, visible, accent);
     }
     if m.screen == Screen::Tracks || m.screen == Screen::Artists {
-        letter_bubble(c, ui, m, tracks, focus);
+        letter_bubble(c, ui, m, tracks, focus, 182.);
     }
 }
 
-/// The large letter shown while a long list is scrolling fast.
-fn letter_bubble(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], focus: usize) {
+/// The large letter shown while a long list is scrolling fast, centred on `cy`.
+pub(crate) fn letter_bubble(
+    c: &mut Canvas,
+    ui: &Ui,
+    m: &AppModel,
+    tracks: &[Track],
+    focus: usize,
+    cy: f32,
+) {
     if ui
         .fast_scroll_until
         .is_none_or(|t| t <= std::time::Instant::now())
@@ -312,11 +319,11 @@ fn letter_bubble(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], focus:
     };
     let letter = crate::initial(&row.label, m.screen).to_string();
     let accent = ui.accent();
-    c.rrect(206., 150., 68., 64., 18., 0x0E1014F5);
-    c.rrect_outline(206., 150., 68., 64., 18., 1., alpha(accent, 170));
+    c.rrect(206., cy - 32., 68., 64., 18., 0x0E1014F5);
+    c.rrect_outline(206., cy - 32., 68., 64., 18., 1., alpha(accent, 170));
     c.text_center(
         240.,
-        182. + Face::S36.mid_offset(),
+        cy + Face::S36.mid_offset(),
         &letter,
         Face::S36,
         accent,
@@ -377,6 +384,7 @@ fn albums_grid(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interact
             color::DIM,
         );
     }
+    letter_bubble(c, ui, m, tracks, focus, 158.);
 }
 
 /// "9 songs · 38 min" for the album with filter `key`; an album shorter than
