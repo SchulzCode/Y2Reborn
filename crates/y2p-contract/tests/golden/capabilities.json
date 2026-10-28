@@ -95,12 +95,12 @@
    "reason": "physical qualification of this exact candidate pending"
   },
   "bluetooth_aac": {
-   "enabled": false,
+   "enabled": true,
    "enablement_scope": "daemon policy; active PCM reported separately",
    "experimental": true,
    "fallback": "SBC",
-   "implemented": false,
-   "qualified": false,
+   "implemented": true,
+   "qualified": true,
    "reason": "runtime enablement uses compiled inventory and explicit Experimental gate; physical qualification pending"
   },
   "bluetooth_aptx": {
@@ -126,17 +126,17 @@
    "enablement_scope": "daemon policy; active PCM reported separately",
    "experimental": true,
    "fallback": "SBC",
-   "implemented": false,
+   "implemented": true,
    "qualified": false,
    "reason": "runtime enablement uses compiled inventory and explicit Experimental gate; physical qualification pending"
   },
   "bluetooth_sbc": {
-   "enabled": false,
+   "enabled": true,
    "enablement_scope": "daemon policy; active PCM reported separately",
    "experimental": false,
    "fallback": "SBC",
-   "implemented": false,
-   "qualified": false,
+   "implemented": true,
+   "qualified": true,
    "reason": "runtime enablement uses compiled inventory and explicit Experimental gate; physical qualification pending"
   },
   "bluetooth_sbc_xq": {

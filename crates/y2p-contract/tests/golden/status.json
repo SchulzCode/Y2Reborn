@@ -31,11 +31,23 @@
    "procs_running": null,
    "softirq": null
   },
-  "dormant_preflight": null,
+  "dormant_preflight": "prerequisite_system_running=1\nprerequisite_boot_policy=1\nprerequisite_spm=1\nprerequisite_local_events=1\nprerequisite_cirq=1\nprerequisite_linux_context=1\nprerequisite_timer_context=1\nprerequisite_broken=1",
   "dvfs_ceiling_khz": null,
   "dvfs_diagnostics": {},
   "dvfs_fault": null,
-  "idle": [],
+  "idle": [
+   {
+    "cpu": "cpu0",
+    "disabled": 1,
+    "exit_latency_us": null,
+    "name": "DORMANT",
+    "rejected": null,
+    "state": "state2",
+    "target_residency_us": null,
+    "time_us": null,
+    "usage": null
+   }
+  ],
   "idle_completion": {
    "C1": {
     "enabled": null,
@@ -71,18 +83,39 @@
     ]
    },
    "C3": {
-    "blocker_owners": null,
+    "blocker_owners": [],
     "boot_policy": {},
     "context": null,
     "display_idle": {},
-    "enabled": null,
+    "enabled": false,
     "entries": null,
-    "entry_budget": null,
+    "entry_budget": 0,
     "failures": null,
-    "per_cpu": [],
-    "preflight": null,
-    "prerequisites": {},
-    "registered": false,
+    "per_cpu": [
+     {
+      "cpu": "cpu0",
+      "disabled": 1,
+      "exit_latency_us": null,
+      "name": "DORMANT",
+      "rejected": null,
+      "state": "state2",
+      "target_residency_us": null,
+      "time_us": null,
+      "usage": null
+     }
+    ],
+    "preflight": "prerequisite_system_running=1\nprerequisite_boot_policy=1\nprerequisite_spm=1\nprerequisite_local_events=1\nprerequisite_cirq=1\nprerequisite_linux_context=1\nprerequisite_timer_context=1\nprerequisite_broken=1",
+    "prerequisites": {
+     "boot_policy": true,
+     "broken": true,
+     "cirq": true,
+     "linux_context": true,
+     "local_events": true,
+     "spm": true,
+     "system_running": true,
+     "timer_context": true
+    },
+    "registered": true,
     "residency_us": null,
     "uart_clock_handoff": null,
     "uart_sleep": {},
@@ -107,10 +140,18 @@
    "current": null,
    "device_callbacks": null,
    "device_callbacks_previous_boot": null,
-   "durable": null,
+   "durable": {
+    "product": {
+     "kernel_completed": true,
+     "reason": null,
+     "request_boot_id": "boot-a",
+     "state": "restored",
+     "wake_reason": "power"
+    }
+   },
    "previous_boot": null,
    "radio_restore": null,
-   "reset_status": null,
+   "reset_status": "valid=1 cause=software_reset raw=0x00000004",
    "retention": null,
    "selftest": null,
    "usb_restore": {}
@@ -186,13 +227,13 @@
   "pack_temperature": null,
   "sleep": {
    "boot_id": "boot-a",
-   "kernel_completed": false,
+   "kernel_completed": true,
    "reason": null,
-   "request_boot_id": null,
-   "same_boot": null,
+   "request_boot_id": "boot-a",
+   "same_boot": true,
    "schema": "org.y2linux.sleep/v1",
-   "state": "idle",
-   "wake_reason": "unknown"
+   "state": "restored",
+   "wake_reason": "power"
   },
   "soc_confidence": null,
   "soc_percent": null,
@@ -264,11 +305,11 @@
  "record": {
   "boot_id": "boot-a",
   "build_id": "fixture-build",
-  "collection_duration_ns": 17664271,
+  "collection_duration_ns": 17873494,
   "evidence_level": "IMPLEMENTED",
   "failure": null,
   "kernel": "6.18.0-fixture",
-  "monotonic_ns": 17782883256179,
+  "monotonic_ns": 21339620439282,
   "parameters": {},
   "reborn_commit": "reborn",
   "result": "observed",
@@ -276,7 +317,7 @@
   "units": {
    "collection_duration": "ns"
   },
-  "wall_timestamp": "2026-10-28T19:26:03.311250+00:00",
+  "wall_timestamp": "2026-10-28T20:25:20.048433+00:00",
   "workload": "observation",
   "y2linux_commit": "linux-commit"
  },
@@ -295,12 +336,12 @@
   "sd_bus_parameters": null,
   "volumes": [
    {
-    "available_bytes": 15794876416,
-    "available_inodes": 3978327,
+    "available_bytes": 15793102848,
+    "available_inodes": 3978003,
     "controller_valid": false,
     "device_id": "179:2",
     "filesystem": "ext4",
-    "free_bytes": 15794876416,
+    "free_bytes": 15793102848,
     "generation": "boot-a:22:179:2",
     "mount_id": 22,
     "options": [
@@ -320,12 +361,12 @@
     "uuid": null
    },
    {
-    "available_bytes": 15794876416,
-    "available_inodes": 3978327,
+    "available_bytes": 15793102848,
+    "available_inodes": 3978003,
     "controller_valid": false,
     "device_id": "179:9",
     "filesystem": "ext4",
-    "free_bytes": 15794876416,
+    "free_bytes": 15793102848,
     "generation": "boot-a:30:179:9",
     "mount_id": 30,
     "options": [
@@ -363,7 +404,51 @@
  },
  "system": {
   "application_readiness": null,
-  "boot_history": null,
+  "boot_history": {
+   "boot_count": 41,
+   "boot_id": "boot-z",
+   "consecutive_unclean": 2,
+   "history": [
+    {
+     "boot_id": "boot-0",
+     "last_stage": "shutdown_complete"
+    },
+    {
+     "boot_id": "boot-1",
+     "last_stage": "shutdown_complete"
+    },
+    {
+     "boot_id": "boot-2",
+     "last_stage": "shutdown_complete"
+    },
+    {
+     "boot_id": "boot-3",
+     "last_stage": "shutdown_complete"
+    },
+    {
+     "boot_id": "boot-4",
+     "last_stage": "shutdown_complete"
+    },
+    {
+     "boot_id": "boot-5",
+     "last_stage": "shutdown_complete"
+    },
+    {
+     "boot_id": "boot-6",
+     "last_stage": "shutdown_complete"
+    },
+    {
+     "boot_id": "boot-7",
+     "last_stage": "shutdown_complete"
+    }
+   ],
+   "identity": {
+    "release_version": "1.0.0-old"
+   },
+   "last_stage": "application_ready",
+   "orderly_shutdown": false,
+   "schema": 1
+  },
   "boot_stages": [],
   "crng_ready": null,
   "entropy_available_bits": null,
@@ -383,9 +468,9 @@
    "state": "Missing"
   },
   "reborn_supervisor": null,
-  "reset_cause": null,
-  "reset_cause_reason": "no_qualified_retained_register",
-  "reset_status_raw": null,
+  "reset_cause": "software_reset",
+  "reset_cause_reason": "rgu_wdt_status_at_probe",
+  "reset_status_raw": "0x00000004",
   "rtc": [],
   "ssh": {
    "reason": "ssh_record_stale_or_absent",
@@ -393,10 +478,10 @@
   },
   "time": {
    "anchor": {},
-   "build_epoch": null,
-   "clock_sane": false,
+   "build_epoch": 1788000000,
+   "clock_sane": true,
    "entropy_ready": null,
-   "epoch": 1793215563.3267415,
+   "epoch": 1793219120.063928,
    "ntp_authenticated": false,
    "reason": "clock_not_established",
    "rtc_retention_qualified": false,
@@ -446,6 +531,7 @@
   "versions": {
    "build_git_commit": "linux-commit",
    "feature_contract_version": 2,
+   "kernel_version": "6.18.0-fixture",
    "platform_api_version": 1,
    "reborn_source_commit": "reborn",
    "release_version": "1.0.0-fixture",
@@ -465,7 +551,12 @@
   "coexistence": null,
   "default_route": [],
   "dns_ready": false,
-  "events": null,
+  "events": {
+   "boot_id": "boot-a",
+   "connected": 1,
+   "last_event": "CONNECTED",
+   "real_disconnects": 0
+  },
   "failed_network_id": null,
   "ip_addresses": [],
   "power_save": null,

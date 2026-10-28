@@ -1,11 +1,49 @@
 {
- "boot_count": 1,
+ "boot_count": 42,
  "boot_id": "boot-a",
- "consecutive_unclean": 0,
- "history": [],
+ "consecutive_unclean": 3,
+ "history": [
+  {
+   "boot_id": "boot-1",
+   "last_stage": "shutdown_complete"
+  },
+  {
+   "boot_id": "boot-2",
+   "last_stage": "shutdown_complete"
+  },
+  {
+   "boot_id": "boot-3",
+   "last_stage": "shutdown_complete"
+  },
+  {
+   "boot_id": "boot-4",
+   "last_stage": "shutdown_complete"
+  },
+  {
+   "boot_id": "boot-5",
+   "last_stage": "shutdown_complete"
+  },
+  {
+   "boot_id": "boot-6",
+   "last_stage": "shutdown_complete"
+  },
+  {
+   "boot_id": "boot-7",
+   "last_stage": "shutdown_complete"
+  },
+  {
+   "boot_id": "boot-z",
+   "identity": {
+    "release_version": "1.0.0-old"
+   },
+   "last_stage": "application_ready",
+   "orderly_shutdown": false
+  }
+ ],
  "identity": {
   "build_git_commit": "linux-commit",
   "feature_contract_version": 2,
+  "kernel_version": "6.18.0-fixture",
   "platform_api_version": 1,
   "reborn_source_commit": "reborn",
   "release_version": "1.0.0-fixture",
@@ -13,11 +51,11 @@
  },
  "last_stage": "platform_start",
  "orderly_shutdown": false,
- "previous_boot_id": null,
- "recovery_recommended": false,
- "reset_cause": null,
- "reset_cause_reason": "not_observed",
- "reset_status_raw": null,
+ "previous_boot_id": "boot-z",
+ "recovery_recommended": true,
+ "reset_cause": "software_reset",
+ "reset_cause_reason": "rgu_wdt_status_at_probe",
+ "reset_status_raw": "0x00000004",
  "schema": 1,
- "stage_monotonic_ns": 17783037388124
+ "stage_monotonic_ns": 21339779014014
 }

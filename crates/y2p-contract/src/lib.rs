@@ -78,15 +78,6 @@ pub struct BootStageLine {
     pub monotonic_s: f64,
 }
 
-/// One earlier boot in `boot.json` `history` (at most 8).
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct BootHistory {
-    pub boot_id: Option<String>,
-    pub last_stage: Option<BootStage>,
-    pub orderly_shutdown: Option<bool>,
-    pub identity: Value,
-}
-
 /// `/data/system/platform/boot.json` (schema 1), also printed by `boot-stage`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct BootRecord {
@@ -102,7 +93,9 @@ pub struct BootRecord {
     pub reset_cause: Option<String>,
     pub reset_cause_reason: String,
     pub reset_status_raw: Option<String>,
-    pub history: Vec<BootHistory>,
+    /// Earlier boots (at most 8), each `{boot_id, last_stage, orderly_shutdown, identity}` as the boot
+    /// that wrote it left it: kept verbatim, also older shapes.
+    pub history: Vec<Value>,
     /// `/etc/y2linux/versions.json` as read (null when unreadable).
     pub identity: Value,
 }

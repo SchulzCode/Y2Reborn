@@ -2,11 +2,11 @@
  "record": {
   "boot_id": "boot-a",
   "build_id": "fixture-build",
-  "collection_duration_ns": 17497888,
+  "collection_duration_ns": 17792336,
   "evidence_level": "IMPLEMENTED",
   "failure": null,
   "kernel": "6.18.0-fixture",
-  "monotonic_ns": 17782941440678,
+  "monotonic_ns": 21339680050077,
   "parameters": {},
   "reborn_commit": "reborn",
   "result": "observed",
@@ -14,7 +14,7 @@
   "units": {
    "collection_duration": "ns"
   },
-  "wall_timestamp": "2026-10-28T19:26:03.369435+00:00",
+  "wall_timestamp": "2026-10-28T20:25:20.108044+00:00",
   "workload": "observation",
   "y2linux_commit": "linux-commit"
  },
@@ -25,7 +25,12 @@
   "coexistence": null,
   "default_route": [],
   "dns_ready": false,
-  "events": null,
+  "events": {
+   "boot_id": "boot-a",
+   "connected": 1,
+   "last_event": "CONNECTED",
+   "real_disconnects": 0
+  },
   "failed_network_id": null,
   "ip_addresses": [],
   "power_save": null,
