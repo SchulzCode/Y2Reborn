@@ -1,6 +1,18 @@
 # Current Reborn state on the Y2
 
-## 1.0.0-beta.8.42 — Y2Linux 1.0 Beta 8.42 (Baseline 163), 2026-10-28 (latest): sleep, quick scan, report fixes
+## 1.0.0-beta.8.43 — Y2Linux 1.0 Beta 8.43 (Baseline 164), 2026-10-28 (latest): issue fixes
+
+Published as `baseline-164` (Reborn `a08ca5d`, fixes `2eada03`; sequence 11000). #51: Cancel and a held Back leave
+Search to the screen it was opened from (the router remembers the Back press; the keyboard's dead `Leave` path is
+gone). #45/#46: `albums::unify_album_artists` on the library thread gives songs without Album Artist the album's single
+one (same storage, folder, title); `Track::own_album_artist` keeps the tag for Last.fm. #52/#55: `Settings::home_hidden`
+(Customize › Home Menu lists every place). #60/#25: `QueueOrigin`; Go to Album becomes Go to Playlist/Folder/Search/
+Genre/Songs. #57: skin `remap` recolours warp corners. #56: `AlbumOrder` (Customize › Album Order). #30: letter steps
+while the fast-scroll letter shows (`FAST_SCROLL_LINGER` 700 ms). #62: unplug toast. #28: ticks on a computer
+connecting and on held seeks (`SEEK_TICK_GAP` 300 ms). Details:
+[Y2Linux Beta 8.43 report](https://github.com/SchulzCode/Y2Linux/blob/main/docs/validation/Y2-LINUX-1.0-BETA-8.43.md).
+
+## 1.0.0-beta.8.42 — Y2Linux 1.0 Beta 8.42 (Baseline 163), 2026-10-28: sleep, quick scan, report fixes
 
 Published as `baseline-163` (Reborn `25b8e06`; sequence 10900). From the 2026-10-28 review of 40 error reports:
 after a Bluetooth loss (a sleep turns Bluetooth off, a link drops) Play with nothing in the jack waits up to 20 s for
