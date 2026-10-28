@@ -101,6 +101,7 @@ const KEY_UP: u16 = 103;
 const KEY_PAGEUP: u16 = 104;
 const KEY_DOWN: u16 = 108;
 const KEY_PAGEDOWN: u16 = 109;
+const KEY_POWER: u16 = 116;
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 pub struct Device {
@@ -214,6 +215,9 @@ struct Pressed {
     stamp_us: Option<u64>,
     last_repeat: Instant,
     long_emitted: bool,
+    /// Found held after a whole-system sleep (`resumed`), never seen as a
+    /// press: it can become a hold, but its short release is no action.
+    resumed: bool,
 }
 
 /// The only layer that knows Linux event types, key codes, and device names.
@@ -240,6 +244,36 @@ impl InputManager {
         self.dropping.clear();
         self.rescan(devices());
         self.next_rescan = Instant::now();
+        // F57: Power held through the wake sends no press after the reopen,
+        // so that hold never turned the player off; held on, the PMIC's own
+        // long-press reset cuts the power (suspected for c077cc2e).
+        let held = self
+            .files
+            .iter()
+            .filter(|(device, file, _, _)| {
+                device.name == PMIC_KEYS
+                    && crate::native::evdev_key_down(file, KEY_POWER) == Some(true)
+            })
+            .map(|(device, _, _, _)| device.identity.to_string_lossy().into_owned())
+            .collect();
+        self.held_through_resume(held, Instant::now());
+    }
+
+    /// Power still down after a resume starts a hold from now. The wake
+    /// press itself must not also act: its short release is only a Cancel.
+    fn held_through_resume(&mut self, identities: Vec<String>, now: Instant) {
+        for identity in identities {
+            self.pressed.insert(
+                (identity, PhysicalControl::Power),
+                Pressed {
+                    started: now,
+                    stamp_us: None,
+                    last_repeat: now,
+                    long_emitted: false,
+                    resumed: true,
+                },
+            );
+        }
     }
 
     pub fn open() -> Self {
@@ -646,6 +680,7 @@ impl InputManager {
                         stamp_us,
                         last_repeat: now,
                         long_emitted: false,
+                        resumed: false,
                     },
                 );
                 vec![InputEvent {
@@ -657,13 +692,16 @@ impl InputManager {
             NormalizedInput::Release(control) => {
                 let state = self.pressed.remove(&(identity.to_owned(), control));
                 let mut out = vec![];
+                let mut long = false;
                 if let Some(state) = state {
                     let held = stamp_us
                         .zip(state.stamp_us)
                         .and_then(|(end, start)| end.checked_sub(start))
                         .map(Duration::from_micros)
                         .unwrap_or_else(|| now.saturating_duration_since(state.started));
+                    long = state.long_emitted;
                     if !state.long_emitted && held >= LONG_PRESS && is_long_press_control(control) {
+                        long = true;
                         out.push(InputEvent {
                             device: device.to_owned(),
                             kernel_mono_us: None,
@@ -671,10 +709,12 @@ impl InputManager {
                         });
                     }
                 }
+                // A wake press released before its hold began did its job.
+                let short_wake = state.is_some_and(|state| state.resumed) && !long;
                 out.push(InputEvent {
                     device: device.to_owned(),
                     kernel_mono_us: None,
-                    input: if state.is_some() {
+                    input: if state.is_some() && !short_wake {
                         NormalizedInput::Release(control)
                     } else {
                         NormalizedInput::Cancel(control)
@@ -2287,6 +2327,64 @@ mod tests {
             input.feed(PMIC_KEYS, EV_KEY, 116, 0, now)[0].input,
             NormalizedInput::Cancel(PhysicalControl::Power)
         );
+    }
+
+    #[test]
+    fn power_held_through_a_wake_turns_the_player_off_and_a_short_wake_press_does_nothing() {
+        // F57 (c077cc2e): the wake press, still down after the reopen, is a
+        // hold from the resume on; it never becomes a short press.
+        let route = |input: &mut InputManager, router: &mut ActionRouter, at, lit| {
+            input
+                .tick(at)
+                .iter()
+                .chain(input.feed(PMIC_KEYS, EV_KEY, 116, 0, at).iter())
+                .flat_map(|event| router.route(event, lit))
+                .collect::<Vec<_>>()
+        };
+        for lit in [true, false] {
+            let mut input = InputManager::empty();
+            let mut router = ActionRouter::default();
+            let now = Instant::now();
+            input.held_through_resume(vec![PMIC_KEYS.into()], now);
+            let hold = input
+                .tick(now + LONG_PRESS)
+                .iter()
+                .flat_map(|event| router.route(event, lit))
+                .collect::<Vec<_>>();
+            assert_eq!(
+                hold,
+                if lit {
+                    vec![Action::PowerHold]
+                } else {
+                    vec![Action::ScreenWake, Action::PowerHold]
+                }
+            );
+            assert_eq!(
+                route(&mut input, &mut router, now + Duration::from_secs(1), true),
+                vec![Action::PowerHoldCancel]
+            );
+
+            let mut input = InputManager::empty();
+            let mut router = ActionRouter::default();
+            input.held_through_resume(vec![PMIC_KEYS.into()], now);
+            let short = now + LONG_PRESS / 2;
+            assert!(input.tick(short).is_empty());
+            assert_eq!(
+                input.feed(PMIC_KEYS, EV_KEY, 116, 0, short)[0].input,
+                NormalizedInput::Cancel(PhysicalControl::Power)
+            );
+            input.held_through_resume(vec![PMIC_KEYS.into()], now);
+            assert!(route(&mut input, &mut router, short, lit).is_empty());
+            // A repeated press record while held changes nothing.
+            input.held_through_resume(vec![PMIC_KEYS.into()], now);
+            assert!(input.feed(PMIC_KEYS, EV_KEY, 116, 1, short).is_empty());
+            assert!(route(&mut input, &mut router, short, lit).is_empty());
+            // The next press is an ordinary press again.
+            assert_eq!(
+                input.feed(PMIC_KEYS, EV_KEY, 116, 1, short)[0].input,
+                NormalizedInput::Press(PhysicalControl::Power)
+            );
+        }
     }
 
     #[test]

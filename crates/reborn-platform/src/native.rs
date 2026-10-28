@@ -45,6 +45,23 @@ pub fn evdev_monotonic_clock(file: &std::fs::File) -> bool {
     // SAFETY: valid open evdev descriptor and a pointer to a live c_int.
     unsafe { libc::ioctl(file.as_raw_fd(), EVIOCSCLOCKID as _, &clock) == 0 }
 }
+/// Whether key `code` is down now (EVIOCGKEY). A key held while evdev is
+/// reopened sends no new press, only its release. `None`: unreadable.
+pub(crate) fn evdev_key_down(file: &std::fs::File, code: u16) -> Option<bool> {
+    use std::os::fd::AsRawFd;
+    // _IOR('E', 0x18, len); KEY_MAX 0x2ff fits in 96 bytes of key bits.
+    const KEY_BYTES: usize = 96;
+    const EVIOCGKEY: libc::c_ulong = 0x8000_4518 | ((KEY_BYTES as libc::c_ulong) << 16);
+    let code = usize::from(code);
+    if code >= KEY_BYTES * 8 {
+        return None;
+    }
+    let mut bits = [0u8; KEY_BYTES];
+    // SAFETY: valid open evdev descriptor; the kernel writes at most the
+    // KEY_BYTES encoded in the request into this live buffer.
+    let result = unsafe { libc::ioctl(file.as_raw_fd(), EVIOCGKEY as _, bits.as_mut_ptr()) };
+    (result >= 0).then(|| bits[code / 8] & (1 << (code % 8)) != 0)
+}
 /// Wait on the existing evdev handles without a polling thread or allocations.
 /// Readiness includes HUP/ERR so the normal input recovery path can cancel held
 /// controls and rediscover a lost device. Signals interrupt shutdown promptly.
@@ -110,6 +127,12 @@ mod input_wait_tests {
         assert_eq!(&bytes, b"event");
         drop(writer);
         assert!(wait_readable(std::iter::once(reader.as_fd()), Duration::from_secs(1)).unwrap());
+    }
+    #[test]
+    fn key_state_of_a_non_evdev_file_or_unknown_code_is_unknown() {
+        let file = std::fs::File::open("/dev/null").unwrap();
+        assert_eq!(super::evdev_key_down(&file, 116), None);
+        assert_eq!(super::evdev_key_down(&file, 768), None);
     }
 }
 /// Bytes and total bytes of the filesystem holding `path`.
