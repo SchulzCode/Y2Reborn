@@ -47,6 +47,11 @@ const RESTART_SONG_AFTER_MS: u64 = 3_000;
 /// Headphone volume reports this soon after the player set it are its echo
 /// (headphones round to their own steps), not a change on the headphones.
 const BT_VOLUME_ECHO: Duration = Duration::from_secs(1);
+/// How long after a Bluetooth loss (or the wake after one) Play waits for
+/// those headphones instead of the jack or the speaker (F51).
+const LOST_PEER_WINDOW: Duration = Duration::from_secs(120);
+/// How long one Play waits for them to come back.
+const LOST_PEER_PLAY_WAIT: Duration = Duration::from_secs(20);
 
 /// Bluetooth headphones that report their own volume (AVRCP absolute
 /// volume) follow the player's volume, and Reborn's software level stays
@@ -233,6 +238,8 @@ struct Runtime {
     /// A jack change still to act on: it waits while an output start is
     /// pending (a reconfiguration takes one change at a time).
     jack_pending: Option<bool>,
+    /// The Bluetooth headphones just lost; they usually return (F51).
+    lost_peer: Option<LostPeer>,
     playback_hints: reborn_platform::workload::Hints,
     interaction_hints: reborn_platform::workload::Hints,
     model: AppModel,
@@ -1410,6 +1417,7 @@ impl Runtime {
     fn bluetooth_peer_lost(&mut self, recovery: &str) {
         self.abandon_pending_reconfiguration();
         if let AudioOutput::Bluetooth(address) = self.model.output.clone() {
+            self.lost_peer = Some(LostPeer::new(address.clone(), Instant::now()));
             self.model.apply(Event::BluetoothDisconnected(address));
         }
         self.pause();
@@ -1820,6 +1828,9 @@ impl Runtime {
         }
     }
     fn load(&mut self) -> Result<(), String> {
+        if self.wait_for_lost_peer() {
+            return Ok(());
+        }
         // The output may just have become headphones with their own volume.
         self.sync_bt_volume();
         self.playback.set_balance(self.model.settings.balance);
@@ -2046,6 +2057,7 @@ impl Runtime {
             || !self.playback.is_held()
             || self.pending_reconfiguration.is_some()
             || self.model.speaker_active != self.speaker_route()
+            || self.awaits_lost_peer()
         {
             return false;
         }
@@ -2194,6 +2206,69 @@ impl Runtime {
             }
         }
     }
+    /// F51 (reports 666edc3c, 46be199c): a sleep turns Bluetooth off and a
+    /// link drops now and then; the output then falls back to the jack, and a
+    /// Play in the seconds before the headphones returned played there (since
+    /// #28 out loud on the speaker). With nothing in the jack, Play waits for
+    /// them instead; the output follows them when they are back.
+    fn awaits_lost_peer(&self) -> bool {
+        self.lost_peer
+            .as_ref()
+            .is_some_and(|lost| lost.applies(&self.model.output, self.headphones, Instant::now()))
+    }
+    fn wait_for_lost_peer(&mut self) -> bool {
+        if !self.awaits_lost_peer() {
+            return false;
+        }
+        let Some(lost) = self.lost_peer.as_mut() else {
+            return false;
+        };
+        lost.play.get_or_insert_with(Instant::now);
+        let address = lost.address.clone();
+        let name = self
+            .bt_state
+            .devices
+            .iter()
+            .find(|d| d.address.eq_ignore_ascii_case(&address))
+            .map(|d| d.name.clone())
+            .filter(|name| !name.is_empty())
+            .unwrap_or_else(|| "Bluetooth headphones".into());
+        self.ui.flash(format!("Waiting for {name}…"));
+        self.log.emit(
+            Level::Info,
+            "audio",
+            "play_waits_for_bluetooth",
+            "Play waits for the Bluetooth headphones just lost",
+            None,
+            json!({}),
+        );
+        self.dirty.mark_both();
+        true
+    }
+    /// A Play that waited too long gives up; afterwards the jack (or the
+    /// speaker) plays again like before.
+    fn lost_peer_tick(&mut self) {
+        let now = Instant::now();
+        let Some(lost) = self.lost_peer.as_ref() else {
+            return;
+        };
+        if lost.gave_up(now) {
+            self.lost_peer = None;
+            self.ui
+                .flash("Bluetooth headphones didn't come back. Press Play to use the player.");
+            self.log.emit(
+                Level::Info,
+                "audio",
+                "bluetooth_wait_ended",
+                "The Bluetooth headphones did not return in time",
+                None,
+                json!({}),
+            );
+            self.dirty.mark_render();
+        } else if lost.expired(now) {
+            self.lost_peer = None;
+        }
+    }
     /// The jack output plays on the internal speaker: wired, Speaker on and
     /// the kernel has seen the jack empty (unknown counts as headphones; the
     /// kernel also refuses the speaker while it reads a plug).
@@ -2241,6 +2316,11 @@ impl Runtime {
         if let AudioOutput::Bluetooth(address) = &out {
             self.bt_state.playback_rate(address)?;
         }
+        // The headphones a Play waited for are back: it plays there now.
+        let waited = self
+            .lost_peer
+            .take()
+            .is_some_and(|lost| lost.play.is_some() && lost.is(&out));
         let active = matches!(
             self.model.playback,
             PlaybackState::Playing | PlaybackState::Buffering
@@ -2255,7 +2335,7 @@ impl Runtime {
             self.cap_wired_volume();
         }
         self.dirty.mark_both();
-        if active {
+        if active || waited {
             self.load()?
         }
         self.log.emit(
@@ -2361,6 +2441,14 @@ impl Runtime {
             return Err("sleep_operation_in_progress".into());
         }
         self.dirty.mark_render();
+        // Turning Bluetooth off, disconnecting or choosing an output by hand
+        // decides where audio goes; nothing waits for lost headphones then.
+        if matches!(
+            e,
+            Effect::BluetoothPower | Effect::BluetoothDevice { .. } | Effect::Output(_)
+        ) {
+            self.lost_peer = None;
+        }
         match e {
             Effect::None => {}
             Effect::Platform(task) => {
@@ -2775,6 +2863,10 @@ impl Runtime {
                 }
                 self.model.apply(Event::ScreenWake);
                 self.woke_at = Some(Instant::now());
+                // Sleep turned Bluetooth off; the headphones return after the wake.
+                if let Some(lost) = self.lost_peer.as_mut() {
+                    lost.since = Instant::now();
+                }
                 // Awake again: a sleep still waiting for its turn is dropped.
                 if self.queued_platform == Some(reborn_core::PlatformTask::SleepRequest) {
                     self.queued_platform = None;
@@ -4273,6 +4365,42 @@ impl AutoOutput {
     }
 }
 
+/// Bluetooth headphones that were the output until they dropped (F51).
+struct LostPeer {
+    address: String,
+    /// The loss, or the wake after it.
+    since: Instant,
+    /// A Play is waiting for them since then.
+    play: Option<Instant>,
+}
+impl LostPeer {
+    fn new(address: String, since: Instant) -> Self {
+        Self {
+            address,
+            since,
+            play: None,
+        }
+    }
+    fn is(&self, output: &AudioOutput) -> bool {
+        matches!(output, AudioOutput::Bluetooth(a) if a.eq_ignore_ascii_case(&self.address))
+    }
+    /// Play waits: the jack took over from them a short while ago and holds
+    /// no headphones (a plug there is a choice of its own).
+    fn applies(&self, output: &AudioOutput, headphones: Option<bool>, now: Instant) -> bool {
+        matches!(output, AudioOutput::Wired)
+            && headphones != Some(true)
+            && !self.gave_up(now)
+            && (self.play.is_some() || !self.expired(now))
+    }
+    fn gave_up(&self, now: Instant) -> bool {
+        self.play
+            .is_some_and(|at| now.saturating_duration_since(at) >= LOST_PEER_PLAY_WAIT)
+    }
+    fn expired(&self, now: Instant) -> bool {
+        self.play.is_none() && now.saturating_duration_since(self.since) >= LOST_PEER_WINDOW
+    }
+}
+
 /// Observation cadence while such a screen is visible. A cable plug should
 /// appear promptly on PC Transfer; other pages change rarely.
 fn platform_refresh_interval(screen: Screen) -> Duration {
@@ -4636,6 +4764,7 @@ fn run() -> Result<(), String> {
         sleep_minutes_shown: None,
         headphones: None,
         jack_pending: None,
+        lost_peer: None,
         playback_hints: reborn_platform::workload::Hints::default(),
         interaction_hints: reborn_platform::workload::Hints::default(),
         model,
@@ -5588,6 +5717,7 @@ fn run() -> Result<(), String> {
             rt.radio_reply(reply);
         }
         rt.radio_tick();
+        rt.lost_peer_tick();
         rt.scrobble_tick();
         rt.note_history();
         rt.lastfm_tick();
@@ -7403,8 +7533,15 @@ mod ui_readiness_tests {
         assert_eq!(wifi_view(&s).problem, None);
         s.failed_network_id = None;
         // Service text can never reach the screen: problems are an enum.
+        // Only the platform's exact credential reasons mean a wrong password
+        // (F52: "not_authenticated" after a wake read as one).
         s.readiness_reason = Some("org.secret.service credential=abc".into());
         assert_eq!(
+            wifi_view(&s).problem,
+            Some(reborn_core::platform::WifiProblem::Other)
+        );
+        s.readiness_reason = Some("not_authenticated".into());
+        assert_ne!(
             wifi_view(&s).problem,
             Some(reborn_core::platform::WifiProblem::WrongPassword)
         );
@@ -7538,6 +7675,31 @@ mod auto_output_tests {
             transport_generation: 1,
             ..Default::default()
         });
+    }
+    #[test]
+    fn play_waits_briefly_for_bluetooth_headphones_just_lost() {
+        let t0 = Instant::now();
+        let mut lost = LostPeer::new("AA:BB".into(), t0);
+        let wired = AudioOutput::Wired;
+        // Jack empty or not read yet: wait. Headphones in the jack: play there.
+        assert!(lost.applies(&wired, Some(false), t0));
+        assert!(lost.applies(&wired, None, t0));
+        assert!(!lost.applies(&wired, Some(true), t0));
+        // The headphones are the output again: nothing to wait for.
+        assert!(!lost.applies(&AudioOutput::Bluetooth("AA:BB".into()), Some(false), t0));
+        assert!(lost.is(&AudioOutput::Bluetooth("aa:bb".into())));
+        assert!(!lost.is(&AudioOutput::Bluetooth("CC:DD".into())));
+        // Long after the loss (or the wake after it) the jack plays again.
+        let late = t0 + LOST_PEER_WINDOW;
+        assert!(lost.expired(late));
+        assert!(!lost.applies(&wired, Some(false), late));
+        // A Play waits its own time, also past the window, then gives up.
+        lost.play = Some(t0 + Duration::from_secs(110));
+        assert!(!lost.expired(late));
+        assert!(lost.applies(&wired, Some(false), late));
+        let after = t0 + Duration::from_secs(110) + LOST_PEER_PLAY_WAIT;
+        assert!(lost.gave_up(after));
+        assert!(!lost.applies(&wired, Some(false), after));
     }
     #[test]
     fn bluetooth_headphones_win_over_the_jack_once_per_connection() {

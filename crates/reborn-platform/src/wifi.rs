@@ -276,18 +276,23 @@ pub fn problem(s: &Status) -> Option<reborn_core::platform::WifiProblem> {
     if s.readiness != "Failed" && s.error.is_none() {
         return None;
     }
+    // Only the platform's password verdict or our own password check names
+    // the password. Any `auth` (F52) also caught `not_authenticated`, the
+    // platform's plain "not connected", and showed "wrong password" after
+    // every wake that did not reconnect at once.
     Some(
-        if reason.contains("wrong_key")
+        if matches!(reason.as_str(), "wrong_credentials" | "wrong_key")
             || reason.contains("password")
-            || reason.contains("credential")
-            || reason.contains("auth")
         {
             WifiProblem::WrongPassword
         } else if reason.contains("dhcp") || reason.contains("address") {
             WifiProblem::NoAddress
         } else if dns {
             WifiProblem::NoInternetNames
-        } else if reason.contains("not_found") || reason.contains("no_network") {
+        } else if reason.contains("not_found")
+            || reason.contains("no_network")
+            || reason == "ap_unavailable"
+        {
             WifiProblem::NetworkNotFound
         } else {
             WifiProblem::Other
@@ -344,6 +349,11 @@ struct PendingJoin {
     auth_failures: u32,
     not_found: u32,
     status_at: Instant,
+    /// The supplicant's own handshake timeout came before the disconnect.
+    timed_out: bool,
+    /// The last disconnect was ours (a sleep's radio off, another join), not
+    /// the access point's or a timeout.
+    interrupted: bool,
 }
 
 /// `id=7` in a supplicant event (`[id=7 id_str=]`, `id=7 ssid=…`).
@@ -402,6 +412,8 @@ impl PendingJoin {
             auth_failures: 0,
             not_found: 0,
             status_at: now,
+            timed_out: false,
+            interrupted: false,
         })
     }
 
@@ -420,9 +432,22 @@ impl PendingJoin {
             if event.starts_with("CTRL-EVENT-CONNECTED") && ours {
                 return Some(JoinOutcome::Joined);
             }
+            // wpa_supplicant says WRONG_KEY for any handshake that ended
+            // early, also one cut short on this side (F52). Its timeout (a
+            // wrong password on the Y2 ends so, ≈10 s) disconnects locally too.
+            if event.starts_with("Authentication with ") && event.ends_with("timed out.") {
+                self.timed_out = true;
+            } else if event.starts_with("CTRL-EVENT-DISCONNECTED") {
+                self.interrupted = event.contains("locally_generated=1") && !self.timed_out;
+                self.timed_out = false;
+            }
             if event.starts_with("CTRL-EVENT-SSID-TEMP-DISABLED") && ours {
+                let interrupted = std::mem::take(&mut self.interrupted);
                 if event.contains("reason=WRONG_KEY") {
-                    return Some(JoinOutcome::WrongPassword);
+                    if !interrupted {
+                        return Some(JoinOutcome::WrongPassword);
+                    }
+                    continue;
                 }
                 self.auth_failures += 1;
             } else if event.starts_with("CTRL-EVENT-AUTH-REJECT") {
@@ -1164,6 +1189,39 @@ mod tests {
         assert_eq!(problem(&s), None);
     }
     #[test]
+    fn only_a_password_verdict_says_wrong_password() {
+        // F52 (aa96e00a): `not_authenticated` is the platform's plain "not
+        // connected"; any reason containing `auth` showed "wrong password".
+        use reborn_core::platform::WifiProblem;
+        let failed = |reason: &str| {
+            problem(&Status {
+                readiness: "Failed".into(),
+                readiness_reason: Some(reason.into()),
+                ..Default::default()
+            })
+        };
+        for reason in ["wrong_credentials", "wrong_key"] {
+            assert_eq!(failed(reason), Some(WifiProblem::WrongPassword), "{reason}");
+        }
+        for reason in [
+            "not_authenticated",
+            "authentication_timeout",
+            "authentication_failed",
+            "authentication_rejected",
+            "supplicant_unavailable",
+        ] {
+            assert_eq!(failed(reason), Some(WifiProblem::Other), "{reason}");
+        }
+        assert_eq!(failed("ap_unavailable"), Some(WifiProblem::NetworkNotFound));
+        assert_eq!(failed("dhcp_nak"), Some(WifiProblem::NoAddress));
+        // Our own check of a typed password still names it.
+        let typed = Status {
+            error: Some("WPA2 requires SSID 1..32 bytes and password 8..63 bytes".into()),
+            ..Default::default()
+        };
+        assert_eq!(problem(&typed), Some(WifiProblem::WrongPassword));
+    }
+    #[test]
     fn missing_control_samples_and_scans_do_not_invent_link_cycles() {
         let mut previous = None;
         assert_eq!(
@@ -1467,6 +1525,30 @@ mod tests {
             fake.event("<3>CTRL-EVENT-NETWORK-NOT-FOUND");
         }
         assert_eq!(outcome(&mut join, &fake.paths), JoinOutcome::NotFound);
+        // F52: a handshake cut short on this side (a sleep's radio off, another
+        // join) is not a password verdict; the supplicant's timeout is.
+        let mut join =
+            PendingJoin::start(&fake.paths, 5, "Home", Some("rightpassword"), None).unwrap();
+        fake.event(
+            "<3>CTRL-EVENT-DISCONNECTED bssid=aa:bb:cc:dd:ee:ff reason=3 locally_generated=1",
+        );
+        fake.event(
+            "<3>CTRL-EVENT-SSID-TEMP-DISABLED id=3 ssid=\"Home\" auth_failures=1 reason=WRONG_KEY",
+        );
+        fake.event(
+            "<3>CTRL-EVENT-CONNECTED - Connection to aa:bb:cc:dd:ee:ff completed [id=3 id_str=]",
+        );
+        assert_eq!(outcome(&mut join, &fake.paths), JoinOutcome::Joined);
+        let mut join =
+            PendingJoin::start(&fake.paths, 6, "Home", Some("wrongpassword"), None).unwrap();
+        fake.event("<3>Authentication with aa:bb:cc:dd:ee:ff timed out.");
+        fake.event(
+            "<3>CTRL-EVENT-DISCONNECTED bssid=aa:bb:cc:dd:ee:ff reason=3 locally_generated=1",
+        );
+        fake.event(
+            "<3>CTRL-EVENT-SSID-TEMP-DISABLED id=3 ssid=\"Home\" auth_failures=1 reason=WRONG_KEY",
+        );
+        assert_eq!(outcome(&mut join, &fake.paths), JoinOutcome::WrongPassword);
         // A saved network is selected, never removed when it fails.
         let mut join = PendingJoin::start(&fake.paths, 4, "Home", None, Some(0)).unwrap();
         assert!(!join.added);
