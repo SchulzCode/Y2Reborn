@@ -1,8 +1,16 @@
 # Current Reborn state on the Y2
 
-## 1.0.0-beta.8.42 — work in progress, not published (2026-10-27)
+## 1.0.0-beta.8.42 — Y2Linux 1.0 Beta 8.42 (Baseline 163), 2026-10-28 (latest): sleep, quick scan, report fixes
 
-On `main`, not pushed. Sleep (Y2Linux F47/F48): Power turns the screen off at once, as stock, and no longer opens
+Published as `baseline-163` (Reborn `25b8e06`; sequence 10900). From the 2026-10-28 review of 40 error reports:
+after a Bluetooth loss (a sleep turns Bluetooth off, a link drops) Play with nothing in the jack waits up to 20 s for
+those headphones instead of the jack or the speaker (`LostPeer`, `3a4860b`); only the platform's credential reasons
+mean a wrong Wi-Fi password, `ap_unavailable` is Network Not Found (`3a4860b`); a Power key still held after a wake
+starts a hold (EVIOCGKEY, `13f03d0`); a screen-off refused with EACCES before Reborn set a mode counts as done
+(`25b8e06`). Details:
+[Y2Linux Beta 8.42 report](https://github.com/SchulzCode/Y2Linux/blob/main/docs/validation/Y2-LINUX-1.0-BETA-8.42.md).
+
+Sleep (Y2Linux F47/F48): Power turns the screen off at once, as stock, and no longer opens
 the Sleep page; a press that wakes the player during the preparation returns where it was; a refused sleep keeps the
 screen dark (`57b47b2`, `9ee61f0`; test build 160 on the owner's player).
 
@@ -15,9 +23,9 @@ and subfolders from the additive tables `scan_folders` / `scan_volumes` (written
 with `METADATA_REVISION`); their rows count as seen, so deleted files are still pruned. Scan for Music and the
 control `scan` command are `Scanner::scan_all` (every folder). A tag edit made on a computer that changes neither a
 folder's time nor the free space shows after Scan for Music. `scan_completed` gains `quick` and `folders_skipped`.
-Tests `quick_scan_tests`; workspace tests, strict Clippy and fmt pass. Not built since; device timing owed.
+Tests `quick_scan_tests`; workspace tests, strict Clippy and fmt pass. Device timing owed.
 
-## 1.0.0-beta.8.41 — Y2Linux 1.0 Beta 8.41 (Baseline 159), 2026-10-27 (latest): internal speaker, haptics
+## 1.0.0-beta.8.41 — Y2Linux 1.0 Beta 8.41 (Baseline 159), 2026-10-27: internal speaker, haptics
 
 Published as `baseline-159` (Reborn `1358702`; sequence 10700). The Headphone Jack output plays on the internal
 speaker while the kernel reads the jack empty (Settings > Sound > Output > Speaker, on by default): `reborn_platform::jack`
