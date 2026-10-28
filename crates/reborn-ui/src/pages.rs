@@ -11,7 +11,7 @@ use reborn_core::{
         human_bytes, ChargingState, HealthLevel, LowBattery, SdCard, SleepPhase, SleepProblem,
         UpdatePhase, UpdateProblem, UsbTransfer, VolumeSpace, VolumeState, WakeReason, WifiProblem,
     },
-    AppModel, MediaSource, PlatformTask, Screen, Track, HOME_PINNABLE,
+    AppModel, MediaSource, PlatformTask, Screen, Settings, Track, HOME_HIDEABLE, HOME_PINNABLE,
 };
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -56,27 +56,29 @@ impl Page {
 
 /// Home (UI v4): the six places a listener starts from, Audiobooks once
 /// the library holds a book (Beta 8.19, can be switched off), and any Music
-/// lists the owner pinned after Music.
-fn home(m: &AppModel, tracks: &[Track]) -> Vec<Item> {
-    let mut rows = vec![
-        row("Now Playing", "now_playing", ""),
-        row("Music", "music", ""),
-    ];
-    if m.settings.audiobooks_on_home && tracks.iter().any(|t| t.book && t.online) {
+/// lists the owner pinned after Music. Any but Now Playing and Settings can
+/// be taken off (Y2Reborn #52, #55).
+pub(crate) fn home_rows(s: &Settings, tracks: &[Track]) -> Vec<Item> {
+    let mut rows = vec![row("Now Playing", "now_playing", "")];
+    if s.home_shows("music") {
+        rows.push(row("Music", "music", ""));
+    }
+    if s.audiobooks_on_home && tracks.iter().any(|t| t.book && t.online) {
         rows.push(row("Audiobooks", "audiobooks", ""));
     }
     rows.extend(
         HOME_PINNABLE
             .iter()
-            .filter(|(key, _)| m.settings.home_pins.iter().any(|p| p == key))
+            .filter(|(key, _)| s.home_pins.iter().any(|p| p == key))
             .map(|(key, label)| row(label, key, "")),
     );
-    rows.extend([
-        row("Playlists", "playlists", ""),
-        row("Radio", "radio", ""),
-        row("Search", "search", ""),
-        row("Settings", "settings", ""),
-    ]);
+    rows.extend(
+        HOME_HIDEABLE[1..]
+            .iter()
+            .filter(|(key, _)| s.home_shows(key))
+            .map(|(key, label)| row(label, key, "")),
+    );
+    rows.push(row("Settings", "settings", ""));
     rows
 }
 
@@ -97,19 +99,40 @@ fn music(ui: &Ui, m: &AppModel, tracks: &[Track]) -> Vec<Item> {
         row("Genres", "genres", counted(genres, "genre", "genres")),
         row("Folders", "folders", ""),
     ]
+    .into_iter()
+    // Playlists and Search taken off Home stay at hand here.
+    .chain(
+        [("playlists", "Playlists"), ("search", "Search")]
+            .into_iter()
+            .filter(|(key, _)| !m.settings.home_shows(key))
+            .map(|(key, label)| row(label, key, "")),
+    )
+    .collect()
 }
 
-/// Customize's Home Menu value: "Standard", or the pinned lists.
+/// Customize's Home Menu value: "Standard", the pinned lists, what is
+/// hidden, or how many of each.
 fn home_summary(m: &AppModel) -> String {
     let pinned: Vec<&str> = HOME_PINNABLE
         .iter()
         .filter(|(key, _)| m.settings.home_pins.iter().any(|p| p == key))
         .map(|(_, label)| *label)
         .collect();
-    match pinned.len() {
-        0 => "Standard".into(),
-        1 | 2 => pinned.join(", "),
-        n => format!("{n} lists added"),
+    let mut hidden: Vec<&str> = HOME_HIDEABLE
+        .iter()
+        .filter(|(key, _)| !m.settings.home_shows(key))
+        .map(|(_, label)| *label)
+        .collect();
+    if !m.settings.audiobooks_on_home {
+        hidden.insert(usize::from(!m.settings.home_shows("music")), "Audiobooks");
+    }
+    match (pinned.len(), hidden.len()) {
+        (0, 0) => "Standard".into(),
+        (1 | 2, 0) => pinned.join(", "),
+        (n, 0) => format!("{n} lists added"),
+        (0, 1 | 2) => format!("{} hidden", hidden.join(", ")),
+        (0, n) => format!("{n} hidden"),
+        (p, h) => format!("{p} added, {h} hidden"),
     }
 }
 
@@ -130,19 +153,28 @@ fn disabled(mut item: Item, enabled: bool) -> Item {
 
 pub fn page(ui: &Ui, m: &AppModel, tracks: &[Track]) -> Page {
     match m.screen {
-        Screen::Home => Page::rows(home(m, tracks)),
+        Screen::Home => Page::rows(home_rows(&m.settings, tracks)),
         Screen::Music => Page::rows(music(ui, m, tracks)),
-        Screen::HomeMenu => Page::rows(
-            std::iter::once(
-                row("Audiobooks", "home_audiobooks", "")
-                    .with_kind(RowKind::Toggle(m.settings.audiobooks_on_home)),
+        // Every place Home can show, in Home's order (#52, #55).
+        Screen::HomeMenu => {
+            let shown = |(key, label): &(&str, &str)| {
+                row(label, &format!("home_show:{key}"), "")
+                    .with_kind(RowKind::Toggle(m.settings.home_shows(key)))
+            };
+            Page::rows(
+                std::iter::once(shown(&HOME_HIDEABLE[0]))
+                    .chain(std::iter::once(
+                        row("Audiobooks", "home_audiobooks", "")
+                            .with_kind(RowKind::Toggle(m.settings.audiobooks_on_home)),
+                    ))
+                    .chain(HOME_PINNABLE.iter().map(|(key, label)| {
+                        let on = m.settings.home_pins.iter().any(|p| p == key);
+                        row(label, &format!("home_pin:{key}"), "").with_kind(RowKind::Toggle(on))
+                    }))
+                    .chain(HOME_HIDEABLE[1..].iter().map(shown))
+                    .collect(),
             )
-            .chain(HOME_PINNABLE.iter().map(|(key, label)| {
-                let on = m.settings.home_pins.iter().any(|p| p == key);
-                row(label, &format!("home_pin:{key}"), "").with_kind(RowKind::Toggle(on))
-            }))
-            .collect(),
-        ),
+        }
         Screen::NowPlaying if m.current().is_none() => Page::hero(
             "Nothing Playing",
             "Choose an album, artist or song to start listening.",
@@ -209,6 +241,8 @@ pub fn page(ui: &Ui, m: &AppModel, tracks: &[Track]) -> Page {
         Screen::Customize => Page::rows(vec![
             row("Home Menu", "home_menu", home_summary(m)).with_kind(RowKind::Chevron),
             row("Cover Flow", "album_view", m.settings.album_view.label()),
+            // #56: by title (as before) or by artist, Cover Flow too.
+            row("Album Order", "album_order", m.settings.album_order.label()),
             row("Artists", "artists_list", m.settings.artists_list.label()),
             row(
                 "Now Playing Wheel",

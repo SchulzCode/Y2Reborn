@@ -346,21 +346,155 @@ fn home_menu_switches_pin_and_unpin_from_customize() {
     assert_eq!(rows[m.navigation.focus].secondary, "Standard");
     ui.action(&mut m, &tracks, Action::Select);
     assert_eq!(m.screen, Screen::HomeMenu);
-    // Audiobooks first (Beta 8.19), then the Music lists.
+    // Every place Home can show, in Home's order (#52, #55): Music,
+    // Audiobooks (Beta 8.19), the Music lists, Playlists, Radio, Search.
     let rows = ui.rows(&m, &tracks);
-    assert_eq!(rows[0].key, "home_audiobooks");
-    assert_eq!(rows[0].kind, crate::RowKind::Toggle(true));
-    m.navigation.focus = 1;
+    let keys: Vec<_> = rows.iter().map(|r| r.key.as_str()).collect();
+    assert_eq!(
+        keys,
+        [
+            "home_show:music",
+            "home_audiobooks",
+            "home_pin:artists",
+            "home_pin:albums",
+            "home_pin:tracks",
+            "home_pin:genres",
+            "home_pin:folders",
+            "home_show:playlists",
+            "home_show:radio",
+            "home_show:search"
+        ]
+    );
+    assert_eq!(rows[1].kind, crate::RowKind::Toggle(true));
+    assert_eq!(rows[2].kind, crate::RowKind::Toggle(false));
+    assert_eq!(rows[8].kind, crate::RowKind::Toggle(true));
+    m.navigation.focus = 2;
     assert_eq!(
         ui.action(&mut m, &tracks, Action::Select),
         Effect::SetHomePin("artists".into(), true)
     );
     m.settings.pin_home("artists", true);
-    assert_eq!(ui.rows(&m, &tracks)[1].kind, crate::RowKind::Toggle(true));
+    assert_eq!(ui.rows(&m, &tracks)[2].kind, crate::RowKind::Toggle(true));
     assert_eq!(
         ui.action(&mut m, &tracks, Action::Select),
         Effect::SetHomePin("artists".into(), false)
     );
+    m.navigation.focus = 8;
+    assert_eq!(
+        ui.action(&mut m, &tracks, Action::Select),
+        Effect::SetHomeShown("radio".into(), false)
+    );
+    m.settings.show_on_home("radio", false);
+    assert_eq!(ui.rows(&m, &tracks)[8].kind, crate::RowKind::Toggle(false));
+    assert_eq!(
+        ui.action(&mut m, &tracks, Action::Select),
+        Effect::SetHomeShown("radio".into(), true)
+    );
+}
+
+#[test]
+fn home_places_can_be_hidden_but_now_playing_and_settings_stay() {
+    let ui = radios();
+    let mut m = app(Screen::Home);
+    let tracks = m.library.tracks.clone();
+    let keys =
+        |m: &AppModel| -> Vec<String> { ui.rows(m, &tracks).into_iter().map(|r| r.key).collect() };
+    let summary = |m: &mut AppModel| {
+        let screen = std::mem::replace(&mut m.screen, Screen::Customize);
+        let rows = ui.rows(m, &tracks);
+        m.screen = screen;
+        rows.into_iter()
+            .find(|r| r.key == "home_menu")
+            .unwrap()
+            .secondary
+    };
+    assert_eq!(summary(&mut m), "Standard");
+    for key in [
+        "music",
+        "playlists",
+        "radio",
+        "search",
+        "now_playing",
+        "settings",
+    ] {
+        m.settings.show_on_home(key, false);
+    }
+    assert_eq!(keys(&m), ["now_playing", "settings"]);
+    assert_eq!(summary(&mut m), "4 hidden");
+    // Pinned lists still stand on Home without Music.
+    m.settings.pin_home("albums", true);
+    assert_eq!(keys(&m), ["now_playing", "albums", "settings"]);
+    assert_eq!(summary(&mut m), "1 added, 4 hidden");
+    let quads = ui.draw(&m, &tracks, false);
+    assert_eq!(crate::focus_target_count(&quads), 1);
+    // Playlists and Search taken off Home are kept at hand in Music.
+    m.settings.show_on_home("music", true);
+    m.settings.show_on_home("radio", true);
+    m.settings.pin_home("albums", false);
+    assert_eq!(keys(&m), ["now_playing", "music", "radio", "settings"]);
+    assert_eq!(summary(&mut m), "Playlists, Search hidden");
+    m.screen = Screen::Music;
+    assert_eq!(
+        keys(&m),
+        [
+            "artists",
+            "albums",
+            "tracks",
+            "genres",
+            "folders",
+            "playlists",
+            "search"
+        ]
+    );
+    // Reset Settings shows everything again (defaults have nothing hidden).
+    m.settings = reborn_core::Settings::default();
+    m.screen = Screen::Home;
+    assert_eq!(
+        keys(&m),
+        [
+            "now_playing",
+            "music",
+            "playlists",
+            "radio",
+            "search",
+            "settings"
+        ]
+    );
+}
+
+#[test]
+fn back_to_home_after_a_home_menu_change_keeps_the_place_focused() {
+    let mut ui = radios();
+    let mut m = app(Screen::Home);
+    let tracks = m.library.tracks.clone();
+    let home = |ui: &Ui, m: &AppModel| -> Vec<String> {
+        ui.rows(m, &tracks).into_iter().map(|r| r.key).collect()
+    };
+    select_key(&mut ui, &mut m, "settings");
+    select_key(&mut ui, &mut m, "customize");
+    select_key(&mut ui, &mut m, "home_menu");
+    // Hide Radio, pin Albums and Songs: Settings moves from 5 to 6.
+    for (key, effect) in [
+        (
+            "home_show:radio",
+            Effect::SetHomeShown("radio".into(), false),
+        ),
+        ("home_pin:albums", Effect::SetHomePin("albums".into(), true)),
+        ("home_pin:tracks", Effect::SetHomePin("tracks".into(), true)),
+    ] {
+        assert_eq!(select_key(&mut ui, &mut m, key), effect);
+        match effect {
+            Effect::SetHomeShown(k, on) => m.settings.show_on_home(&k, on),
+            Effect::SetHomePin(k, on) => m.settings.pin_home(&k, on),
+            _ => unreachable!(),
+        }
+    }
+    for _ in 0..3 {
+        ui.action(&mut m, &tracks, Action::Back);
+    }
+    assert_eq!(m.screen, Screen::Home);
+    assert_eq!(home(&ui, &m)[m.navigation.focus], "settings");
+    assert_eq!(home(&ui, &m).len(), 7);
 }
 
 /// The library plus "Momo", three 60-s parts in a Hörbücher folder.
@@ -1342,6 +1476,7 @@ fn customize_holds_how_reborn_behaves() {
         [
             "home_menu",
             "album_view",
+            "album_order",
             "artists_list",
             "now_playing_wheel",
             "wrap_around",
@@ -1355,6 +1490,7 @@ fn customize_holds_how_reborn_behaves() {
         [
             "Home Menu",
             "Cover Flow",
+            "Album Order",
             "Artists",
             "Now Playing Wheel",
             "Wrap Around",
@@ -2401,6 +2537,8 @@ fn wheel_keeps_selection_visible_at_both_ends_of_realistic_library_sizes() {
             1
         );
         let before = m.navigation.focus;
+        // Once the fast-scroll letter is gone (#30: it lingers 700 ms).
+        ui.fast_scroll_until = None;
         ui.model_action(&mut m, Action::WheelCounterClockwise(1));
         assert_eq!(
             m.navigation.focus,
@@ -2597,6 +2735,10 @@ fn a_computer_connecting_shows_a_message_and_the_usb_symbol_but_never_blocks() {
     let tracks = m.library.tracks.clone();
     m.platform.snapshot.usb = UsbTransfer::Disconnected;
     ui.observe(&m);
+    assert!(
+        !ui.take_connect_tick(),
+        "no tick for the state seen at start"
+    );
     // The status bar's symbol (right side, visible); a message's own icon
     // sits in its pill in the middle, and the bar gives way under it.
     let usb_symbol = |q: &[reborn_graphics::Quad]| {
@@ -2609,6 +2751,11 @@ fn a_computer_connecting_shows_a_message_and_the_usb_symbol_but_never_blocks() {
     let frame = ui.draw(&m, &tracks, false);
     assert!(drawn_text(&frame).contains("Connected to a computer"));
     assert!(!usb_symbol(&frame), "the bar gives way to the message");
+    // #28: one haptic tick with the message, taken once.
+    assert!(ui.take_connect_tick());
+    assert!(!ui.take_connect_tick());
+    ui.observe(&m);
+    assert!(!ui.take_connect_tick(), "still connected: no second tick");
     ui.notice.clear();
     assert!(usb_symbol(&ui.draw(&m, &tracks, false)));
     // Everything keeps working: the wheel moves, Back goes back.
@@ -2625,11 +2772,17 @@ fn a_computer_connecting_shows_a_message_and_the_usb_symbol_but_never_blocks() {
     ui.observe(&m);
     let frame = ui.draw(&m, &tracks, false);
     assert!(drawn_text(&frame).contains("Copying files"));
+    assert!(!ui.take_connect_tick(), "the same computer: no second tick");
     ui.notice.clear();
     assert!(usb_symbol(&ui.draw(&m, &tracks, false)));
     m.platform.snapshot.usb = UsbTransfer::Disconnected;
     ui.observe(&m);
     assert!(!usb_symbol(&ui.draw(&m, &tracks, false)));
+    assert!(!ui.take_connect_tick(), "no tick when the cable leaves");
+    // A computer that starts copying at once connected: one tick.
+    m.platform.snapshot.usb = UsbTransfer::Copying;
+    ui.observe(&m);
+    assert!(ui.take_connect_tick());
 }
 
 #[test]
@@ -3403,7 +3556,7 @@ fn the_search_page_previews_while_typing_and_folds_the_keys_into_its_results() {
     assert_eq!(m.navigation.filter, "Élo");
     assert_eq!(m.navigation.focus, focus);
     // Up to the field (over the heading) and Select: the keys come back with
-    // the text; Cancel gives the search back as it was.
+    // the text.
     ui.model_action(&mut m, Action::WheelCounterClockwise(1));
     assert_eq!(m.navigation.focus, 0, "headings are not stops");
     ui.model_action(&mut m, Action::Select);
@@ -3415,29 +3568,43 @@ fn the_search_page_previews_while_typing_and_folds_the_keys_into_its_results() {
     }
     ui.model_action(&mut m, Action::Select);
     assert_eq!(m.navigation.filter, "Él");
-    ui.model_action(&mut m, Action::Home);
+    // Back goes up one level (#44): Back from the keys is the Up arrow (the
+    // router's mapping), so the top row folds into the results; Back from
+    // the results comes back to typing, with the text.
+    ui.keyboard.as_mut().unwrap().row = 0;
+    ui.model_action(&mut m, Action::Back);
     assert!(ui.keyboard.is_none());
     assert_eq!(m.screen, Screen::Search);
-    assert_eq!(m.navigation.filter, "Élo");
-    // Back goes up one level (#44): from the results to typing, with the
-    // text; from the keys' top row out of the search.
     ui.model_action(&mut m, Action::Back);
     assert_eq!(m.screen, Screen::Search);
-    assert_eq!(ui.keyboard.as_ref().unwrap().text, "Élo");
+    assert_eq!(ui.keyboard.as_ref().unwrap().text, "Él");
     assert_eq!(
         ui.keyboard.as_ref().unwrap().row,
         0,
         "the keys rise on their top row"
     );
-    ui.model_action(&mut m, Action::Back);
+    // #51: Cancel leaves the search, text typed or not, to the screen the
+    // search was opened from, its row in focus (not into the results).
+    {
+        let k = ui.keyboard.as_mut().unwrap();
+        k.row = 3;
+        k.col = 3;
+        assert_eq!(k.focused(), keyboard::Key::Cancel);
+    }
+    ui.model_action(&mut m, Action::Select);
     assert!(ui.keyboard.is_none());
     assert_eq!(m.screen, Screen::Home);
-    // A search left is not offered again: the next one starts empty.
+    assert_eq!(ui.rows(&m, &tracks)[m.navigation.focus].key, "search");
+    // A search left is not offered again: the next one starts empty; the
+    // held Back (Home on the keys) leaves it to where it was opened from.
     select_key(&mut ui, &mut m, "search");
     assert_eq!(ui.keyboard.as_ref().unwrap().text, "");
+    ui.keyboard.as_mut().unwrap().text = "be".into();
+    ui.search_typed(&mut m, &tracks);
     ui.model_action(&mut m, Action::Home);
     assert!(ui.keyboard.is_none());
     assert_eq!(m.screen, Screen::Home);
+    assert_eq!(ui.rows(&m, &tracks)[m.navigation.focus].key, "search");
 }
 
 #[test]
@@ -3627,7 +3794,11 @@ fn playlists_section_lists_favorites_first_then_a_to_z_and_opens_a_playlist() {
             selected: 1,
             members: vec![1, 4, 2],
             shuffle: ShuffleMode::Off,
-            source: "Road Trip".into()
+            source: "Road Trip".into(),
+            origin: Some(reborn_core::QueueOrigin {
+                screen: Screen::Playlist,
+                filter: "/data/music/Playlists/Road Trip.m3u8".into(),
+            }),
         }
     );
     m.screen = Screen::Playlist;
@@ -5018,6 +5189,10 @@ fn albums_artists_genres_and_search_results_queue_as_a_whole() {
             members,
             shuffle: ShuffleMode::Off,
             source: rows[1].label.clone(),
+            origin: Some(reborn_core::QueueOrigin {
+                screen: Screen::Album,
+                filter: rows[1].key.clone(),
+            }),
         }
     );
     // The search's Play All row: its songs, named after the search.
@@ -5054,6 +5229,159 @@ fn menu_labels(ui: &mut Ui, m: &mut AppModel) -> Vec<String> {
         .collect();
     ui.model_action(m, Action::Back);
     labels
+}
+
+/// What the runtime does with a PlayCollection, for the menus after it.
+fn played(m: &mut AppModel, effect: Effect) {
+    let Effect::PlayCollection {
+        selected,
+        members,
+        source,
+        origin,
+        ..
+    } = effect
+    else {
+        panic!("{effect:?}");
+    };
+    let songs: Vec<Track> = members
+        .iter()
+        .map(|&i| m.library.tracks[i].clone())
+        .collect();
+    let at = members.iter().position(|&i| i == selected).unwrap();
+    m.replace_queue(songs, at).unwrap();
+    m.set_source(source, None);
+    m.queue_origin = origin;
+}
+
+fn now_playing_go_rows(ui: &mut Ui, m: &mut AppModel) -> Vec<(String, String)> {
+    m.screen = Screen::NowPlaying;
+    m.navigation.history.clear();
+    m.navigation.stack.clear();
+    ui.model_action(m, Action::ContextMenu);
+    let tracks = m.library.tracks.clone();
+    let rows = ui.modal_rows_public(m, &tracks);
+    ui.model_action(m, Action::Back);
+    assert_eq!(rows.len(), 8, "{rows:?}");
+    rows.into_iter()
+        .filter(|r| r.label.starts_with("Go to"))
+        .map(|r| (r.label, r.key))
+        .collect()
+}
+
+#[test]
+fn now_playing_goes_back_to_the_playlist_it_was_played_from() {
+    // Y2Reborn #25, #60: Go to Album becomes Go to Playlist.
+    let (mut ui, mut m) = playlists_app();
+    let tracks = m.library.tracks.clone();
+    select_key(&mut ui, &mut m, "playlist:2");
+    let effect = select_key(&mut ui, &mut m, "pl_entry:3");
+    played(&mut m, effect);
+    assert_eq!(m.current().unwrap().id, 2);
+    assert_eq!(
+        now_playing_go_rows(&mut ui, &mut m),
+        [
+            ("Go to Playlist".to_string(), "go_source".to_string()),
+            ("Go to Artist".to_string(), "go_artist".to_string()),
+        ]
+    );
+    assert_eq!(menu_select(&mut ui, &mut m, "go_source"), Effect::None);
+    assert_eq!(m.screen, Screen::Playlist);
+    assert_eq!(m.navigation.filter, "/data/music/Playlists/Road Trip.m3u8");
+    let focused = ui.row_at(&m, &tracks, m.navigation.focus).unwrap();
+    assert_eq!(focused.key, "pl_entry:3", "the song playing is focused");
+    // Back returns to Now Playing, as from Go to Album.
+    ui.model_action(&mut m, Action::Back);
+    assert_eq!(m.screen, Screen::NowPlaying);
+    // A song you queued did not come from the playlist: Go to Album.
+    m.queue_next(vec![tracks[7].clone()]).unwrap();
+    m.step(1);
+    assert_eq!(
+        now_playing_go_rows(&mut ui, &mut m)[0],
+        ("Go to Album".to_string(), "go_album".to_string())
+    );
+    // A deleted playlist is no place to go to.
+    m.step(-1);
+    ui.playlists.set_lists(vec![]);
+    ui.playlists.loaded = true;
+    assert_eq!(now_playing_go_rows(&mut ui, &mut m)[0].0, "Go to Album");
+}
+
+#[test]
+fn now_playing_names_each_place_music_is_played_from() {
+    let mut ui = radios();
+    // Songs: the whole list, the song playing focused.
+    let mut m = app(Screen::Tracks);
+    let tracks = m.library.tracks.clone();
+    let effect = select_key(&mut ui, &mut m, "track:5");
+    played(&mut m, effect);
+    assert_eq!(now_playing_go_rows(&mut ui, &mut m)[0].0, "Go to Songs");
+    menu_select(&mut ui, &mut m, "go_source");
+    assert_eq!(m.screen, Screen::Tracks);
+    assert_eq!(
+        ui.row_at(&m, &tracks, m.navigation.focus).unwrap().key,
+        "track:5"
+    );
+    // A search: its results again, the song focused.
+    let mut m = app(Screen::Search);
+    m.navigation.filter = "song".into();
+    let song = ui
+        .rows(&m, &tracks)
+        .into_iter()
+        .filter(|r| r.key.starts_with("track:"))
+        .nth(1)
+        .unwrap()
+        .key;
+    let effect = select_key(&mut ui, &mut m, &song);
+    played(&mut m, effect);
+    assert_eq!(now_playing_go_rows(&mut ui, &mut m)[0].0, "Go to Search");
+    menu_select(&mut ui, &mut m, "go_source");
+    assert_eq!(
+        (m.screen, m.navigation.filter.as_str()),
+        (Screen::Search, "song")
+    );
+    assert_eq!(
+        ui.row_at(&m, &tracks, m.navigation.focus).unwrap().key,
+        song
+    );
+    // An artist's page: Go to Artist goes back there, Go to Album stays.
+    let mut m = app(Screen::Artist);
+    m.navigation.filter = "artist:Élodie · Μουσική · Музыка · 音楽".into();
+    let effect = select_key(&mut ui, &mut m, "play:collection");
+    played(&mut m, effect);
+    assert_eq!(
+        now_playing_go_rows(&mut ui, &mut m),
+        [
+            ("Go to Album".to_string(), "go_album".to_string()),
+            ("Go to Artist".to_string(), "go_source".to_string()),
+        ]
+    );
+    // A folder.
+    let (mut ui, mut m) = folder_app("folder:/data/music/Hardcore/Clubland 28");
+    let tracks = m.library.tracks.clone();
+    let two = at(&tracks, "2 - Bea - Two.mp3");
+    let effect = select_key(&mut ui, &mut m, &format!("track:{two}"));
+    played(&mut m, effect);
+    assert_eq!(now_playing_go_rows(&mut ui, &mut m)[0].0, "Go to Folder");
+    menu_select(&mut ui, &mut m, "go_source");
+    assert_eq!(
+        (m.screen, m.navigation.filter.as_str()),
+        (Screen::Folders, "folder:/data/music/Hardcore/Clubland 28")
+    );
+    assert_eq!(
+        ui.row_at(&m, &tracks, m.navigation.focus).unwrap().key,
+        format!("track:{two}")
+    );
+    // A genre played from its row; a session from before 8.43 has none.
+    let mut ui = radios();
+    let mut m = app(Screen::Genres);
+    m.navigation.focus = 0;
+    let key = ui.row_at(&m, &m.library.tracks, 0).unwrap().key;
+    assert!(key.starts_with("genre:"), "{key}");
+    let effect = menu_select(&mut ui, &mut m, "group_play");
+    played(&mut m, effect);
+    assert_eq!(now_playing_go_rows(&mut ui, &mut m)[0].0, "Go to Genre");
+    m.queue_origin = None;
+    assert_eq!(now_playing_go_rows(&mut ui, &mut m)[0].0, "Go to Album");
 }
 
 #[test]
@@ -5599,6 +5927,10 @@ fn a_folder_lists_its_folders_then_its_songs_by_file_name() {
             members: vec![one, two, ten],
             shuffle: ShuffleMode::Off,
             source: "Clubland 28".into(),
+            origin: Some(reborn_core::QueueOrigin {
+                screen: Screen::Folders,
+                filter: "folder:/data/music/Hardcore/Clubland 28".into(),
+            }),
         }
     );
     // A loose song plays the folder's own songs, not its albums too.
@@ -5724,7 +6056,11 @@ fn a_playlist_sorts_its_page_and_plays_in_that_order() {
             selected: 1,
             members: vec![1, 2, 4],
             shuffle: ShuffleMode::Off,
-            source: "Road Trip".into()
+            source: "Road Trip".into(),
+            origin: Some(reborn_core::QueueOrigin {
+                screen: Screen::Playlist,
+                filter: "/data/music/Playlists/Road Trip.m3u8".into(),
+            }),
         }
     );
     ui.model_action(&mut m, Action::Back);
@@ -5906,4 +6242,265 @@ fn lists_made_ahead_match_lists_made_on_opening_and_leave_the_screen_alone() {
         let fresh = Ui::default();
         assert_eq!(labels(&ui, &m), labels(&fresh, &m), "{screen:?}");
     }
+}
+
+/// Daft Punk's Discovery as #45 has it (only "Too Long" carries Album
+/// Artist), and a compilation without Album Artist, as the library loads them.
+fn discovery_library() -> Vec<Track> {
+    let song = |folder: &str, title: &str, artist: &str, album: &str, album_artist: &str| Track {
+        source_id: "internal".into(),
+        title: title.into(),
+        artist: artist.into(),
+        album: album.into(),
+        album_artist: album_artist.into(),
+        path: format!("/data/music/{folder}/{title}.flac").into(),
+        filename: format!("{title}.flac"),
+        duration_ms: 200_000,
+        online: true,
+        ..Default::default()
+    };
+    let mut tracks = vec![
+        song("Discovery", "One More Time", "Daft Punk", "Discovery", ""),
+        song("Discovery", "Aerodynamic", "Daft Punk", "Discovery", ""),
+        song(
+            "Discovery",
+            "Too Long",
+            "Daft Punk",
+            "Discovery",
+            "Daft Punk",
+        ),
+        song("Homework", "Da Funk", "Daft Punk", "Homework", "daft punk"),
+        song(
+            "Homework",
+            "Around the World",
+            "Daft Punk",
+            "Homework",
+            "Daft Punk",
+        ),
+        song(
+            "Homework",
+            "Revolution 909",
+            "Daft Punk",
+            "Homework",
+            "Daft Punk",
+        ),
+        song("Now 50", "Song A", "Artist One", "Now 50", ""),
+        song("Now 50", "Song B", "Artist Two", "Now 50", ""),
+        song("Now 50", "Song C", "Daft Punk", "Now 50", ""),
+    ];
+    for (i, t) in tracks.iter_mut().enumerate() {
+        t.id = i as i64;
+    }
+    reborn_core::albums::unify_album_artists(&mut tracks);
+    tracks
+}
+
+#[test]
+fn an_album_with_and_without_album_artist_is_listed_once() {
+    // Y2Reborn #45, #46: one Discovery, one Homework; the compilation stays
+    // one album, not one per song.
+    let mut ui = radios();
+    let mut m = app(Screen::Albums);
+    m.library.tracks = discovery_library();
+    ui.invalidate_catalog();
+    let tracks = m.library.tracks.clone();
+    let labels = |ui: &Ui, m: &AppModel| -> Vec<(String, String)> {
+        ui.rows(m, &tracks)
+            .into_iter()
+            .filter(|r| r.key.starts_with("album:"))
+            .map(|r| (r.label, r.secondary))
+            .collect()
+    };
+    assert_eq!(
+        labels(&ui, &m),
+        [
+            ("Discovery".into(), "Daft Punk".into()),
+            ("Homework".into(), "Daft Punk".into()),
+            ("Now 50".into(), "Artist One".into()),
+        ]
+    );
+    // The artist page lists each of its albums once (#46).
+    m.screen = Screen::Artist;
+    m.navigation.filter = "artist:Daft Punk".into();
+    let albums: Vec<String> = labels(&ui, &m).into_iter().map(|(l, _)| l).collect();
+    assert_eq!(albums, ["Discovery", "Homework", "Now 50"]);
+    // The album opens with all of its songs.
+    m.screen = Screen::Albums;
+    m.navigation.filter.clear();
+    select_key(&mut ui, &mut m, "album:Daft Punk\u{1f}Discovery");
+    assert_eq!(m.screen, Screen::Album);
+    let songs = ui
+        .rows(&m, &tracks)
+        .into_iter()
+        .filter(|r| r.key.starts_with("track:"))
+        .count();
+    assert_eq!(songs, 3);
+    // Music counts three albums.
+    m.screen = Screen::Music;
+    let music = ui.rows(&m, &tracks);
+    let albums = music.iter().find(|r| r.key == "albums").unwrap();
+    assert_eq!(albums.secondary, "3 albums");
+}
+
+#[test]
+fn albums_order_by_title_or_by_artist_and_the_letter_follows() {
+    // Y2Reborn #56: Customize > Album Order; Cover Flow shows the same rows.
+    let mut ui = radios();
+    let mut m = app(Screen::Customize);
+    let tracks = m.library.tracks.clone();
+    let row = ui
+        .rows(&m, &tracks)
+        .into_iter()
+        .find(|r| r.key == "album_order")
+        .unwrap();
+    assert_eq!(
+        (row.label.as_str(), row.secondary.as_str()),
+        ("Album Order", "Title")
+    );
+    assert_eq!(
+        select_key(&mut ui, &mut m, "album_order"),
+        Effect::SetAlbumOrder(reborn_core::AlbumOrder::Artist)
+    );
+    m.settings.album_order = reborn_core::AlbumOrder::Artist;
+    assert_eq!(
+        select_key(&mut ui, &mut m, "album_order"),
+        Effect::SetAlbumOrder(reborn_core::AlbumOrder::Title)
+    );
+    let album = |title: &str, artist: &str, album_artist: &str| Track {
+        source_id: "internal".into(),
+        title: format!("{title} 1"),
+        artist: artist.into(),
+        album: title.into(),
+        album_artist: album_artist.into(),
+        path: format!("/data/music/{title}/1.flac").into(),
+        online: true,
+        ..Default::default()
+    };
+    m.library.tracks = vec![
+        album("Zebra", "ABBA", "ABBA"),
+        album("Alpha", "The Zombies", "The Zombies"),
+        album("Middle", "Beatles", "Beatles"),
+        album("Arrival", "ABBA", "ABBA"),
+        // No album artist: listed (and ordered) under its song's artist.
+        album("Now", "Moby", ""),
+    ];
+    let tracks = m.library.tracks.clone();
+    m.screen = Screen::Albums;
+    m.settings.album_order = reborn_core::AlbumOrder::Title;
+    ui.invalidate_catalog();
+    let labels = |ui: &Ui, m: &AppModel| -> Vec<String> {
+        ui.rows(m, &tracks).into_iter().map(|r| r.label).collect()
+    };
+    assert_eq!(
+        labels(&ui, &m),
+        ["Alpha", "Arrival", "Middle", "Now", "Zebra"]
+    );
+    assert_eq!(ui.row_letter(&m, &tracks, 4), Some('Z'));
+    // By artist ("The" skipped), then title; the letter is the artist's.
+    m.settings.album_order = reborn_core::AlbumOrder::Artist;
+    assert_eq!(
+        labels(&ui, &m),
+        ["Arrival", "Zebra", "Middle", "Now", "Alpha"]
+    );
+    let letters: Vec<_> = (0..5)
+        .filter_map(|i| ui.row_letter(&m, &tracks, i))
+        .collect();
+    assert_eq!(letters, ['A', 'A', 'B', 'M', 'Z']);
+    // Cover Flow and the grid share the order.
+    for view in [
+        reborn_core::AlbumView::CoverFlow,
+        reborn_core::AlbumView::Grid,
+    ] {
+        m.settings.album_view = view;
+        m.navigation.focus = 1;
+        assert_eq!(ui.row_at(&m, &tracks, 1).unwrap().label, "Zebra");
+    }
+    // Old settings files read Title.
+    let old: reborn_core::Settings = serde_json::from_value(serde_json::json!({
+        "volume": 35, "screen_timeout_seconds": 60, "music_directory": "/data/music"
+    }))
+    .unwrap();
+    assert_eq!(old.album_order, reborn_core::AlbumOrder::Title);
+}
+
+/// 60 songs, ten under each of A to F, as Songs lists them.
+fn lettered_library() -> Vec<Track> {
+    (0..60)
+        .map(|i| Track {
+            id: i,
+            source_id: "internal".into(),
+            title: format!("{}{}", (b'A' + (i / 10) as u8) as char, i % 10),
+            genre: "Rock".into(),
+            path: format!("/data/music/{i}.flac").into(),
+            online: true,
+            ..Default::default()
+        })
+        .collect()
+}
+
+#[test]
+fn fast_scrolling_steps_by_letter_and_lingers() {
+    // Y2Reborn #30: once the letter shows, each detent goes to the next or
+    // previous letter; 700 ms after the last detent rows step again.
+    let mut ui = radios();
+    let mut m = app(Screen::Tracks);
+    m.library.tracks = lettered_library();
+    ui.invalidate_catalog();
+    let tracks = m.library.tracks.clone();
+    ui.model_action(&mut m, Action::WheelClockwise(1));
+    assert_eq!(m.navigation.focus, 1, "a slow detent is one row");
+    assert!(ui.fast_scroll_until.is_none());
+    ui.model_action(&mut m, Action::WheelClockwise(3));
+    assert_eq!(m.navigation.focus, 4, "fast: rows, and the letter shows");
+    assert!(ui.fast_scroll_until.is_some());
+    assert_eq!(ui.row_letter(&m, &tracks, 4), Some('A'));
+    // Letter mode: one letter per detent, slow or fast.
+    ui.model_action(&mut m, Action::WheelClockwise(1));
+    assert_eq!(m.navigation.focus, 10, "B");
+    ui.model_action(&mut m, Action::WheelClockwise(4));
+    assert_eq!(m.navigation.focus, 20, "C");
+    // Turning back stays by letter: the letter before.
+    ui.model_action(&mut m, Action::WheelCounterClockwise(1));
+    assert_eq!(m.navigation.focus, 10, "back to B");
+    // From inside a letter, back goes to its first row, then the one before.
+    m.navigation.focus = 15;
+    ui.model_action(&mut m, Action::WheelCounterClockwise(1));
+    assert_eq!(m.navigation.focus, 10);
+    ui.model_action(&mut m, Action::WheelCounterClockwise(1));
+    assert_eq!(m.navigation.focus, 0);
+    ui.model_action(&mut m, Action::WheelCounterClockwise(1));
+    assert_eq!(m.navigation.focus, 0, "stays at the top");
+    // After the last letter: its last row, where the list stops.
+    m.navigation.focus = 52;
+    ui.model_action(&mut m, Action::WheelClockwise(1));
+    assert_eq!(m.navigation.focus, 59, "no letter after F");
+    ui.model_action(&mut m, Action::WheelClockwise(1));
+    assert_eq!(m.navigation.focus, 59);
+    // Each detent kept the letter up; once it lingered out, rows again.
+    assert!(ui.fast_scroll_until.unwrap() > Instant::now());
+    ui.fast_scroll_until = Some(Instant::now() - Duration::from_millis(1));
+    ui.model_action(&mut m, Action::WheelCounterClockwise(1));
+    assert_eq!(m.navigation.focus, 58, "one row after the linger");
+}
+
+#[test]
+fn lists_without_letters_keep_their_row_steps() {
+    // A genre's songs keep the library's order: no letters to step by.
+    let mut ui = radios();
+    let mut m = app(Screen::Tracks);
+    m.library.tracks = lettered_library();
+    m.navigation.filter = "genre:Rock".into();
+    ui.invalidate_catalog();
+    let tracks = m.library.tracks.clone();
+    ui.model_action(&mut m, Action::WheelClockwise(3));
+    assert_eq!(m.navigation.focus, 3);
+    assert!(ui.fast_scroll_until.is_some());
+    assert_eq!(ui.row_letter(&m, &tracks, 3), None);
+    ui.model_action(&mut m, Action::WheelClockwise(1));
+    assert_eq!(m.navigation.focus, 4, "a row, not a letter");
+    // Settings never accelerate nor jump.
+    let mut m = app(Screen::Settings);
+    ui.fast_scroll_until = Some(Instant::now() + Duration::from_secs(1));
+    ui.model_action(&mut m, Action::WheelClockwise(1));
+    assert_eq!(m.navigation.focus, 1);
 }

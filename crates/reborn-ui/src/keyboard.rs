@@ -10,6 +10,8 @@
 //! The library search (Beta 8.32) is the Search page with the keys over it:
 //! its first results show above the keys as you type, and Up from the top
 //! row, a turn of the wheel or Search folds the keys away into the page.
+//! Cancel and a held Back leave the search, to the screen it was opened
+//! from (#51).
 use crate::{
     canvas::{Canvas, Icon},
     components,
@@ -139,7 +141,8 @@ pub struct Keyboard {
     pub note: String,
     /// Library search: how many results the text finds.
     pub found: usize,
-    /// Library search: the search being edited, given back by Cancel.
+    /// Library search: the search reopened over its results (its keys rise
+    /// into place); Cancel still leaves the search (#51).
     pub restore: Option<String>,
     /// Where up/down aim, kept over several rows so Down then Up returns to
     /// the same key across the half-key offsets.
@@ -157,8 +160,6 @@ pub enum Outcome {
     Cancel,
     /// Library search: fold the keys away into the results.
     Browse,
-    /// Library search: Back from the top row leaves the search (#44).
-    Leave,
 }
 
 /// Results visible at once above the live keyboard.
@@ -281,13 +282,15 @@ impl Keyboard {
 
     /// One button press. Wheel turns never reach here (`ActionRouter`).
     pub fn action(&mut self, action: Action) -> Outcome {
+        // The Back button is the Up arrow here, as the router maps it
+        // (#51: a Back of its own never reaches the open keys).
+        let action = if action == Action::Back {
+            Action::NavigateUp
+        } else {
+            action
+        };
         // Up from the top row goes on into the results above the keys, and
         // the wheel browses them; with nothing found Up wraps to Done.
-        // Back is up a row; from the top row it leaves the search, one level
-        // up as Back is everywhere (#44).
-        if self.live() && self.row == 0 && action == Action::Back {
-            return Outcome::Leave;
-        }
         if self.live() && self.found > 0 {
             let up = self.row == 0 && action == Action::NavigateUp;
             if up
@@ -299,10 +302,7 @@ impl Keyboard {
                 return Outcome::Browse;
             }
         }
-        if !matches!(
-            action,
-            Action::NavigateUp | Action::NavigateDown | Action::Back
-        ) {
+        if !matches!(action, Action::NavigateUp | Action::NavigateDown) {
             self.aim = None;
         }
         match action {
@@ -315,7 +315,7 @@ impl Keyboard {
                 };
                 Outcome::Stay
             }
-            Action::NavigateUp | Action::NavigateDown | Action::Back => {
+            Action::NavigateUp | Action::NavigateDown => {
                 let from = *self.aim.get_or_insert(self.centre());
                 self.row = if action == Action::NavigateDown {
                     (self.row + 1) % 4
@@ -920,10 +920,10 @@ mod tests {
         assert_eq!(k.action(Action::WheelClockwise(1)), Outcome::Stay);
         k.row = 0;
         k.found = 5;
-        // Results: Up from the top row goes on into them; Back there leaves
-        // the search, one level up (#44)…
+        // Results: Up from the top row goes on into them, and so does Back,
+        // which is the Up arrow on the keys (#51)…
         assert_eq!(k.action(Action::NavigateUp), Outcome::Browse);
-        assert_eq!(k.action(Action::Back), Outcome::Leave);
+        assert_eq!(k.action(Action::Back), Outcome::Browse);
         // …a lower row only moves up…
         k.row = 2;
         assert_eq!(k.action(Action::NavigateUp), Outcome::Stay);

@@ -522,3 +522,58 @@ fn prepared_scanner_rejects_usb_and_rebuild_work_until_restore() {
     db.shutdown(Duration::from_secs(5)).unwrap();
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn the_published_catalog_lists_one_album_under_one_album_artist() {
+    // Y2Reborn #45: one song of an album carries Album Artist, the others none.
+    let root = scratch("album-artist");
+    let mut c = seeded(&root);
+    let songs: Vec<Track> = (0..3)
+        .map(|i| Track {
+            album: "Discovery".into(),
+            album_artist: if i == 2 {
+                "Daft Punk".into()
+            } else {
+                String::new()
+            },
+            ..fixture(i, "one")
+        })
+        .collect();
+    batch(&mut c, songs, 1).unwrap();
+    drop(c);
+    let db = Database::spawn(
+        root.join("library.db"),
+        Observer::new(&root.join("logs")).unwrap(),
+    )
+    .unwrap();
+    let tracks = db
+        .catalog()
+        .unwrap()
+        .recv_timeout(Duration::from_secs(5))
+        .unwrap()
+        .unwrap();
+    assert_eq!(tracks.len(), 3);
+    assert!(tracks.iter().all(|t| t.album_artist == "Daft Punk"));
+    assert_eq!(
+        tracks
+            .iter()
+            .filter(|t| t.tagged_album_artist().is_empty())
+            .count(),
+        2,
+        "each song keeps its own tag"
+    );
+    // The file is unchanged.
+    let c = Connection::open(root.join("library.db")).unwrap();
+    assert_eq!(
+        c.query_row(
+            "SELECT count(*) FROM tracks WHERE album_artist=''",
+            [],
+            |r| r.get::<_, i64>(0)
+        )
+        .unwrap(),
+        2
+    );
+    drop(c);
+    db.shutdown(Duration::from_secs(5)).unwrap();
+    fs::remove_dir_all(root).unwrap();
+}

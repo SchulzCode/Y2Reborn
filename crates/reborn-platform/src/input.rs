@@ -851,6 +851,9 @@ pub struct ActionRouter {
     keyboard_held: HashSet<PhysicalControl>,
     /// Held Previous/Next move every other repeat (180 ms), not every 90 ms.
     keyboard_repeat: u32,
+    /// Back was pressed as the Up arrow on the library search's keys: held,
+    /// it leaves the search even when that press folded the keys (#51).
+    keyboard_search_back: bool,
     /// What the wheel and its buttons do while the screen is off (a setting).
     screen_off_buttons: ScreenOffButtons,
 }
@@ -861,6 +864,10 @@ impl ActionRouter {
     /// as soon as they are pressed; holding Back cancels, holding Previous
     /// or Next keeps moving; the wheel does nothing. Select is unchanged
     /// (hold: done). Volume and Power keep their meaning.
+    ///
+    /// The library search's Up from the top row folds its keys into the
+    /// results at the press; holding that Back still leaves the search: it
+    /// goes Back (from the results to the keys) and then Home (Cancel).
     pub fn set_keyboard(&mut self, open: bool) {
         self.keyboard = open;
     }
@@ -1049,6 +1056,9 @@ impl ActionRouter {
                 let action = arrow(control)?;
                 self.keyboard_held.insert(control);
                 self.keyboard_repeat = 0;
+                if control == PhysicalControl::Back {
+                    self.keyboard_search_back = self.keyboard_wheel;
+                }
                 Some(vec![action])
             }
             NormalizedInput::Repeat(control) if self.keyboard_held.contains(&control) => {
@@ -1061,10 +1071,13 @@ impl ActionRouter {
                 })
             }
             NormalizedInput::LongPress(control) if self.keyboard_held.contains(&control) => {
-                Some(if control == PhysicalControl::Back && self.keyboard {
-                    vec![Action::Home]
-                } else {
-                    vec![]
+                Some(match control {
+                    PhysicalControl::Back if self.keyboard => vec![Action::Home],
+                    // The press folded the search's keys into its results.
+                    PhysicalControl::Back if self.keyboard_search_back && screen_on => {
+                        vec![Action::Back, Action::Home]
+                    }
+                    _ => vec![],
                 })
             }
             NormalizedInput::Release(control) | NormalizedInput::Cancel(control)
@@ -1338,6 +1351,46 @@ mod tests {
         let _ = input.feed(NAVIGATION_BUTTONS, EV_KEY, 106, 1, now);
         let release = input.feed(NAVIGATION_BUTTONS, EV_KEY, 106, 0, now);
         assert_eq!(router.route(&release[0], true), vec![Action::NextTrack]);
+    }
+
+    /// #51: holding Back on the library search's keys leaves the search,
+    /// also when its press (the Up arrow off the top row) already folded
+    /// the keys into the results: Back reopens them, Home cancels. Other
+    /// keyboards keep a hold of Back that only cancels while they are open.
+    #[test]
+    fn held_back_leaves_the_search_even_when_its_press_folded_the_keys() {
+        let hold = |search: bool, folds: bool| -> Vec<Action> {
+            let mut input = InputManager::empty();
+            let mut router = ActionRouter::default();
+            router.set_keyboard(true);
+            router.set_keyboard_wheel(search);
+            let start = std::time::Instant::now();
+            let mut actions = vec![];
+            for e in input.feed(NAVIGATION_BUTTONS, EV_KEY, 158, 1, start) {
+                actions.extend(router.route(&e, true));
+            }
+            if folds {
+                router.set_keyboard(false);
+                router.set_keyboard_wheel(false);
+            }
+            for ms in (0..=800).step_by(10) {
+                for e in input.tick_at(start + Duration::from_millis(ms)) {
+                    actions.extend(router.route(&e, true));
+                }
+            }
+            let at = start + Duration::from_millis(900);
+            for e in input.feed(NAVIGATION_BUTTONS, EV_KEY, 158, 0, at) {
+                actions.extend(router.route(&e, true));
+            }
+            actions
+        };
+        assert_eq!(hold(true, false), vec![Action::NavigateUp, Action::Home]);
+        assert_eq!(
+            hold(true, true),
+            vec![Action::NavigateUp, Action::Back, Action::Home]
+        );
+        assert_eq!(hold(false, false), vec![Action::NavigateUp, Action::Home]);
+        assert_eq!(hold(false, true), vec![Action::NavigateUp]);
     }
 
     fn detent(input: &mut InputManager, code: u16, at_ms: u64) -> Option<NormalizedInput> {

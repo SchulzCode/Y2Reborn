@@ -953,15 +953,8 @@ pub(crate) fn remap(c: &mut Canvas, start: usize, p: &Palette, accent: u32) {
         (0xFFBE3C, p.warning),
     ];
     let default_accent = color::ACCENT >> 8;
-    for q in &mut c.draw[start..] {
-        if matches!(
-            q.tex,
-            Tex::Art | Tex::CollectionArt | Tex::Thumb(_) | Tex::Skin
-        ) {
-            continue;
-        }
-        let rgb = q.color >> 8;
-        let a = q.color & 0xFF;
+    let map = |c: u32| -> u32 {
+        let (rgb, a) = (c >> 8, c & 0xFF);
         // Reborn draws controls in its fixed accent; a skin keeps its own
         // (or, without one, the cover's) as before UI v4.
         let to = if rgb == default_accent {
@@ -972,8 +965,23 @@ pub(crate) fn remap(c: &mut Canvas, start: usize, p: &Palette, accent: u32) {
                 .find(|(from, _)| *from == rgb)
                 .map(|(_, to)| *to)
         };
-        if let Some(to) = to {
-            q.color = (to & 0xFFFF_FF00) | ((a * (to & 0xFF) + 127) / 255);
+        match to {
+            Some(to) => (to & 0xFFFF_FF00) | ((a * (to & 0xFF) + 127) / 255),
+            None => c,
+        }
+    };
+    for q in &mut c.draw[start..] {
+        if matches!(
+            q.tex,
+            Tex::Art | Tex::CollectionArt | Tex::Thumb(_) | Tex::Skin
+        ) {
+            continue;
+        }
+        q.color = map(q.color);
+        // A warped quad is drawn with its corner colours (Cover Flow's shelf
+        // fades into the background, Y2Reborn #57; the progress ribbon).
+        if let Some(w) = &mut q.warp {
+            w.colors = w.colors.map(map);
         }
     }
 }

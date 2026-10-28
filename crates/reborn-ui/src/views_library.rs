@@ -299,18 +299,25 @@ fn song_list(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interactiv
     }
 }
 
-/// The large letter shown while a long list is scrolling fast.
-fn letter_bubble(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], focus: usize) {
+/// The large letter shown while a long list is scrolling fast; while it
+/// shows, the wheel steps by letter (#30).
+pub(crate) fn letter_bubble(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], focus: usize) {
     if ui
         .fast_scroll_until
         .is_none_or(|t| t <= std::time::Instant::now())
     {
         return;
     }
-    let Some(row) = ui.row_at(m, tracks, focus) else {
-        return;
-    };
-    let letter = crate::initial(&row.label, m.screen).to_string();
+    // The letter the list is ordered by (Albums by artist: the artist's,
+    // #56); a list in another order shows its row's first letter.
+    let letter = match ui.row_letter(m, tracks, focus) {
+        Some(letter) => letter,
+        None => match ui.row_at(m, tracks, focus) {
+            Some(row) => crate::initial(&row.label, m.screen),
+            None => return,
+        },
+    }
+    .to_string();
     let accent = ui.accent();
     c.rrect(206., 150., 68., 64., 18., 0x0E1014F5);
     c.rrect_outline(206., 150., 68., 64., 18., 1., alpha(accent, 170));
@@ -377,6 +384,7 @@ fn albums_grid(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interact
             color::DIM,
         );
     }
+    letter_bubble(c, ui, m, tracks, focus);
 }
 
 /// "9 songs · 38 min" for the album with filter `key`; an album shorter than

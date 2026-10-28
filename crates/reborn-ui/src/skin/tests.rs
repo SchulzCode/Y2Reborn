@@ -382,6 +382,50 @@ fn screens_a_skin_leaves_out_are_drawn_by_reborn_in_its_palette() {
 }
 
 #[test]
+fn cover_flow_shelf_fades_into_a_light_skin_background() {
+    // Y2Reborn #57: the shelf under the covers is a warped quad drawn with
+    // its corner colours; they follow the palette as plain quads do.
+    let ui = Ui {
+        motion_fixed: true,
+        ..skinned(compile_test(LIST).unwrap())
+    };
+    let tracks = library(3);
+    let quads = ui.draw(&model(Screen::Albums), &tracks, false);
+    let shelves: Vec<_> = quads
+        .iter()
+        .filter(|q| q.tex == reborn_graphics::Tex::Solid)
+        .filter_map(|q| q.warp)
+        .collect();
+    assert!(!shelves.is_empty(), "Cover Flow draws its shelf");
+    let bg_rgb = theme::color::BG >> 8;
+    for w in &shelves {
+        assert!(
+            w.colors.iter().all(|c| c >> 8 != bg_rgb),
+            "no corner keeps Reborn's dark background: {:08X?}",
+            w.colors
+        );
+    }
+    assert!(
+        shelves
+            .iter()
+            .any(|w| w.colors[2] == 0xFFFF_FFFF && w.colors[0] == 0xFFFF_FF00),
+        "the shelf fades from clear to the skin's white background"
+    );
+    // Artwork keeps its own tint.
+    let mut c = crate::canvas::Canvas::default();
+    c.draw.push(reborn_graphics::Quad {
+        tex: reborn_graphics::Tex::Art,
+        warp: Some(reborn_graphics::Warp {
+            corners: [[0., 0.]; 4],
+            colors: [theme::color::BG; 4],
+        }),
+        ..reborn_graphics::Quad::rect(0., 0., 1., 1., theme::color::BG)
+    });
+    remap(&mut c, 0, &ui.skin.as_ref().unwrap().palette, 0x2A69_D2FF);
+    assert_eq!(c.draw[0].warp.unwrap().colors, [theme::color::BG; 4]);
+}
+
+#[test]
 fn without_a_skin_nothing_changes() {
     let ui = Ui::default();
     let tracks = library(5);

@@ -42,6 +42,8 @@ use std::{
 const HOLD_LIMIT: Duration = Duration::from_secs(180);
 /// Seek steps closer together than this are one seek.
 const SEEK_SETTLE: Duration = Duration::from_millis(350);
+/// Held seeks tick at most this often (#28).
+const SEEK_TICK_GAP: Duration = Duration::from_millis(300);
 /// Previous restarts the song after this far into it (Y2Player, iPod).
 const RESTART_SONG_AFTER_MS: u64 = 3_000;
 /// Headphone volume reports this soon after the player set it are its echo
@@ -859,7 +861,7 @@ impl Runtime {
         let members = (0..tracks.len())
             .filter(|&i| i == index || tracks[i].is_music())
             .collect();
-        self.play_members(index, members, shuffle, "Songs".into())
+        self.play_members(index, members, shuffle, "Songs".into(), None)
     }
 
     /// Internet radio requests from the Radio screens and Now Playing.
@@ -1256,6 +1258,7 @@ impl Runtime {
         members: Vec<usize>,
         shuffle: ShuffleMode,
         source: String,
+        origin: Option<reborn_core::QueueOrigin>,
     ) -> Result<(), String> {
         let online = self
             .model
@@ -1331,6 +1334,7 @@ impl Runtime {
         self.save_book();
         self.model.replace_queue(queue, start)?;
         self.model.set_source(source, Some(&natural));
+        self.model.queue_origin = origin;
         self.load()
     }
 
@@ -2301,13 +2305,17 @@ impl Runtime {
             None,
             json!({"plugged":plugged,"playing":active,"speaker_active":self.model.speaker_active}),
         );
-        if wired && active && plugged && self.model.speaker_active {
-            self.load()?;
-        } else if wired && active && !plugged && before == Some(true) && !self.model.speaker_active
-        {
-            self.pause();
-        } else if !active && self.model.playback != PlaybackState::Paused {
-            self.model.speaker_active = self.speaker_route();
+        match jack_move(wired, active, plugged, before, self.model.speaker_active) {
+            JackMove::ToHeadphones => self.load()?,
+            JackMove::Pause => {
+                self.pause();
+                // #62: say why the music stopped, as a lost Bluetooth peer does.
+                self.ui.flash(HEADPHONES_LOST);
+            }
+            JackMove::Nothing if !active && self.model.playback != PlaybackState::Paused => {
+                self.model.speaker_active = self.speaker_route();
+            }
+            JackMove::Nothing => {}
         }
         self.dirty.mark_both();
         Ok(())
@@ -2610,7 +2618,8 @@ impl Runtime {
                 members,
                 shuffle,
                 source,
-            } => self.play_members(selected, members, shuffle, source)?,
+                origin,
+            } => self.play_members(selected, members, shuffle, source, origin)?,
             Effect::PlayQueue(index) => {
                 if !self.model.jump_to(index) {
                     return Err("invalid queue entry".into());
@@ -3150,6 +3159,10 @@ impl Runtime {
                 self.model.settings.album_view = view;
                 self.checkpoint();
             }
+            Effect::SetAlbumOrder(order) => {
+                self.model.settings.album_order = order;
+                self.checkpoint();
+            }
             Effect::SetNowPlayingWheel(wheel) => {
                 self.model.settings.now_playing_wheel = wheel;
                 self.checkpoint();
@@ -3261,6 +3274,10 @@ impl Runtime {
             }
             Effect::SetHomePin(key, on) => {
                 self.model.settings.pin_home(&key, on);
+                self.checkpoint();
+            }
+            Effect::SetHomeShown(key, on) => {
+                self.model.settings.show_on_home(&key, on);
                 self.checkpoint();
             }
             Effect::QueueRemove(index) => {
@@ -4953,6 +4970,7 @@ fn run() -> Result<(), String> {
         rt.model.speaker_active = rt.speaker_route();
     }
     // #28: the vibration motor, when the kernel has one (Linux with VIBR).
+    let mut seek_ticked: Option<Instant> = None;
     let mut motor = if headless {
         None
     } else {
@@ -5341,6 +5359,11 @@ fn run() -> Result<(), String> {
         if rt.ui.observe(&rt.model) | rt.ui.expire_notice() | rt.ui.animating() {
             rt.dirty.mark_render();
         }
+        // #28: a computer connecting ticks with its message (it lights the
+        // screen); never in the dark.
+        if rt.ui.take_connect_tick() && !rt.model.screen_off {
+            haptic_tick(&mut motor, rt.model.settings.haptics, &log);
+        }
         // A glide continues after the last wheel detent; keep the short
         // interactive CPU lease alive until it rests. The playing wave keeps
         // the frame rate (`gliding`) but not the lease (Beta 7.4).
@@ -5416,6 +5439,7 @@ fn run() -> Result<(), String> {
                 );
                 action_router.set_screen_off_buttons(rt.model.settings.screen_off_buttons);
                 let lit = !rt.model.screen_off;
+                let seek_run = rt.seek_run;
                 let actions = action_router.route(&event, !rt.model.screen_off);
                 for &action in &actions {
                     let action_started = Instant::now();
@@ -5447,23 +5471,19 @@ fn run() -> Result<(), String> {
                     }
                 }
                 // #28: as stock, one tick per button press on a lit screen
-                // (not the press that wakes it), none for wheel steps. The
+                // (not the press that wakes it), none for wheel steps; a held
+                // Previous/Next ticks on its seek steps, at most every
+                // SEEK_TICK_GAP (steps come every 90 ms: one 60 ms tick each
+                // would be a buzz, as the rejected wheel ticks were). The
                 // setting is read after the action, so choosing a strength
                 // ticks at it.
-                if lit && matches!(event.input, reborn_core::NormalizedInput::Press(_)) {
-                    if let Some(m) = &mut motor {
-                        if let Err(e) = m.tick(rt.model.settings.haptics, Instant::now()) {
-                            log.emit(
-                                Level::Warn,
-                                "input",
-                                "haptics_failed",
-                                &e.to_string(),
-                                None,
-                                json!({}),
-                            );
-                            motor = None;
-                        }
+                let seeked = rt.seek_run != seek_run
+                    && seek_ticked.is_none_or(|at| at.elapsed() >= SEEK_TICK_GAP);
+                if input_ticks(lit, event.input, &actions, seeked) {
+                    if seeked {
+                        seek_ticked = Some(Instant::now());
                     }
+                    haptic_tick(&mut motor, rt.model.settings.haptics, &log);
                 }
                 if let Some((_, _, _, events)) = &mut monitor {
                     if events.len() < 512 {
@@ -6688,12 +6708,154 @@ fn update_health(
     (reasons.is_empty(), reasons)
 }
 
+/// What a jack change does to playing music (#28): headphones in move a
+/// playing speaker to them; headphones out pause what played in them.
+#[derive(Debug, PartialEq, Eq)]
+enum JackMove {
+    ToHeadphones,
+    Pause,
+    Nothing,
+}
+
+fn jack_move(
+    wired: bool,
+    active: bool,
+    plugged: bool,
+    before: Option<bool>,
+    speaker_active: bool,
+) -> JackMove {
+    if wired && active && plugged && speaker_active {
+        JackMove::ToHeadphones
+    } else if wired && active && !plugged && before == Some(true) && !speaker_active {
+        JackMove::Pause
+    } else {
+        JackMove::Nothing
+    }
+}
+
+/// The message when unplugged headphones paused the music (#62).
+const HEADPHONES_LOST: &str = "Headphones unplugged. Playback paused.";
+
+/// #28: one haptic tick on a lit screen (not the press that wakes it) per
+/// button press and per seek step of a held Previous/Next (`seeked`: this
+/// event's actions moved the song); none for wheel steps, also not the
+/// Now Playing wheel's seek.
+fn input_ticks(
+    lit: bool,
+    input: reborn_core::NormalizedInput,
+    actions: &[reborn_core::Action],
+    seeked: bool,
+) -> bool {
+    use reborn_core::{Action, NormalizedInput};
+    lit && (matches!(input, NormalizedInput::Press(_))
+        || (seeked
+            && actions
+                .iter()
+                .any(|a| matches!(a, Action::SeekForward | Action::SeekBackward))))
+}
+
+/// One haptic tick at the strength set; a motor that fails is dropped.
+fn haptic_tick(
+    motor: &mut Option<reborn_platform::haptics::Motor>,
+    strength: reborn_core::Haptics,
+    log: &Observer,
+) {
+    if let Some(m) = motor {
+        if let Err(e) = m.tick(strength, Instant::now()) {
+            log.emit(
+                Level::Warn,
+                "input",
+                "haptics_failed",
+                &e.to_string(),
+                None,
+                json!({}),
+            );
+            *motor = None;
+        }
+    }
+}
+
 fn main() {
     if let Err(error) = run() {
         let record = json!({"level":"ERROR","subsystem":"startup","event":"fatal","message":error});
         let _ = serde_json::to_writer(std::io::stderr(), &record);
         let _ = std::io::stderr().write_all(b"\n");
         std::process::exit(1)
+    }
+}
+
+#[cfg(test)]
+mod jack_and_haptics_tests {
+    use super::{input_ticks, jack_move, JackMove, HEADPHONES_LOST};
+    use reborn_core::{Action, NormalizedInput, PhysicalControl};
+
+    /// #62: unplugged headphones that were playing pause, with a message; a
+    /// playing speaker moves to plugged headphones; anything else stays.
+    #[test]
+    fn unplugged_headphones_pause_and_say_so() {
+        assert_eq!(
+            jack_move(true, true, false, Some(true), false),
+            JackMove::Pause
+        );
+        assert_eq!(HEADPHONES_LOST, "Headphones unplugged. Playback paused.");
+        // Not playing, on Bluetooth, the speaker playing or the first reading:
+        // nothing paused, so no message.
+        assert_eq!(
+            jack_move(true, false, false, Some(true), false),
+            JackMove::Nothing
+        );
+        assert_eq!(
+            jack_move(false, true, false, Some(true), false),
+            JackMove::Nothing
+        );
+        assert_eq!(
+            jack_move(true, true, false, Some(true), true),
+            JackMove::Nothing
+        );
+        assert_eq!(jack_move(true, true, false, None, false), JackMove::Nothing);
+        assert_eq!(
+            jack_move(true, true, true, Some(false), true),
+            JackMove::ToHeadphones
+        );
+    }
+
+    /// #28: a tick per press and per seek step of a held Previous/Next on a
+    /// lit screen; none for the wheel (also its Now Playing seek), a hold
+    /// that seeks nothing (a station) or in the dark.
+    #[test]
+    fn haptics_tick_for_presses_and_held_seek_steps_only() {
+        let next = PhysicalControl::Next;
+        assert!(input_ticks(true, NormalizedInput::Press(next), &[], false));
+        assert!(!input_ticks(
+            false,
+            NormalizedInput::Press(next),
+            &[],
+            false
+        ));
+        for held in [
+            NormalizedInput::LongPress(next),
+            NormalizedInput::Repeat(next),
+        ] {
+            assert!(input_ticks(true, held, &[Action::SeekForward], true));
+            assert!(!input_ticks(true, held, &[Action::SeekForward], false));
+            assert!(!input_ticks(false, held, &[Action::SeekForward], true));
+            assert!(!input_ticks(true, held, &[], false));
+        }
+        let back = NormalizedInput::Repeat(PhysicalControl::Previous);
+        assert!(input_ticks(true, back, &[Action::SeekBackward], true));
+        let wheel = NormalizedInput::WheelClockwise(1);
+        assert!(!input_ticks(
+            true,
+            wheel,
+            &[Action::WheelClockwise(1)],
+            true
+        ));
+        assert!(!input_ticks(
+            true,
+            NormalizedInput::Release(next),
+            &[Action::NextTrack],
+            false
+        ));
     }
 }
 

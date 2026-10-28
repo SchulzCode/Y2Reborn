@@ -339,13 +339,15 @@ text out of the field, round artist covers showed grey square corners while the 
   albums"). Up from the top key row, a turn of the wheel, Search or holding Select folds the
   keys away (180 ms) and the focus lands on the first result. Up through a lower row only
   moves up; with nothing found Up still wraps to Done.
-* **The page:** the field (Select brings the keys back with the text, rising into place;
-  Cancel then gives the search back as it was), then ARTISTS, ALBUMS, AUDIOBOOKS and SONGS
+* **The page:** the field (Select brings the keys back with the text, rising into place),
+  then ARTISTS, ALBUMS, AUDIOBOOKS and SONGS
   headings with counts. Headings are not stops; the window keeps a result's heading and the
   first heading's field in view. Songs start with **Play All** (two or more songs), which
   plays the songs found in the page's order. Songs show "artist · album".
-* **Back:** from an opened artist or album to the page with the same focus; from the page,
-  out of Search. Cancel on a new search leaves Search at once.
+* **Back:** from an opened artist or album to the page with the same focus; from the page
+  back to the keys with the text (#44). On the keys Back is the Up arrow. Cancel, or holding
+  Back while typing (also when its press already folded the keys), leaves Search, text or
+  not, to the screen it was opened from (#51).
 * **Matching:** audiobooks match as music does (every typed word begins a word of title or
   author); the count includes them.
 * **Motion:** typing changes the page's text without a screen slide; list scrolling uses
@@ -504,3 +506,24 @@ Title → File Name, the menu staying open; the page shows and plays in that ord
 Playlist Order. Previews `13-folder`, `13b-folder-songs`. Tests
 `a_folder_lists_its_folders_then_its_songs_by_file_name`, `playing_a_folder_follows_folders_order_and_offers_shuffle_albums`,
 `shuffle_steps_through_off_songs_and_albums`, `a_playlist_sorts_its_page_and_plays_in_that_order`.
+
+## One album once, Album Order, letter scrolling (Beta 8.43, Y2Reborn #45 #46 #56 #30)
+
+* **One album once (#45, #46):** when the library loads (`reborn_core::albums::unify_album_artists`, on the
+  library thread), the songs of one album title in one folder of one storage share its album artist: an empty
+  Album Artist takes the one the others carry, spellings that differ only in capitals or spaces take the most
+  common one. Only when the album names exactly one; a compilation without the tag, or an album naming two, stays
+  as it is (falling back to the song's artist would split a compilation per song). Albums, an artist's page,
+  search, counts and Cover Flow then list it once. The library file is unchanged; Last.fm gets each song's own tag
+  (`Track::tagged_album_artist`). Tests `an_album_with_and_without_album_artist_is_listed_once`, `albums::tests`.
+* **Album Order (#56):** Customize > **Album Order** Title (default, as before) / Artist (`Settings::album_order`,
+  `reborn_core::AlbumOrder`): by the artist an album row shows ("The" skipped), then title. Albums and Cover Flow
+  share it; the fast-scroll letter is the artist's. A new Customize row (no existing row holds an order).
+  Test `albums_order_by_title_or_by_artist_and_the_letter_follows`.
+* **Letter scrolling (#30):** once the wheel turns fast enough that the letter shows in an A to Z list (Songs,
+  Artists, Albums and Cover Flow, Folders), each detent goes to the first row of the next letter, or back to the
+  first row of this letter, else the one before; the letter stays 700 ms (`FAST_SCROLL_LINGER`) after the last
+  detent, so turning back after overshooting stays by letter, then rows step again. After the last letter the
+  wheel goes to the last row; a rested wheel wraps as before. Other lists keep their row steps. No setting.
+  Albums and Cover Flow now show the letter too. Tests `fast_scrolling_steps_by_letter_and_lingers`,
+  `lists_without_letters_keep_their_row_steps`.

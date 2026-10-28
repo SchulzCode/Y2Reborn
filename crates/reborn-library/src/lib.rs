@@ -279,6 +279,7 @@ fn from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Track> {
         online: r.get(18)?,
         genre: r.get(19)?,
         book: false,
+        own_album_artist: None,
     };
     track.book = reborn_core::books::is_book(&track);
     Ok(track)
@@ -945,7 +946,14 @@ impl Database {
                             Ok(())
                         }
                         DbCommand::Catalog(reply) => {
-                            let _ = reply.try_send(catalog(&mut c));
+                            // One album, one album artist in the lists (#45),
+                            // worked out here, off the UI thread; the file
+                            // keeps every song's own tags.
+                            let mut tracks = catalog(&mut c);
+                            if let Ok(tracks) = &mut tracks {
+                                reborn_core::albums::unify_album_artists(tracks);
+                            }
+                            let _ = reply.try_send(tracks);
                             Ok(())
                         }
                         DbCommand::Begin(source, reply) => {
@@ -1692,6 +1700,7 @@ impl ScanBatch<'_> {
                     genre: m.genre.trim().to_owned(),
                     // Not stored: `from_row` derives it when the catalog loads.
                     book: false,
+                    own_album_artist: None,
                 }
             }
             Err(e) => {

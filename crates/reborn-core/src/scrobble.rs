@@ -84,7 +84,7 @@ pub fn play_of(track: &Track) -> Option<Play> {
     {
         return None;
     }
-    let album_artist = track.album_artist.trim();
+    let album_artist = track.tagged_album_artist().trim();
     Some(Play {
         artist: artist.to_owned(),
         title: title.to_owned(),
@@ -350,6 +350,9 @@ mod tests {
         let mut va = track(100_000);
         va.album_artist = "Various Artists".into();
         assert_eq!(play_of(&va).unwrap().album_artist, "Various Artists");
+        // The song's own tag, not the album's the lists use (#45).
+        va.own_album_artist = Some(String::new());
+        assert_eq!(play_of(&va).unwrap().album_artist, "");
     }
 
     #[test]

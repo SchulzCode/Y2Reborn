@@ -10,7 +10,7 @@ use crate::{
     theme::{alpha, color, mix, HEIGHT, WIDTH},
     Ui,
 };
-use reborn_core::{AppModel, Track};
+use reborn_core::{AppModel, Screen, Track};
 use reborn_graphics::{Quad, Tex, Warp};
 
 /// Covers drawn on each side of the centre.
@@ -173,5 +173,9 @@ pub fn albums(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interacti
         .and_then(|a| tracks.get(a).map(|t| (a, t)))
     {
         ui.request_cover(art_key(t), at);
+    }
+    // Scrolling fast through Albums: the letter, as in the lists (#30).
+    if m.screen == Screen::Albums {
+        crate::views_library::letter_bubble(c, ui, m, tracks, focus);
     }
 }

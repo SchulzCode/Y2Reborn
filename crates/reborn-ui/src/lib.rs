@@ -430,6 +430,8 @@ pub struct Ui {
     /// The device a pair/connect request is waiting on: path, name, operation, start.
     bt_busy: Option<(String, String, String, Instant)>,
     usb_state: Option<UsbTransfer>,
+    /// A computer connected (#28): the runtime owes one haptic tick.
+    connect_tick: bool,
     /// The one-step update is running (Beta 7.1): download, check and the
     /// restart to install follow each other on one screen that cannot be
     /// left; Cancel stops it while it downloads.
@@ -533,6 +535,9 @@ pub enum Alert {
 
 /// Library lists at least this long may use cadence-based wheel acceleration.
 const ACCELERATED_LIST_MINIMUM: usize = 40;
+/// The fast-scroll letter stays this long after the last detent; while it
+/// shows, the wheel steps by letter (#30).
+const FAST_SCROLL_LINGER: Duration = Duration::from_millis(700);
 /// A list longer than this that reaches an end stops there; one more step
 /// after the wheel rested this long continues at the other end, so a fast
 /// spin through a long library never flies past its end.
@@ -877,6 +882,12 @@ impl Ui {
         elapsed as f32 / 1600.
     }
 
+    /// A computer connected since the last call (#28): one haptic tick, as
+    /// its message shows. Taking it clears it.
+    pub fn take_connect_tick(&mut self) -> bool {
+        std::mem::take(&mut self.connect_tick)
+    }
+
     /// Watch platform state the UI reacts to by itself: a computer connecting,
     /// a Bluetooth request finishing or failing, the battery running low,
     /// work that shows a spinner and the clock's minute turning over.
@@ -894,11 +905,13 @@ impl Ui {
             // says what happened and the status bar shows the cable.
             if let Some(was) = self.usb_state {
                 let attached = |s| matches!(s, UsbTransfer::Ready | UsbTransfer::Copying);
+                let connected = attached(usb) && !attached(was);
                 if usb == UsbTransfer::Copying && was != UsbTransfer::Copying {
                     self.flash("Copying files from the computer…");
-                } else if attached(usb) && !attached(was) {
+                } else if connected {
                     self.flash("Connected to a computer");
                 }
+                self.connect_tick |= connected;
             }
             self.usb_state = Some(usb);
         }
@@ -1212,6 +1225,33 @@ impl Ui {
         }
     }
 
+    /// A Home Menu switch changes Home's rows while Home waits in the
+    /// history: Back returns to the place that was focused, not its index.
+    fn keep_home_focus(m: &mut AppModel, tracks: &[Track], effect: &Effect) {
+        let mut after = m.settings.clone();
+        match effect {
+            Effect::SetHomePin(key, on) => after.pin_home(key, *on),
+            Effect::SetHomeShown(key, on) => after.show_on_home(key, *on),
+            Effect::SetAudiobooksOnHome(on) => after.audiobooks_on_home = *on,
+            _ => return,
+        }
+        let Some(at) = m
+            .navigation
+            .history
+            .iter()
+            .rposition(|f| f.screen == Screen::Home)
+        else {
+            return;
+        };
+        let before = pages::home_rows(&m.settings, tracks);
+        let after = pages::home_rows(&after, tracks);
+        let frame = &mut m.navigation.history[at];
+        let key = before.get(frame.focus).map(|r| r.key.as_str());
+        frame.focus = key
+            .and_then(|k| after.iter().position(|r| r.key == k))
+            .unwrap_or(frame.focus.min(after.len() - 1));
+    }
+
     fn home(m: &mut AppModel) {
         m.navigation.stack.clear();
         m.navigation.history.clear();
@@ -1473,8 +1513,16 @@ impl Ui {
                 Item::new("Repeat", "cycle_repeat").with_secondary(repeat_label(m.settings.repeat)),
                 self.favorite_row(m, tracks, self.current_index(m, tracks)),
                 Item::new("Add to Playlist…", "add_playlist"),
-                Item::new("Go to Album", "go_album"),
-                Item::new("Go to Artist", "go_artist"),
+                // Back to where the music came from (#25, #60): the Go to
+                // row of that place, Go to Album's for a playlist or folder.
+                match self.origin_label(m) {
+                    Some(label) if label != "Go to Artist" => Item::new(label, "go_source"),
+                    _ => Item::new("Go to Album", "go_album"),
+                },
+                match self.origin_label(m) {
+                    Some(label @ "Go to Artist") => Item::new(label, "go_source"),
+                    _ => Item::new("Go to Artist", "go_artist"),
+                },
             ];
         }
         let selected_key = m.navigation.context_key.clone().or_else(|| {
@@ -2060,11 +2108,64 @@ impl Ui {
         let accelerate = m.navigation.modal.is_none()
             && (Self::is_catalog(m.screen) || m.screen == Screen::TimeZone)
             && self.row_count(m, tracks) >= ACCELERATED_LIST_MINIMUM;
+        let now = Instant::now();
+        // #30: while the letter shows, each detent goes to the next or the
+        // previous letter, and the letter stays `FAST_SCROLL_LINGER` after
+        // the last one: turning back after overshooting stays by letter.
+        let lettered = accelerate && self.fast_scroll_until.is_some_and(|until| now < until);
+        if let Some(target) = lettered
+            .then(|| self.letter_step(m, tracks, direction > 0))
+            .flatten()
+        {
+            self.fast_scroll_until = Some(now + FAST_SCROLL_LINGER);
+            // At an end one row at a time: a rested wheel wraps as always.
+            let delta = match target as i32 - m.navigation.focus as i32 {
+                0 => direction,
+                jump => jump,
+            };
+            self.move_focus(m, tracks, delta);
+            return Effect::None;
+        }
         if accelerate && suggested.abs() > 1 {
-            self.fast_scroll_until = Some(Instant::now() + Duration::from_millis(700));
+            self.fast_scroll_until = Some(now + FAST_SCROLL_LINGER);
         }
         self.move_focus(m, tracks, if accelerate { suggested } else { direction });
         Effect::None
+    }
+
+    /// Where a letter jump from the focused row lands (#30), in a list that
+    /// shows its letter (`row_letter`); None elsewhere.
+    fn letter_step(&self, m: &AppModel, tracks: &[Track], forward: bool) -> Option<usize> {
+        if !Self::lettered(m) {
+            return None;
+        }
+        let mut c = self.catalog.borrow_mut();
+        self.ensure_catalog(&mut c, m, tracks);
+        let by_artist = m.settings.album_order == reborn_core::AlbumOrder::Artist;
+        c.letter_jump(tracks, m.navigation.focus, forward, m.screen, by_artist)
+    }
+
+    /// The A to Z lists that show the letter while scrolling fast: Songs
+    /// (a genre's keep the library's order), Artists, Albums (a genre's too;
+    /// #56: by artist, the artist's letter) and Folders.
+    fn lettered(m: &AppModel) -> bool {
+        m.navigation.modal.is_none()
+            && match m.screen {
+                Screen::Artists | Screen::Albums | Screen::Folders => true,
+                Screen::Tracks => m.navigation.filter.is_empty(),
+                _ => false,
+            }
+    }
+
+    /// The letter row `index` files under in a lettered list (`initial`).
+    pub(crate) fn row_letter(&self, m: &AppModel, tracks: &[Track], index: usize) -> Option<char> {
+        if !Self::lettered(m) {
+            return None;
+        }
+        let mut c = self.catalog.borrow_mut();
+        self.ensure_catalog(&mut c, m, tracks);
+        let by_artist = m.settings.album_order == reborn_core::AlbumOrder::Artist;
+        c.letter(tracks, index, m.screen, by_artist)
     }
 
     fn move_focus(&mut self, m: &mut AppModel, tracks: &[Track], delta: i32) {
@@ -2407,6 +2508,7 @@ impl Ui {
             };
         }
         if let Some(effect) = self.setting(m, key) {
+            Self::keep_home_focus(m, tracks, &effect);
             return effect;
         }
         match m.screen {
@@ -2654,6 +2756,10 @@ impl Ui {
                 let pinned = m.settings.home_pins.iter().any(|p| p == key);
                 Effect::SetHomePin(key.into(), !pinned)
             }
+            k if k.starts_with("home_show:") => {
+                let key = &k["home_show:".len()..];
+                Effect::SetHomeShown(key.into(), !m.settings.home_shows(key))
+            }
             "output_set:wired" => Effect::Output(AudioOutput::Wired),
             k if k.starts_with("output_set:") => Effect::BluetoothDevice {
                 path: k["output_set:".len()..].into(),
@@ -2692,6 +2798,7 @@ impl Ui {
             "haptics" => Effect::SetHaptics(m.settings.haptics.next()),
             "speaker" => Effect::SetSpeaker(!m.settings.speaker),
             "album_view" => Effect::SetAlbumView(m.settings.album_view.next()),
+            "album_order" => Effect::SetAlbumOrder(m.settings.album_order.next()),
             "artists_list" => Effect::SetArtistsList(m.settings.artists_list.next()),
             "now_playing_wheel" => Effect::SetNowPlayingWheel(m.settings.now_playing_wheel.next()),
             "crossfade" => Effect::SetCrossfade(match m.settings.crossfade_ms {
@@ -2748,6 +2855,7 @@ impl Ui {
             members,
             shuffle,
             source: source_label(m),
+            origin: page_origin(m),
         };
         Self::go(m, Screen::NowPlaying, "");
         effect
@@ -2783,6 +2891,7 @@ impl Ui {
                 members,
                 shuffle: ShuffleMode::Off,
                 source: source_label(m),
+                origin: page_origin(m),
             }
         } else {
             Effect::Play(selected)
@@ -3317,6 +3426,7 @@ impl Ui {
                 }
                 Effect::None
             }
+            "go_source" => self.go_to_origin(m, tracks),
             "track_info" => {
                 Self::go(
                     m,
@@ -3375,26 +3485,11 @@ impl Ui {
                 self.fold_search(m, tracks);
                 Effect::None
             }
-            // Back from the search's top row: out of the search (#44).
-            Outcome::Leave => {
-                self.keyboard = None;
-                Self::back(m);
-                Effect::None
-            }
             Outcome::Cancel => {
-                let k = self.keyboard.take();
-                // The search: back to the search being edited, else out of
-                // the search page.
-                if let Some(k) = k.filter(keyboard::Keyboard::live) {
-                    match k.restore.clone() {
-                        Some(text) => {
-                            m.navigation.filter = text;
-                            m.navigation.focus = 0;
-                            m.navigation.scroll = 0;
-                            self.start_fold(k);
-                        }
-                        None => Self::back(m),
-                    }
+                // Cancel or a held Back in the search leaves it, typed text
+                // or not, to the screen it was opened from (#51).
+                if self.keyboard.take().is_some_and(|k| k.live()) {
+                    Self::leave_search(m);
                 }
                 Effect::None
             }
@@ -3469,6 +3564,76 @@ impl Ui {
         }
     }
 
+    /// Now Playing's Go to row for the place the music was played from
+    /// (#25, #60), while the song playing came from it (not one you queued)
+    /// and that place is still there.
+    fn origin_label(&self, m: &AppModel) -> Option<&'static str> {
+        let origin = m.queue_origin.as_ref()?;
+        if m.current_entry_id().is_none_or(|id| m.is_queued(id)) {
+            return None;
+        }
+        Some(match origin.screen {
+            Screen::Album => "Go to Album",
+            Screen::Artist => "Go to Artist",
+            Screen::Playlist
+                if !self.playlists.loaded
+                    || self
+                        .playlists
+                        .get(std::path::Path::new(&origin.filter))
+                        .is_some() =>
+            {
+                "Go to Playlist"
+            }
+            Screen::Folders => "Go to Folder",
+            Screen::Search => "Go to Search",
+            Screen::Tracks if origin.filter.starts_with("genre:") => "Go to Genre",
+            Screen::Tracks if origin.filter.is_empty() => "Go to Songs",
+            _ => return None,
+        })
+    }
+
+    /// Open the page the music was played from, the song playing focused.
+    fn go_to_origin(&mut self, m: &mut AppModel, tracks: &[Track]) -> Effect {
+        let Some(origin) = m.queue_origin.clone() else {
+            return Effect::None;
+        };
+        let current = self.current_index(m, tracks);
+        Self::go(m, origin.screen, origin.filter);
+        if m.screen == Screen::Playlist && !self.playlists.loaded {
+            // After a restart: the playlist shows once they are read.
+            self.playlists.loading = true;
+            return Effect::Playlist(Box::new(reborn_core::PlaylistRequest::Refresh));
+        }
+        let Some(current) = current else {
+            return Effect::None;
+        };
+        let row = if m.screen == Screen::Playlist {
+            let resolved = self
+                .playlists
+                .get(std::path::Path::new(&m.navigation.filter))
+                .map(|p| self.resolved(tracks, p))
+                .unwrap_or_default();
+            self.with_playlist_rows(m, tracks, |rows| {
+                rows.iter().position(|r| {
+                    r.key
+                        .strip_prefix("pl_entry:")
+                        .and_then(|i| i.parse::<usize>().ok())
+                        .is_some_and(|i| resolved.get(i).copied().flatten() == Some(current))
+                })
+            })
+        } else if Self::is_catalog(m.screen) {
+            let mut c = self.catalog.borrow_mut();
+            self.ensure_catalog(&mut c, m, tracks);
+            c.rows.iter().position(|r| r.track() == Some(current))
+        } else {
+            None
+        };
+        if let Some(row) = row {
+            self.move_focus(m, tracks, row as i32);
+        }
+        Effect::None
+    }
+
     /// The library index of the song playing.
     fn current_index(&self, m: &AppModel, tracks: &[Track]) -> Option<usize> {
         let current = m.current()?;
@@ -3490,8 +3655,8 @@ impl Ui {
         )
     }
 
-    /// Open the search with its keys up: on the search page with its text
-    /// (Cancel gives it back), else a new, empty search (#44: a search
+    /// Open the search with its keys up: on the search page with its text,
+    /// else a new, empty search (#44: a search
     /// left is not offered again). The search index is built here (once per
     /// library), not on the first letter.
     fn open_library_search(&mut self, m: &mut AppModel, tracks: &[Track]) {
@@ -3527,6 +3692,14 @@ impl Ui {
         if let Some(k) = self.keyboard.as_mut() {
             k.found = if blank { 0 } else { found };
             k.note = if blank { String::new() } else { summary };
+        }
+    }
+
+    /// Out of the search to the screen it was opened from, past its own
+    /// levels (a section's See All is a search page too).
+    fn leave_search(m: &mut AppModel) {
+        while m.screen == Screen::Search && m.navigation.modal.is_none() {
+            Self::back(m);
         }
     }
 
@@ -4211,6 +4384,13 @@ pub(crate) fn artist_of_filter(filter: &str) -> Option<&str> {
         .or_else(|| filter.strip_prefix("albumartist:"))
 }
 /// What Up Next calls a collection played from the screen showing it.
+/// The page on screen as the origin of what it plays (#25, #60).
+pub(crate) fn page_origin(m: &AppModel) -> Option<reborn_core::QueueOrigin> {
+    Some(reborn_core::QueueOrigin {
+        screen: m.screen,
+        filter: m.navigation.filter.clone(),
+    })
+}
 pub(crate) fn source_label(m: &AppModel) -> String {
     let filter = &m.navigation.filter;
     match m.screen {

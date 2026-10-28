@@ -648,6 +648,28 @@ impl Ui {
         display_or_unknown(name).to_owned()
     }
 
+    /// The page a group's row opens, as the origin of its songs (#25, #60):
+    /// a genre's songs, the search's results, else the group's own page.
+    fn group_origin(m: &AppModel, key: &str) -> Option<reborn_core::QueueOrigin> {
+        let screen = if key == crate::catalog::SEARCH_PLAY_ALL {
+            return crate::page_origin(m);
+        } else if key.starts_with("album:") {
+            Screen::Album
+        } else if key.starts_with("artist:") || key.starts_with("albumartist:") {
+            Screen::Artist
+        } else if key.starts_with("genre:") {
+            Screen::Tracks
+        } else if key.starts_with("folder:") {
+            Screen::Folders
+        } else {
+            return None;
+        };
+        Some(reborn_core::QueueOrigin {
+            screen,
+            filter: key.into(),
+        })
+    }
+
     pub(crate) fn group_effect(
         &mut self,
         m: &mut AppModel,
@@ -673,6 +695,7 @@ impl Ui {
                         _ => ShuffleMode::Off,
                     },
                     source,
+                    origin: Self::group_origin(m, key),
                 }
             }
             "group_next" => Effect::PlayNextCollection(members),

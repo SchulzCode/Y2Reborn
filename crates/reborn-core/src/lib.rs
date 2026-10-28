@@ -1,4 +1,5 @@
 #![forbid(unsafe_code)]
+pub mod albums;
 pub mod books;
 pub mod clock;
 mod countries;
@@ -449,6 +450,11 @@ pub struct Track {
     /// stored, so the rule can change without a rescan.
     #[serde(default)]
     pub book: bool,
+    /// The song's own Album Artist tag when `album_artist` holds its album's
+    /// (`albums::unify_album_artists`, #45): set when the library loads, never
+    /// stored in the library. None: `album_artist` is the song's own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub own_album_artist: Option<String>,
 }
 
 /// The largest left/right balance in dB (Settings > Sound > Balance).
@@ -534,6 +540,13 @@ impl Track {
     /// of an audiobook (books have their own place).
     pub fn is_music(&self) -> bool {
         self.online && !self.book
+    }
+    /// The Album Artist tag the file carries (Last.fm gets this), not the
+    /// album's the lists group it under (#45).
+    pub fn tagged_album_artist(&self) -> &str {
+        self.own_album_artist
+            .as_deref()
+            .unwrap_or(&self.album_artist)
     }
     /// The artists one by one, as the Artists list files the track.
     pub fn artists(&self) -> Vec<&str> {
@@ -1121,6 +1134,9 @@ pub struct Settings {
     /// How Albums and Audiobooks present their covers.
     #[serde(default)]
     pub album_view: AlbumView,
+    /// How Albums orders them (#56).
+    #[serde(default)]
+    pub album_order: AlbumOrder,
     /// What the wheel does on Now Playing (Beta 8.36).
     #[serde(default)]
     pub now_playing_wheel: NowPlayingWheel,
@@ -1164,6 +1180,10 @@ pub struct Settings {
     /// is Now Playing, Music, Playlists, Radio, Search and Settings.
     #[serde(default)]
     pub home_pins: Vec<String>,
+    /// Home's own places the listener took off Home, by key
+    /// (`HOME_HIDEABLE`; Y2Reborn #52, #55). Now Playing and Settings stay.
+    #[serde(default)]
+    pub home_hidden: Vec<String>,
     /// Also write every scrobble to `.scrobbler.log` on Internal Storage
     /// (Rockbox format, for upload tools); works without an account.
     #[serde(default)]
@@ -1209,6 +1229,14 @@ pub const HOME_PINNABLE: [(&str, &str); 5] = [
     ("genres", "Genres"),
     ("folders", "Folders"),
 ];
+/// Home's own places that can be taken off Home, in Home's order: (key,
+/// label). Music stands first, the others after the pinned lists.
+pub const HOME_HIDEABLE: [(&str, &str); 4] = [
+    ("music", "Music"),
+    ("playlists", "Playlists"),
+    ("radio", "Radio"),
+    ("search", "Search"),
+];
 /// How Albums and Audiobooks show their covers: Customize > Cover Flow.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
@@ -1230,6 +1258,31 @@ impl AlbumView {
         match self {
             Self::CoverFlow => Self::Grid,
             Self::Grid => Self::CoverFlow,
+        }
+    }
+}
+/// How Albums (and Cover Flow) order the albums: Customize > Album Order (#56).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum AlbumOrder {
+    /// A to Z by title, then artist.
+    #[default]
+    Title,
+    /// A to Z by the artist shown under the album, then title: an artist's
+    /// albums stand together.
+    Artist,
+}
+impl AlbumOrder {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Title => "Title",
+            Self::Artist => "Artist",
+        }
+    }
+    pub fn next(self) -> Self {
+        match self {
+            Self::Title => Self::Artist,
+            Self::Artist => Self::Title,
         }
     }
 }
@@ -1468,6 +1521,7 @@ impl Default for Settings {
             repeat: RepeatMode::Off,
             brightness: default_brightness(),
             album_view: AlbumView::CoverFlow,
+            album_order: AlbumOrder::Title,
             now_playing_wheel: NowPlayingWheel::Volume,
             artists_list: ArtistsList::All,
             wrap_around: WrapAround::Menus,
@@ -1481,6 +1535,7 @@ impl Default for Settings {
             time_zone: default_time_zone(),
             time_zone_auto: None,
             home_pins: Vec::new(),
+            home_hidden: Vec::new(),
             scrobble_log: false,
             lastfm_scrobble: true,
             lastfm_now_playing: true,
@@ -1546,6 +1601,20 @@ impl Settings {
             .map(str::to_owned)
             .collect();
         std::mem::swap(&mut self.home_pins, &mut pins);
+    }
+    /// Whether one of Home's own places (`HOME_HIDEABLE`) stands on Home.
+    pub fn home_shows(&self, key: &str) -> bool {
+        !self.home_hidden.iter().any(|h| h == key)
+    }
+    /// Show or hide one of Home's own places; kept in `HOME_HIDEABLE`'s
+    /// order, unknown keys are ignored (Now Playing and Settings stay).
+    pub fn show_on_home(&mut self, key: &str, on: bool) {
+        self.home_hidden = HOME_HIDEABLE
+            .iter()
+            .map(|(k, _)| *k)
+            .filter(|k| if *k == key { !on } else { !self.home_shows(k) })
+            .map(str::to_owned)
+            .collect();
     }
 }
 impl Settings {
@@ -1614,6 +1683,14 @@ impl Settings {
 }
 /// See `Settings::codec_revision`.
 pub const CODEC_REVISION: u8 = 1;
+/// A page songs were played from: the screen and its filter (a playlist's
+/// path, `album:…`, `folder:…`, `genre:…`, a search).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct QueueOrigin {
+    pub screen: Screen,
+    #[serde(default)]
+    pub filter: String,
+}
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AppModel {
     pub playback: PlaybackState,
@@ -1631,6 +1708,10 @@ pub struct AppModel {
     /// What is playing, as Up Next names it ("Night Drive", "Songs").
     #[serde(default)]
     pub queue_source: String,
+    /// The page the source was played from, which Now Playing's Go to
+    /// <Source> reopens (Y2Reborn #25, #60); none for older sessions.
+    #[serde(default)]
+    pub queue_origin: Option<QueueOrigin>,
     /// Songs that played, newest last (`queue::MAX_HISTORY`).
     #[serde(default)]
     pub history: Vec<queue::HistoryEntry>,
@@ -1739,6 +1820,8 @@ pub enum Effect {
         shuffle: ShuffleMode,
         /// What Up Next calls it ("Night Drive", "Search “bri”").
         source: String,
+        /// The page it was played from (Now Playing's Go to <Source>).
+        origin: Option<QueueOrigin>,
     },
     PlayQueue(usize),
     /// Play this library song now; what was playing goes on after it.
@@ -1795,6 +1878,7 @@ pub enum Effect {
     SetBalance(i8),
     SetGapless(bool),
     SetAlbumView(AlbumView),
+    SetAlbumOrder(AlbumOrder),
     SetNowPlayingWheel(NowPlayingWheel),
     SetArtistsList(ArtistsList),
     SetWrapAround(WrapAround),
@@ -1828,6 +1912,8 @@ pub enum Effect {
     SetTimeZoneAuto(bool),
     /// Pin (true) or unpin a Music list (`HOME_PINNABLE` key) on Home.
     SetHomePin(String, bool),
+    /// Show (true) or hide one of Home's own places (`HOME_HIDEABLE` key).
+    SetHomeShown(String, bool),
     /// Stop the update download in progress (Cancel on the update screen).
     CancelDownload,
     QueueRemove(usize),
@@ -1921,6 +2007,7 @@ impl AppModel {
         self.queue_queued.clear();
         self.queue_order = self.queue_entry_ids.clone();
         self.queue_source.clear();
+        self.queue_origin = None;
         self.queue_position = index;
         self.position_ms = 0;
         // A new queue is no longer the book (starting a book sets it again).
@@ -2566,6 +2653,44 @@ mod tests {
         }))
         .unwrap();
         assert!(old.home_pins.is_empty());
+        assert!(old.home_hidden.is_empty());
+    }
+
+    #[test]
+    fn queue_origin_is_kept_old_sessions_have_none_and_a_new_queue_forgets_it() {
+        let mut m = AppModel {
+            queue_origin: Some(QueueOrigin {
+                screen: Screen::Playlist,
+                filter: "/data/music/Playlists/Road Trip.m3u8".into(),
+            }),
+            ..Default::default()
+        };
+        let saved = serde_json::to_value(&m).unwrap();
+        let back: AppModel = serde_json::from_value(saved.clone()).unwrap();
+        assert_eq!(back.queue_origin, m.queue_origin);
+        let mut old = saved;
+        old.as_object_mut().unwrap().remove("queue_origin");
+        let old: AppModel = serde_json::from_value(old).unwrap();
+        assert!(old.queue_origin.is_none());
+        m.replace_queue(vec![Track::default()], 0).unwrap();
+        assert!(m.queue_origin.is_none());
+    }
+
+    #[test]
+    fn home_places_hide_in_home_order_and_the_fixed_ones_stay() {
+        let mut s = Settings::default();
+        assert!(s.home_shows("radio"));
+        s.show_on_home("search", false);
+        s.show_on_home("radio", false);
+        s.show_on_home("settings", false);
+        s.show_on_home("now_playing", false);
+        assert_eq!(s.home_hidden, ["radio", "search"]);
+        assert!(!s.home_shows("radio") && s.home_shows("music"));
+        s.show_on_home("radio", true);
+        assert_eq!(s.home_hidden, ["search"]);
+        let saved = serde_json::to_value(&s).unwrap();
+        let back: Settings = serde_json::from_value(saved).unwrap();
+        assert_eq!(back.home_hidden, ["search"]);
     }
 
     #[test]

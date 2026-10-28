@@ -468,6 +468,7 @@ impl Ui {
         };
         let members = self.playable_shown(m, tracks, &p);
         let source = crate::source_label(m);
+        let origin = crate::page_origin(m);
         match key {
             "pl_play" | "pl_shuffle" if !members.is_empty() => {
                 Self::go(m, Screen::NowPlaying, "");
@@ -480,6 +481,7 @@ impl Ui {
                         ShuffleMode::Off
                     },
                     source,
+                    origin,
                 }
             }
             k => {
@@ -497,6 +499,7 @@ impl Ui {
                             members,
                             shuffle: ShuffleMode::Off,
                             source,
+                            origin,
                         }
                     }
                     Some(_) => {
@@ -587,6 +590,10 @@ impl Ui {
                             _ => ShuffleMode::Off,
                         },
                         source: p.name.clone(),
+                        origin: Some(reborn_core::QueueOrigin {
+                            screen: Screen::Playlist,
+                            filter: p.path.to_string_lossy().into_owned(),
+                        }),
                     }
                 }
                 "pl_next" if !members.is_empty() => {

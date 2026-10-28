@@ -137,8 +137,18 @@ impl Row {
 }
 #[derive(Default)]
 pub struct Catalog {
-    stamp: Option<(usize, usize, Screen, String, reborn_core::ArtistsList)>,
+    stamp: Option<(
+        usize,
+        usize,
+        Screen,
+        String,
+        reborn_core::ArtistsList,
+        reborn_core::AlbumOrder,
+    )>,
     pub rows: Vec<Row>,
+    /// The letter each row files under, read when a letter jump first
+    /// passes it (#30); cleared with the rows.
+    letters: Vec<Option<char>>,
     /// The search page: what it found ("2 artists · 9 songs", or "No
     /// matches") and how many results that is.
     pub summary: String,
@@ -159,8 +169,14 @@ pub struct Catalog {
     /// songs again (Beta 8.39).
     whole: Vec<(WholeKey, Vec<Row>)>,
 }
-/// A whole-library list: the library, the screen and who Artists lists.
-type WholeKey = ((usize, usize), Screen, reborn_core::ArtistsList);
+/// A whole-library list: the library, the screen, who Artists lists and how
+/// Albums orders them.
+type WholeKey = (
+    (usize, usize),
+    Screen,
+    reborn_core::ArtistsList,
+    reborn_core::AlbumOrder,
+);
 impl Catalog {
     /// The search page (Beta 8.32): the field, then each kind of result
     /// under its heading — artists, albums, playlists, audiobooks, then songs
@@ -323,12 +339,14 @@ impl Catalog {
             m.screen,
             m.navigation.filter.clone(),
             m.settings.artists_list,
+            m.settings.album_order,
         );
         if self.stamp.as_ref() == Some(&stamp) {
             return;
         }
         self.stamp = Some(stamp);
         self.rows.clear();
+        self.letters.clear();
         let whole = (m.navigation.filter.is_empty()
             && matches!(
                 m.screen,
@@ -339,6 +357,7 @@ impl Catalog {
                 crate::library_stamp(tracks),
                 m.screen,
                 m.settings.artists_list,
+                m.settings.album_order,
             )
         });
         if let Some(key) = whole {
@@ -360,6 +379,7 @@ impl Catalog {
             crate::library_stamp(tracks),
             screen,
             m.settings.artists_list,
+            m.settings.album_order,
         );
         if self.whole.iter().any(|(k, _)| *k == key) {
             return;
@@ -390,11 +410,22 @@ impl Catalog {
                         .entry((t.album.as_str(), t.album_artist.as_str()))
                         .or_insert((i, t));
                 }
-                // A to Z by title, then album artist, articles skipped.
+                // A to Z by title, then album artist, articles skipped; or
+                // by the artist shown, then title (Customize > Album Order,
+                // #56).
                 let mut albums: Vec<_> = albums.into_iter().collect();
-                albums.sort_by_cached_key(|((album, artist), _)| {
-                    (title_key(album), artist_key(artist))
-                });
+                match m.settings.album_order {
+                    reborn_core::AlbumOrder::Title => {
+                        albums.sort_by_cached_key(|((album, artist), _)| {
+                            (title_key(album), artist_key(artist))
+                        })
+                    }
+                    reborn_core::AlbumOrder::Artist => {
+                        albums.sort_by_cached_key(|((album, artist), (_, t))| {
+                            (artist_key(shown_artist(artist, t)), title_key(album))
+                        })
+                    }
+                }
                 // A genre's album view opens with all of its songs, then
                 // Shuffle (as on an album page; user request).
                 if m.navigation.filter.starts_with("genre:") && !albums.is_empty() {
@@ -650,6 +681,76 @@ impl Catalog {
         }
     }
 }
+impl Catalog {
+    /// The letter row `index` files under in an A to Z list
+    /// (`crate::initial`; Albums by artist: the artist's, #56), read once
+    /// per row.
+    pub(crate) fn letter(
+        &mut self,
+        tracks: &[Track],
+        index: usize,
+        screen: Screen,
+        by_artist: bool,
+    ) -> Option<char> {
+        let row = self.rows.get(index)?;
+        if self.letters.len() != self.rows.len() {
+            self.letters = vec![None; self.rows.len()];
+        }
+        if let Some(letter) = self.letters[index] {
+            return Some(letter);
+        }
+        let letter = match row {
+            Row::Item(item) if by_artist && screen == Screen::Albums => {
+                let t = tracks.get(item.art?)?;
+                crate::initial(shown_artist(&t.album_artist, t), Screen::Artists)
+            }
+            Row::Item(item) => crate::initial(&item.label, screen),
+            Row::FolderTrack(i) => crate::initial(&file_item(*i, &tracks[*i]).label, screen),
+            Row::Track(i) | Row::AlbumTrack(i) | Row::SearchSong(i) => {
+                crate::initial(crate::track_title(&tracks[*i]), screen)
+            }
+            Row::SearchAlbum(_) => return None,
+        };
+        self.letters[index] = Some(letter);
+        Some(letter)
+    }
+
+    /// A letter jump from row `from` (#30): forward to the first row of the
+    /// next letter (after the last letter: the last row); back to the first
+    /// row of this letter, else of the one before. None when the row has no
+    /// letter.
+    pub(crate) fn letter_jump(
+        &mut self,
+        tracks: &[Track],
+        from: usize,
+        forward: bool,
+        screen: Screen,
+        by_artist: bool,
+    ) -> Option<usize> {
+        let letter = |c: &mut Self, i: usize| c.letter(tracks, i, screen, by_artist);
+        let here = letter(self, from)?;
+        if forward {
+            let mut i = from + 1;
+            while i < self.rows.len() && letter(self, i) == Some(here) {
+                i += 1;
+            }
+            return Some(i.min(self.rows.len() - 1));
+        }
+        let mut first = from;
+        while first > 0 && letter(self, first - 1) == Some(here) {
+            first -= 1;
+        }
+        if first < from || first == 0 {
+            return Some(first);
+        }
+        let before = letter(self, first - 1);
+        let mut i = first - 1;
+        while i > 0 && letter(self, i - 1) == before {
+            i -= 1;
+        }
+        Some(i)
+    }
+}
 /// A file or folder name's place in Folders (`natural_key`); the name
 /// itself breaks ties.
 pub(crate) fn name_key(name: &str) -> (String, String) {
@@ -675,10 +776,17 @@ fn artist_key(name: &str) -> (String, String) {
 fn title_key(name: &str) -> (String, String) {
     (sort_key(name, SortAs::Title), name.to_owned())
 }
+/// The artist an album row shows: its album artist, else its first song's.
+fn shown_artist<'a>(album_artist: &'a str, t: &'a Track) -> &'a str {
+    if album_artist.is_empty() {
+        &t.artist
+    } else {
+        album_artist
+    }
+}
 fn album_item(album: &str, artist: &str, index: usize, t: &Track) -> Item {
-    let mut item = Item::new(display_or_unknown(album), album_filter(t)).with_secondary(
-        crate::names_or_unknown(if artist.is_empty() { &t.artist } else { artist }),
-    );
+    let mut item = Item::new(display_or_unknown(album), album_filter(t))
+        .with_secondary(crate::names_or_unknown(shown_artist(artist, t)));
     item.art = Some(index);
     item
 }
