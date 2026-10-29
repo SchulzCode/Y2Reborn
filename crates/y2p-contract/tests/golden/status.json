@@ -305,11 +305,11 @@
  "record": {
   "boot_id": "boot-a",
   "build_id": "fixture-build",
-  "collection_duration_ns": 17873494,
+  "collection_duration_ns": 19858051,
   "evidence_level": "IMPLEMENTED",
   "failure": null,
   "kernel": "6.18.0-fixture",
-  "monotonic_ns": 21339620439282,
+  "monotonic_ns": 26001512876938,
   "parameters": {},
   "reborn_commit": "reborn",
   "result": "observed",
@@ -317,7 +317,7 @@
   "units": {
    "collection_duration": "ns"
   },
-  "wall_timestamp": "2026-10-28T20:25:20.048433+00:00",
+  "wall_timestamp": "2026-10-28T21:43:01.940867+00:00",
   "workload": "observation",
   "y2linux_commit": "linux-commit"
  },
@@ -336,12 +336,12 @@
   "sd_bus_parameters": null,
   "volumes": [
    {
-    "available_bytes": 15793102848,
-    "available_inodes": 3978003,
+    "available_bytes": 15736307712,
+    "available_inodes": 3972940,
     "controller_valid": false,
     "device_id": "179:2",
     "filesystem": "ext4",
-    "free_bytes": 15793102848,
+    "free_bytes": 15736307712,
     "generation": "boot-a:22:179:2",
     "mount_id": 22,
     "options": [
@@ -361,12 +361,12 @@
     "uuid": null
    },
    {
-    "available_bytes": 15793102848,
-    "available_inodes": 3978003,
+    "available_bytes": 15736307712,
+    "available_inodes": 3972940,
     "controller_valid": false,
     "device_id": "179:9",
     "filesystem": "ext4",
-    "free_bytes": 15793102848,
+    "free_bytes": 15736307712,
     "generation": "boot-a:30:179:9",
     "mount_id": 30,
     "options": [
@@ -481,7 +481,7 @@
    "build_epoch": 1788000000,
    "clock_sane": true,
    "entropy_ready": null,
-   "epoch": 1793219120.063928,
+   "epoch": 1793223781.9584284,
    "ntp_authenticated": false,
    "reason": "clock_not_established",
    "rtc_retention_qualified": false,
