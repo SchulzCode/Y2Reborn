@@ -465,6 +465,26 @@ impl Observer {
             .map(|s| json!(s.metrics))
             .unwrap_or(json!({}))
     }
+    /// One counter or gauge (0 when unknown), without copying the others.
+    pub fn metric(&self, name: &str) -> f64 {
+        self.0
+            .state
+            .lock()
+            .ok()
+            .and_then(|s| s.metrics.get(name).copied())
+            .unwrap_or(0.)
+    }
+    /// `health()["overall"] == "failed"` without building the health record:
+    /// the watchdog asks every pass and builds the record only for a new failure.
+    pub fn failed(&self) -> bool {
+        let Ok(s) = self.0.state.lock() else {
+            return true;
+        };
+        s.heartbeats.values().any(|h| h.last.elapsed() > h.deadline)
+            || s.health
+                .values()
+                .any(|h| h.required && h.state == HealthState::Failed)
+    }
     pub fn health_set(&self, sub: &str, state: HealthState, required: bool, detail: &str) {
         if let Ok(mut s) = self.0.state.lock() {
             s.health.insert(
@@ -847,6 +867,28 @@ mod tests {
         let o = Observer::new(&temp("heart")).unwrap();
         o.heartbeat("database", 0);
         assert_eq!(o.health()["overall"], "failed");
+        assert!(o.failed());
+    }
+    /// The watchdog's cheap verdict is the health record's `overall` one.
+    #[test]
+    fn failed_matches_the_health_record() {
+        let o = Observer::new(&temp("failed")).unwrap();
+        let same = |o: &Observer| o.failed() == (o.health()["overall"] == "failed");
+        assert!(!o.failed() && same(&o));
+        o.heartbeat("ui", 10);
+        assert!(!o.failed() && same(&o));
+        o.health_set("avrcp", HealthState::Failed, false, "optional");
+        assert!(!o.failed() && same(&o));
+        o.health_set("scanner", HealthState::Degraded, true, "some files");
+        assert!(!o.failed() && same(&o));
+        o.health_set("database", HealthState::Failed, true, "gone");
+        assert!(o.failed() && same(&o));
+        o.health_set("database", HealthState::Ok, true, "back");
+        o.heartbeat("playback", 0);
+        assert!(o.failed() && same(&o));
+        o.add("audio_xruns", 2.);
+        assert_eq!(o.metric("audio_xruns"), 2.);
+        assert_eq!(o.metric("unknown_metric"), 0.);
     }
     #[test]
     fn bundle_sanitized_and_bounded() {
