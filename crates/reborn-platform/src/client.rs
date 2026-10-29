@@ -459,6 +459,9 @@ pub fn friendly_error(error: &str) -> String {
         "Software updates are installed using a computer."
     } else if e.contains("clock") || e.contains("tls") || e.contains("network") {
         "Connect to Wi-Fi to check for updates."
+    } else if e.contains("update_in_progress") {
+        // Y2Linux 8.44: a check or download already holds the update (the daily check, say).
+        "An update check is already running. Try again in a moment."
     } else if e.contains("timeout") {
         "That took too long. Please try again."
     } else if e.contains("starting") || e.contains("unavailable") || e.contains("not_found") {
@@ -2032,6 +2035,7 @@ mod tests {
         assert!(friendly_error("wrong_key").contains("password"));
         assert!(friendly_error("dhcp_timeout").contains("network address"));
         assert!(friendly_error("dns_unavailable").contains("name lookup"));
+        assert!(friendly_error("update_in_progress").contains("already running"));
         let raw = friendly_error("org.bluez.Error.Failed private details");
         assert!(!raw.contains("org.bluez") && !raw.contains("private"));
     }
