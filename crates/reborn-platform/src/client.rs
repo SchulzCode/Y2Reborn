@@ -643,17 +643,29 @@ pub fn usb(status: &Value) -> UsbTransfer {
 /// receipt in RAM, without the status call (≈1.6 s): read twice a second, so
 /// the computer screen follows the cable on every screen (Beta 7.1).
 pub fn usb_now() -> UsbTransfer {
-    usb_from(
-        Path::new("/sys/class/udc"),
-        Path::new(USB_RECEIPT),
-        Path::new(BOOT_ID),
-    )
+    // The boot never changes while Reborn runs: read once (this runs every
+    // second, also between the main loop's passes while the screen is dark).
+    static BOOT: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    let boot = match BOOT.get() {
+        Some(boot) => boot.as_str(),
+        None => match fs::read_to_string(BOOT_ID) {
+            Ok(id) if !id.trim().is_empty() => BOOT.get_or_init(|| id.trim().to_owned()),
+            _ => "",
+        },
+    };
+    usb_with_boot(Path::new("/sys/class/udc"), Path::new(USB_RECEIPT), boot)
 }
 
 const USB_RECEIPT: &str = "/run/y2/usb-transfer.json";
 const BOOT_ID: &str = "/proc/sys/kernel/random/boot_id";
 
+#[cfg(test)]
 fn usb_from(udc: &Path, receipt: &Path, boot_id: &Path) -> UsbTransfer {
+    let boot = fs::read_to_string(boot_id).unwrap_or_default();
+    usb_with_boot(udc, receipt, boot.trim())
+}
+
+fn usb_with_boot(udc: &Path, receipt: &Path, boot: &str) -> UsbTransfer {
     let udcs: Vec<Value> = fs::read_dir(udc)
         .into_iter()
         .flatten()
@@ -665,9 +677,8 @@ fn usb_from(udc: &Path, receipt: &Path, boot_id: &Path) -> UsbTransfer {
         .ok()
         .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
         .unwrap_or(Value::Null);
-    let boot = fs::read_to_string(boot_id).unwrap_or_default();
     usb(&json!({
-        "record": {"boot_id": boot.trim()},
+        "record": {"boot_id": boot},
         "system": {"usb": {"udcs": udcs, "file_transfer": transfer}},
     }))
 }

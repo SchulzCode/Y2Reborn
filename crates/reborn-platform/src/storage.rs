@@ -601,12 +601,23 @@ fn helper(action: &str) -> Result<(), String> {
     }
 }
 pub fn sd_present() -> bool {
-    fs::read_dir("/sys/class/block")
+    sd_present_in(Path::new("/sys/class/block"))
+}
+/// A class entry is a link into /sys/devices: its target names the
+/// controller, so one readlink per entry does (canonicalize walked every
+/// component of every block device, the eMMC's many partitions too, each
+/// observation). Anything that is no link is still resolved in full.
+fn sd_present_in(class: &Path) -> bool {
+    const SD_HOST: &str = "/11240000.mmc/";
+    fs::read_dir(class)
         .into_iter()
         .flatten()
         .filter_map(Result::ok)
-        .any(|e| {
-            fs::canonicalize(e.path()).is_ok_and(|p| p.to_string_lossy().contains("/11240000.mmc/"))
+        .any(|e| match fs::read_link(e.path()) {
+            Ok(target) => target.to_string_lossy().contains(SD_HOST),
+            Err(_) => {
+                fs::canonicalize(e.path()).is_ok_and(|p| p.to_string_lossy().contains(SD_HOST))
+            }
         })
 }
 
@@ -671,6 +682,44 @@ impl TransferRefresh {
 }
 #[cfg(test)]
 mod tests {
+    /// The SD card is the block device linked below its controller, as
+    /// /sys/class/block links point; eMMC partitions and loops are not.
+    #[test]
+    fn sd_card_found_by_its_class_link() {
+        use std::os::unix::fs::symlink;
+        let root = std::env::temp_dir().join(format!("reborn-sd-class-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let class = root.join("class/block");
+        let devices = root.join("devices/platform");
+        for dir in [
+            "11230000.mmc/mmc_host/mmc0/mmc0:0001/block/mmcblk0/mmcblk0p1",
+            "11240000.mmc/mmc_host/mmc1/mmc1:aaaa/block/mmcblk1",
+            "virtual/block/loop0",
+        ] {
+            std::fs::create_dir_all(devices.join(dir)).unwrap();
+        }
+        std::fs::create_dir_all(&class).unwrap();
+        let link = |target: &str, name: &str| {
+            symlink(format!("../../devices/platform/{target}"), class.join(name)).unwrap()
+        };
+        link(
+            "11230000.mmc/mmc_host/mmc0/mmc0:0001/block/mmcblk0/mmcblk0p1",
+            "mmcblk0p1",
+        );
+        link("virtual/block/loop0", "loop0");
+        assert!(!super::sd_present_in(&class));
+        link(
+            "11240000.mmc/mmc_host/mmc1/mmc1:aaaa/block/mmcblk1",
+            "mmcblk1",
+        );
+        assert!(super::sd_present_in(&class));
+        std::fs::remove_file(class.join("mmcblk1")).unwrap();
+        assert!(!super::sd_present_in(&class));
+        // An entry that is a directory, not a link, is resolved in full.
+        let plain = devices.join("11240000.mmc/mmc_host/mmc1/mmc1:aaaa/block");
+        assert!(super::sd_present_in(&plain));
+        let _ = std::fs::remove_dir_all(&root);
+    }
     #[test]
     fn uuid_probe_reused_only_for_same_mount_and_block_lifetime() {
         use super::{MountUuidCache, MountUuidKey};
