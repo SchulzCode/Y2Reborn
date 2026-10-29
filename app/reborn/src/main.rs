@@ -2,6 +2,7 @@
 mod artwork;
 mod background;
 mod books;
+mod dark;
 mod diagnostics;
 mod graphics_recovery;
 mod meter;
@@ -40,6 +41,11 @@ use std::{
 /// A pause held in place gives its sink back after this long (Bluetooth
 /// headphones and the wired codec may then rest).
 const HOLD_LIMIT: Duration = Duration::from_secs(180);
+/// The main loop's periodic block (battery and media observation, the
+/// automatic sleep, the diagnostic snapshot) runs after more than this.
+const PERIODIC_EVERY: Duration = Duration::from_secs(2);
+/// Unsaved state is written after more than this.
+const CHECKPOINT_EVERY: Duration = Duration::from_secs(15);
 /// Seek steps closer together than this are one seek.
 const SEEK_SETTLE: Duration = Duration::from_millis(350);
 /// Held seeks tick at most this often (#28).
@@ -366,6 +372,23 @@ fn sleep_control_allowed(command: &Command) -> bool {
             | Command::Logs { .. }
             | Command::SleepRestore { .. }
     )
+}
+
+/// Ask the watchdog for one observation, when the gate allows one; true
+/// when it was sent (and is now pending).
+fn request_observation(
+    gate: &background::Gate,
+    requests: &SyncSender<background::Request>,
+    pending: &mut Option<background::Request>,
+) -> bool {
+    let Some(request) = gate.request() else {
+        return false;
+    };
+    let sent = requests.try_send(request.clone()).is_ok();
+    if sent {
+        *pending = Some(request);
+    }
+    sent
 }
 
 /// Read-only periodic I/O runs on the existing watchdog. The UI remains the
@@ -3940,6 +3963,56 @@ impl Runtime {
         }
     }
 
+    /// The screen is dark and nothing goes on: no sound, no platform task,
+    /// no start, scan, reconfiguration, seek or wait for headphones in
+    /// flight. The main loop and the watchdog then wait longer (`dark`).
+    fn dark_and_quiet(&self) -> bool {
+        !self.headless
+            && self.model.screen_off
+            && !self.sleep_prepared
+            && !matches!(
+                self.model.playback,
+                PlaybackState::Playing | PlaybackState::Buffering
+            )
+            && !self.model.library.scanning
+            && self.query.is_none()
+            && self.pending_reconfiguration.is_none()
+            && self.model.platform.busy.is_none()
+            && self.queued_platform.is_none()
+            && !self.playback.has_pending_start()
+            && self.lost_peer.is_none()
+            && self.jack_pending.is_none()
+            && self.seek_until.is_none()
+            && self.boot_fade == 0
+    }
+
+    /// The moments a dark, quiet loop owes a pass: the automatic sleep,
+    /// Wi-Fi's idle power-down, the end of a held pause and the sleep timer.
+    fn dark_timers(&self) -> impl Iterator<Item = Instant> {
+        let sleep = self.dark_since.map(|dark| {
+            dark::automatic_sleep_at(
+                dark,
+                self.last_activity,
+                self.sleep_attempt,
+                self.sleep_refusals,
+                self.headset_paused,
+            )
+        });
+        let wifi = self
+            .dark_since
+            .filter(|_| {
+                !self.wifi_idle_off
+                    && !self.wifi_idle_failed
+                    && self.wifi_state.enabled
+                    && self.model.platform.battery.charging
+                        == reborn_core::platform::ChargingState::OnBattery
+            })
+            .map(|dark| dark + Duration::from_secs(reborn_core::platform::WIFI_IDLE_OFF_SECS));
+        let hold = self.held_since.map(|since| since + HOLD_LIMIT);
+        let timer = self.model.sleep_timer.and_then(|timer| timer.until);
+        [sleep, wifi, hold, timer].into_iter().flatten()
+    }
+
     /// Present the battery and announce a worsening low-battery level once.
     fn present_battery(&mut self, battery: reborn_core::platform::BatteryState) {
         let before = self.model.platform.battery;
@@ -3966,10 +4039,14 @@ impl Runtime {
             self.log.uptime(),
             &self.log.health(),
         );
-        json!({"healthy":healthy,"health_reasons":reasons,"version":reborn_core::BUILD_LABEL,"build_id":option_env!("REBORN_BUILD_ID").unwrap_or("development"),"session":self.log.session(),"uptime_seconds":self.log.uptime(),"current_screen":self.model.screen,"screen_off":self.model.screen_off,"playback":{"state":self.model.playback,"track_id":self.model.current().map(|t|t.id),"position_ms":self.model.position_ms,"duration_ms":self.model.current().map(|t|t.duration_ms),"queue_length":self.model.queue.len(),"queue_position":self.model.queue_position,"generation":self.model.generation},"output":self.model.output,"audio":self.playback.audio_state(),"library":{"tracks_loaded":self.model.library.tracks.len(),"schema":reborn_library::SCHEMA_VERSION,"scanning":self.model.library.scanning,"last_scan":self.model.library.last_scan,"error":self.model.library.error},"wifi":self.wifi_state,"bluetooth":self.bt_state,"storage":self.model.sources,"power":self.power,"graphics":{"available":self.graphics.is_some(),"renderer":self.graphics.as_ref().map(|g|&g.info),"headless":self.headless},"decoder":{"ffmpeg":reborn_media::version(),"runtime":reborn_media::runtime_components_if_loaded()},"buffers":{"frames":self.log.metrics()["audio_buffer_frames"],"milliseconds":self.log.metrics()["audio_buffer_ms"]}})
+        json!({"healthy":healthy,"health_reasons":reasons,"version":reborn_core::BUILD_LABEL,"build_id":option_env!("REBORN_BUILD_ID").unwrap_or("development"),"session":self.log.session(),"uptime_seconds":self.log.uptime(),"current_screen":self.model.screen,"screen_off":self.model.screen_off,"playback":{"state":self.model.playback,"track_id":self.model.current().map(|t|t.id),"position_ms":self.model.position_ms,"duration_ms":self.model.current().map(|t|t.duration_ms),"queue_length":self.model.queue.len(),"queue_position":self.model.queue_position,"generation":self.model.generation},"output":self.model.output,"audio":self.playback.audio_state(),"library":{"tracks_loaded":self.model.library.tracks.len(),"schema":reborn_library::SCHEMA_VERSION,"scanning":self.model.library.scanning,"last_scan":self.model.library.last_scan,"error":self.model.library.error},"wifi":self.wifi_state,"bluetooth":self.bt_state,"storage":self.model.sources,"power":self.power,"graphics":{"available":self.graphics.is_some(),"renderer":self.graphics.as_ref().map(|g|&g.info),"headless":self.headless},"decoder":{"ffmpeg":reborn_media::version(),"runtime":reborn_media::runtime_components_if_loaded()},"buffers":{"frames":self.log.metric("audio_buffer_frames"),"milliseconds":self.log.metric("audio_buffer_ms")}})
     }
     fn snapshot(&self) -> Value {
-        json!({"status":self.status(),"health":self.log.health(),"metrics":self.log.metrics(),"recent_errors":self.log.events(20,None,Some(Level::Warn),None),"resource_usage":fs::read_to_string("/proc/self/status").unwrap_or_default(),"kernel_events":self.kernel_events.lock().map(|v|v.clone()).unwrap_or_default()})
+        self.snapshot_with(self.status())
+    }
+    /// The snapshot around a `status()` the caller made (and uses again).
+    fn snapshot_with(&self, status: Value) -> Value {
+        json!({"status":status,"health":self.log.health(),"metrics":self.log.metrics(),"recent_errors":self.log.events(20,None,Some(Level::Warn),None),"resource_usage":fs::read_to_string("/proc/self/status").unwrap_or_default(),"kernel_events":self.kernel_events.lock().map(|v|v.clone()).unwrap_or_default()})
     }
     fn play_control(&mut self, a: PlaybackAction) -> Result<(), String> {
         self.with_model_action(|runtime| runtime.play_control_inner(a))
@@ -4743,6 +4820,10 @@ fn run() -> Result<(), String> {
     startup_phase(&log, process_started, "core_services_ready");
     let playback = playback::Playback::spawn(log.clone(), root.join("cache"))?;
     startup_phase(&log, process_started, "audio_ready");
+    // Before the radios: Bluetooth's status wakes the UI's wait through it.
+    let socket =
+        PathBuf::from(option(&args, "--socket").unwrap_or("/run/reborn/control.sock".into()));
+    let server = reborn_control::Server::spawn(&socket, log.clone()).map_err(|e| e.to_string())?;
     let wifi = if headless {
         None
     } else {
@@ -4751,12 +4832,10 @@ fn run() -> Result<(), String> {
     let bluetooth = if headless {
         None
     } else {
-        Some(bluetooth::Bluetooth::spawn(log.clone()).map_err(|e| e.to_string())?)
+        let wake = server.notifier().map_err(|e| e.to_string())?;
+        Some(bluetooth::Bluetooth::spawn_notified(log.clone(), wake).map_err(|e| e.to_string())?)
     };
     startup_phase(&log, process_started, "radio_workers_ready");
-    let socket =
-        PathBuf::from(option(&args, "--socket").unwrap_or("/run/reborn/control.sock".into()));
-    let server = reborn_control::Server::spawn(&socket, log.clone()).map_err(|e| e.to_string())?;
     let diagnostics = diagnostics::Diagnostics::spawn(
         log.clone(),
         db.clone(),
@@ -4904,17 +4983,27 @@ fn run() -> Result<(), String> {
     let (observation_tx, observations) = std::sync::mpsc::sync_channel::<Observation>(1);
     let wl = log.clone();
     let diagnostic_root = root.join("diagnostics");
+    // Set by the main loop: dark and quiet, the watchdog's pass is longer.
+    let dark_quiet = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let watchdog_dark = dark_quiet.clone();
     thread::Builder::new()
         .name("watchdog".into())
         .spawn(move || {
             let mut last_failed = false;
             let mut kernel_reader = kernel_events::KernelEvents::default();
             loop {
-                let events = kernel_reader.poll();
-                if let Ok(mut history) = kernel_history.lock() {
-                    *history = events;
+                if let Some(events) = kernel_reader.poll() {
+                    if let Ok(mut history) = kernel_history.lock() {
+                        *history = events;
+                    }
                 }
-                match observation_rx.recv_timeout(Duration::from_secs(1)) {
+                // A request (the main loop's observation) ends the wait at once.
+                let pass = if watchdog_dark.load(std::sync::atomic::Ordering::Relaxed) {
+                    dark::WATCHDOG
+                } else {
+                    Duration::from_secs(1)
+                };
+                match observation_rx.recv_timeout(pass) {
                     Ok(request) => {
                         let started = Instant::now();
                         if let Some((power, media)) = observation_authority.run(&request, || {
@@ -4936,9 +5025,9 @@ fn run() -> Result<(), String> {
                     Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
                     Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
                 }
-                let health = wl.health();
-                let failed = health["overall"] == "failed";
+                let failed = wl.failed();
                 if failed && !last_failed {
+                    let health = wl.health();
                     wl.emit(
                         Level::Error,
                         "diagnostics",
@@ -4988,6 +5077,11 @@ fn run() -> Result<(), String> {
             .ok()
     };
     let mut workload_tick = Instant::now();
+    // The last observation request and snapshot (`dark` spaces them out),
+    // and whether the snapshot was taken dark and quiet.
+    let mut observed = Instant::now();
+    let (mut snapshot_taken, mut snapshot_quiet) = (Instant::now(), false);
+    let mut was_dark = rt.model.screen_off;
     let (mut periodic, mut checkpoint, mut render_time) = (
         Instant::now(),
         Instant::now(),
@@ -6203,10 +6297,25 @@ fn run() -> Result<(), String> {
                 }
             }
         }
-        if periodic.elapsed() > Duration::from_secs(2) {
+        // The screen just lit: battery and media are observed now, not
+        // with the next periodic block (they were read seldom in the dark).
+        let woke = was_dark && !rt.model.screen_off;
+        was_dark = rt.model.screen_off;
+        if woke && observation_pending.is_none() {
+            rt.background.refresh_pending(&mut observation_pending);
+            if request_observation(
+                &rt.background,
+                &observation_requests,
+                &mut observation_pending,
+            ) {
+                observed = Instant::now();
+            }
+        }
+        if periodic.elapsed() > PERIODIC_EVERY {
             rt.loud_listening_tick(periodic.elapsed());
             periodic = Instant::now();
             rt.automatic_sleep_tick();
+            let quiet = rt.dark_and_quiet();
             if rt.background.update(
                 &rt.model.settings.music_directory,
                 &rt.model.sources,
@@ -6215,12 +6324,15 @@ fn run() -> Result<(), String> {
                 observation_pending = None;
             }
             rt.background.refresh_pending(&mut observation_pending);
-            if observation_pending.is_none() {
-                if let Some(request) = rt.background.request() {
-                    if observation_requests.try_send(request.clone()).is_ok() {
-                        observation_pending = Some(request);
-                    }
-                }
+            if observation_pending.is_none()
+                && (!quiet || observed.elapsed() >= dark::OBSERVATION)
+                && request_observation(
+                    &rt.background,
+                    &observation_requests,
+                    &mut observation_pending,
+                )
+            {
+                observed = Instant::now();
             }
             if !headless
                 && !rt.model.screen_off
@@ -6237,20 +6349,26 @@ fn run() -> Result<(), String> {
             {
                 let _ = rt.effect(Effect::ScreenSleep);
             }
-            if let Ok(mut s) = last_snapshot.lock() {
-                *s = rt.snapshot();
-                log.context(rt.status());
+            // For the watchdog's bundle and the panic record: nothing changes
+            // while dark and quiet, so once as the quiet begins, then seldom.
+            if !quiet || !snapshot_quiet || snapshot_taken.elapsed() >= dark::SNAPSHOT {
+                if let Ok(mut s) = last_snapshot.lock() {
+                    let status = rt.status();
+                    *s = rt.snapshot_with(status.clone());
+                    log.context(status);
+                }
+                (snapshot_taken, snapshot_quiet) = (Instant::now(), quiet);
             }
-            let xruns = log.metrics()["audio_xruns"].as_f64().unwrap_or(0.);
+            let xruns = log.metric("audio_xruns");
             if xruns - xrun_bundle >= 3. {
                 xrun_bundle = xruns;
                 let _ = log.diagnostic(&root.join("diagnostics"), rt.snapshot(), true);
             }
         }
-        if checkpoint.elapsed() > Duration::from_secs(15) && rt.dirty.checkpoint_due() {
+        if checkpoint.elapsed() > CHECKPOINT_EVERY && rt.dirty.checkpoint_due() {
             rt.checkpoint();
             checkpoint = Instant::now();
-        } else if checkpoint.elapsed() > Duration::from_secs(15) {
+        } else if checkpoint.elapsed() > CHECKPOINT_EVERY {
             checkpoint = Instant::now();
         }
         if rt.dirty.render
@@ -6411,8 +6529,53 @@ fn run() -> Result<(), String> {
                 render_time.elapsed(),
             )
         };
-        if let Some(input) = &inputs {
-            if input.wait_with(interval, Some(server.wake_fd())).is_err() {
+        let quiet = !prewarming
+            && monitor.is_none()
+            && inputs.as_ref().is_some_and(|input| !input.held())
+            && rt.dark_and_quiet();
+        dark_quiet.store(quiet, std::sync::atomic::Ordering::Relaxed);
+        if let (true, Some(input)) = (quiet, &inputs) {
+            // Dark and quiet: the next full pass comes with an event or the
+            // first timer the loop owes (at most `dark::PASS`); in between,
+            // once a second, only what lights the screen or shuts down.
+            let now = Instant::now();
+            let due = rt
+                .dirty
+                .checkpoint_due()
+                .then(|| checkpoint + CHECKPOINT_EVERY);
+            let until = now
+                + dark::pass_wait(
+                    now,
+                    rt.dark_timers().chain(due),
+                    periodic + PERIODIC_EVERY + Duration::from_millis(1),
+                );
+            let shown = rt.model.platform.snapshot.usb;
+            loop {
+                let slice = until
+                    .saturating_duration_since(Instant::now())
+                    .min(dark::TICK);
+                // Not the jack: the kernel reads its detector only while the
+                // DAC is powered (screen on or playing), never dark and quiet.
+                let others = std::iter::once(server.wake_fd());
+                let ready = input.wait_with(slice, others).unwrap_or_else(|_| {
+                    thread::sleep(slice);
+                    false
+                });
+                if ready || Instant::now() >= until || reborn_platform::stop_requested() {
+                    break;
+                }
+                if power::shutdown_intent().is_some() || {
+                    let usb = client::usb_now();
+                    usb != shown && usb != reborn_core::platform::UsbTransfer::Unknown
+                } {
+                    break;
+                }
+            }
+        } else if let Some(input) = &inputs {
+            if input
+                .wait_with(interval, std::iter::once(server.wake_fd()))
+                .is_err()
+            {
                 thread::sleep(interval);
             }
         } else {

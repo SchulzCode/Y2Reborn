@@ -7,7 +7,9 @@ pub struct KernelEvents {
     history: VecDeque<String>,
 }
 impl KernelEvents {
-    pub fn poll(&mut self) -> Vec<String> {
+    /// The history after the records since the last poll, when they added
+    /// to it (most polls read only records that are no faults).
+    pub fn poll(&mut self) -> Option<Vec<String>> {
         if self.file.is_none() {
             self.file = std::fs::OpenOptions::new()
                 .read(true)
@@ -15,13 +17,13 @@ impl KernelEvents {
                 .open("/dev/kmsg")
                 .ok();
         }
-        if let Some(file) = &mut self.file {
-            drain(file, &mut self.history);
-        }
-        self.history.iter().cloned().collect()
+        let file = self.file.as_mut()?;
+        drain(file, &mut self.history).then(|| self.history.iter().cloned().collect())
     }
 }
-fn drain(reader: &mut impl Read, history: &mut VecDeque<String>) {
+/// Whether a record joined the history.
+fn drain(reader: &mut impl Read, history: &mut VecDeque<String>) -> bool {
+    let mut added = false;
     let mut buf = [0; 4096];
     for _ in 0..2048 {
         match reader.read(&mut buf) {
@@ -40,6 +42,7 @@ fn drain(reader: &mut impl Read, history: &mut VecDeque<String>) {
                     && !lower.contains("calibration")
                 {
                     history.push_back(line.chars().take(512).collect());
+                    added = true;
                     if history.len() > 32 {
                         history.pop_front();
                     }
@@ -52,6 +55,7 @@ fn drain(reader: &mut impl Read, history: &mut VecDeque<String>) {
             Err(_) => break,
         }
     }
+    added
 }
 
 #[cfg(test)]
@@ -75,11 +79,13 @@ mod tests {
             b"lima fault old".to_vec(),
         ]));
         let mut history = VecDeque::new();
-        drain(&mut records, &mut history);
-        drain(&mut records, &mut history);
+        assert!(drain(&mut records, &mut history));
+        assert!(!drain(&mut records, &mut history));
         assert_eq!(history, ["lima fault old"]);
+        records.0.push_back(b"drm ready again".to_vec());
+        assert!(!drain(&mut records, &mut history));
         records.0.push_back(b"EXT4 ERROR new".to_vec());
-        drain(&mut records, &mut history);
+        assert!(drain(&mut records, &mut history));
         assert_eq!(history, ["lima fault old", "EXT4 ERROR new"]);
         for n in 0..40 {
             records.0.push_back(format!("mmc timeout {n}").into_bytes());

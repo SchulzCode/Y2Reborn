@@ -348,13 +348,19 @@ impl InputManager {
         self.poll_at(Instant::now())
     }
     pub fn wait(&self, timeout: Duration) -> std::io::Result<()> {
-        self.wait_with(timeout, None)
+        self.wait_with(timeout, None).map(|_| ())
     }
-    pub fn wait_with(
-        &self,
+    /// A button is held: its repeat and long press need the loop every 15 ms.
+    pub fn held(&self) -> bool {
+        !self.pressed.is_empty()
+    }
+    /// Wait for input or one of `others` (the control wake) to be
+    /// readable, or `timeout`; true when something is.
+    pub fn wait_with<'a>(
+        &'a self,
         timeout: Duration,
-        control: Option<std::os::fd::BorrowedFd<'_>>,
-    ) -> std::io::Result<()> {
+        others: impl IntoIterator<Item = std::os::fd::BorrowedFd<'a>>,
+    ) -> std::io::Result<bool> {
         use std::os::fd::AsFd;
         // Preserve the existing repeat and long-press cadence while a button
         // is held; an idle wheel/Select/Back/Power wakes the poll immediately.
@@ -367,10 +373,9 @@ impl InputManager {
             self.files
                 .iter()
                 .map(|(_, file, _, _)| file.as_fd())
-                .chain(control),
+                .chain(others),
             timeout,
         )
-        .map(|_| ())
     }
 
     #[cfg(test)]

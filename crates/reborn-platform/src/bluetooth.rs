@@ -253,6 +253,26 @@ impl CommandSender {
         let _ = (&*self.wake).write(&[1]);
     }
 }
+/// Each published status also wakes the UI's wait when it gave a wake
+/// socket: it waits seconds while the screen is dark, and a headset that
+/// connected must be known before its own Play button is.
+#[derive(Clone)]
+struct EventSender {
+    queue: SyncSender<Status>,
+    wake: Option<Arc<UnixStream>>,
+}
+impl EventSender {
+    // `SyncSender::try_send`'s own result: the worker's matches stay as they were.
+    #[allow(clippy::result_large_err)]
+    fn try_send(&self, status: Status) -> Result<(), TrySendError<Status>> {
+        self.queue.try_send(status)?;
+        if let Some(wake) = &self.wake {
+            // A full nonblocking socket is already readable.
+            let _ = (&**wake).write(&[1]);
+        }
+        Ok(())
+    }
+}
 pub struct Bluetooth {
     pub commands: CommandSender,
     pub events: Receiver<Status>,
@@ -1236,6 +1256,14 @@ fn rejected(msg: &Message) -> Message {
 }
 impl Bluetooth {
     pub fn spawn(log: Observer) -> std::io::Result<Self> {
+        Self::spawn_inner(log, None)
+    }
+    /// As `spawn`, and every published status writes a byte to `wake`.
+    pub fn spawn_notified(log: Observer, wake: UnixStream) -> std::io::Result<Self> {
+        wake.set_nonblocking(true)?;
+        Self::spawn_inner(log, Some(Arc::new(wake)))
+    }
+    fn spawn_inner(log: Observer, wake: Option<Arc<UnixStream>>) -> std::io::Result<Self> {
         Self::spawn_with(
             log,
             || {
@@ -1244,12 +1272,14 @@ impl Bluetooth {
                 Ok(channel.into())
             },
             "/data/bluetooth/enabled".into(),
+            wake,
         )
     }
     fn spawn_with(
         log: Observer,
         connect: impl Fn() -> Result<Connection, dbus::Error> + Send + 'static,
         preference: PathBuf,
+        wake: Option<Arc<UnixStream>>,
     ) -> std::io::Result<Self> {
         let (tx, rx) = sync_channel(8);
         let (wake_sender, wake_receiver) = UnixStream::pair()?;
@@ -1259,7 +1289,8 @@ impl Bluetooth {
             queue: tx,
             wake: Arc::new(wake_sender),
         };
-        let (et, er) = sync_channel(2);
+        let (queue, er) = sync_channel(2);
+        let et = EventSender { queue, wake };
         thread::Builder::new()
             .name("bluetooth".into())
             .spawn(move || {
@@ -2583,6 +2614,7 @@ mod tests {
             log.clone(),
             move || connect(&address),
             directory.join("enabled"),
+            None,
         )
         .unwrap();
         fn wait(events: &Receiver<Status>, matches: impl Fn(&Status) -> bool) -> Status {
