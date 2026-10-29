@@ -361,6 +361,12 @@ impl Server {
                         }
                         if let Some(end) = client.input.iter().position(|&b| b == b'\n') {
                             let response = match parse(&client.input[..end]) {
+                                // The counters live in the observer this thread
+                                // shares: answered here, without waking the UI
+                                // (the platform reads them with every status).
+                                Ok(request) if matches!(request.command, Command::Metrics) => {
+                                    Some(Response::ok(request.id, log.metrics()))
+                                }
                                 Ok(request) => {
                                     let id = request.id;
                                     let (rt, rr) = sync_channel(1);
@@ -535,6 +541,44 @@ mod tests {
             .send(Response::error(43, "test response"))
             .unwrap();
         assert_eq!(client.join().unwrap().unwrap().id, 43);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// `metrics` is the observer's answer, given by the control thread: the
+    /// UI's queue never sees it (nor needs to be woken for it).
+    #[test]
+    fn metrics_answer_without_the_ui() {
+        let root = std::env::temp_dir().join(format!(
+            "reborn-control-metrics-{}-{}",
+            std::process::id(),
+            reborn_observability::wall_ms()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("control.sock");
+        let log = Observer::new(&root.join("logs")).unwrap();
+        log.add("audio_xruns", 3.);
+        let server = Server::spawn(&path, log.clone()).unwrap();
+        let response = call(
+            &path,
+            &Request {
+                version: 1,
+                id: 7,
+                command: Command::Metrics,
+            },
+        )
+        .unwrap();
+        assert!(response.ok);
+        assert_eq!(response.id, 7);
+        assert_eq!(response.result["audio_xruns"], 3.);
+        let mut expected = log.metrics();
+        let mut answered = response.result.clone();
+        // Uptime is a gauge set by each read.
+        expected["reborn_uptime_seconds"] = json!(0);
+        answered["reborn_uptime_seconds"] = json!(0);
+        assert_eq!(answered, expected);
+        assert!(server.requests.try_recv().is_err());
+        let mut wake = &server.wake;
+        assert!(wake.read(&mut [0]).is_err());
         fs::remove_dir_all(root).unwrap();
     }
 
