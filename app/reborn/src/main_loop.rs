@@ -383,67 +383,18 @@ pub(crate) fn run() -> Result<(), String> {
     // Set by the main loop: dark and quiet, the watchdog's pass is longer.
     let dark_quiet = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let watchdog_dark = dark_quiet.clone();
-    thread::Builder::new()
-        .name("watchdog".into())
-        .spawn(move || {
-            let mut last_failed = false;
-            let mut kernel_reader = kernel_events::KernelEvents::default();
-            loop {
-                if let Some(events) = kernel_reader.poll() {
-                    if let Ok(mut history) = kernel_history.lock() {
-                        *history = events;
-                    }
-                }
-                // A request (the main loop's observation) ends the wait at once.
-                let pass = if watchdog_dark.load(std::sync::atomic::Ordering::Relaxed) {
-                    dark::WATCHDOG
-                } else {
-                    Duration::from_secs(1)
-                };
-                match observation_rx.recv_timeout(pass) {
-                    Ok(request) => {
-                        let started = Instant::now();
-                        if let Some((power, media)) = observation_authority.run(&request, || {
-                            (
-                                power::status(),
-                                (!headless).then(|| {
-                                    (storage::sd_present(), storage::sources(&request.music))
-                                }),
-                            )
-                        }) {
-                            let _ = observation_tx.try_send(Observation {
-                                request,
-                                power,
-                                media,
-                                elapsed_ms: started.elapsed().as_secs_f64() * 1000.,
-                            });
-                        }
-                    }
-                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
-                    Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
-                }
-                let failed = wl.failed();
-                if failed && !last_failed {
-                    let health = wl.health();
-                    wl.emit(
-                        Level::Error,
-                        "diagnostics",
-                        "worker_or_subsystem_failed",
-                        "Health transitioned to failed",
-                        None,
-                        json!({"health":health}),
-                    );
-                    if let Ok(s) = watcher.try_lock() {
-                        let _ = wl.diagnostic(&diagnostic_root, s.clone(), true);
-                    }
-                }
-                last_failed = failed;
-                if reborn_platform::stop_requested() {
-                    break;
-                }
-            }
-        })
-        .map_err(|e| e.to_string())?;
+    Watchdog {
+        wl,
+        watcher,
+        kernel_history,
+        watchdog_dark,
+        observation_rx,
+        observation_authority,
+        observation_tx,
+        diagnostic_root,
+        headless,
+    }
+    .spawn()?;
     let inputs = inputs;
     // #28: the headphone jack, when the kernel reports it.
     let jack = if headless {
@@ -575,11 +526,145 @@ pub(crate) fn run() -> Result<(), String> {
         shutdown_intent,
         ..
     } = main_loop;
-    // Platform shutdown contract: present the transition, save state, close
-    // audio and the database, end on a dark frame with the backlight off,
-    // then acknowledge. The platform's own deadline bounds all of this; it
-    // proceeds without us if Reborn hangs or crashes.
-    let mut farewell = shutdown_intent.as_ref().and_then(|intent| {
+    let farewell = shut_down(&mut rt, &log, shutdown_intent.as_ref());
+    // Keep the DRM device (and its dark frame) open until the process exits;
+    // the platform powers the panel down after the acknowledgement.
+    let _keep_scanout = farewell;
+    if let Some(w) = rt.wifi {
+        let _ = w.commands.try_send(wifi::Command::Stop);
+    }
+    if let Some(b) = rt.bluetooth {
+        let _ = b.commands.try_send(bluetooth::Command::Stop);
+    }
+    let _ = fs::remove_file(socket);
+    log.emit(
+        Level::Info,
+        "core",
+        "shutdown",
+        "Reborn stopped",
+        None,
+        json!({}),
+    );
+    Ok(())
+}
+
+/// The watchdog thread: the kernel's event history, the battery and media observations the main loop
+/// asks for (a request ends its wait at once; dark and quiet, a pass is longer), and a diagnostic
+/// bundle when health turns failed.
+struct Watchdog {
+    wl: Observer,
+    /// The main loop's last snapshot, for that bundle.
+    watcher: Arc<Mutex<Value>>,
+    kernel_history: Arc<Mutex<Vec<String>>>,
+    watchdog_dark: Arc<std::sync::atomic::AtomicBool>,
+    observation_rx: std::sync::mpsc::Receiver<background::Request>,
+    observation_authority: background::Authority,
+    observation_tx: SyncSender<Observation>,
+    diagnostic_root: PathBuf,
+    headless: bool,
+}
+
+impl Watchdog {
+    fn spawn(self) -> Result<(), String> {
+        let Watchdog {
+            wl,
+            watcher,
+            kernel_history,
+            watchdog_dark,
+            observation_rx,
+            observation_authority,
+            observation_tx,
+            diagnostic_root,
+            headless,
+        } = self;
+        thread::Builder::new()
+            .name("watchdog".into())
+            .spawn(move || {
+                let mut last_failed = false;
+                let mut kernel_reader = kernel_events::KernelEvents::default();
+                loop {
+                    if let Some(events) = kernel_reader.poll() {
+                        if let Ok(mut history) = kernel_history.lock() {
+                            *history = events;
+                        }
+                    }
+                    // A request (the main loop's observation) ends the wait at once.
+                    let pass = if watchdog_dark.load(std::sync::atomic::Ordering::Relaxed) {
+                        dark::WATCHDOG
+                    } else {
+                        Duration::from_secs(1)
+                    };
+                    match observation_rx.recv_timeout(pass) {
+                        Ok(request) => {
+                            let started = Instant::now();
+                            if let Some((power, media)) =
+                                observation_authority.run(&request, || {
+                                    (
+                                        power::status(),
+                                        (!headless).then(|| {
+                                            (
+                                                storage::sd_present(),
+                                                storage::sources(&request.music),
+                                            )
+                                        }),
+                                    )
+                                })
+                            {
+                                let _ = observation_tx.try_send(Observation {
+                                    request,
+                                    power,
+                                    media,
+                                    elapsed_ms: started.elapsed().as_secs_f64() * 1000.,
+                                });
+                            }
+                        }
+                        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+                    }
+                    let failed = wl.failed();
+                    if failed && !last_failed {
+                        let health = wl.health();
+                        wl.emit(
+                            Level::Error,
+                            "diagnostics",
+                            "worker_or_subsystem_failed",
+                            "Health transitioned to failed",
+                            None,
+                            json!({"health":health}),
+                        );
+                        if let Ok(s) = watcher.try_lock() {
+                            let _ = wl.diagnostic(&diagnostic_root, s.clone(), true);
+                        }
+                    }
+                    last_failed = failed;
+                    if reborn_platform::stop_requested() {
+                        break;
+                    }
+                }
+            })
+            .map(drop)
+            .map_err(|e| e.to_string())
+    }
+}
+
+/// The display, its last UI frame, the closing label and the transition plan, kept open while the
+/// process ends.
+type Farewell = (
+    Renderer,
+    Vec<reborn_graphics::Quad>,
+    &'static str,
+    reborn_ui::ShutdownPlan,
+);
+
+/// Platform shutdown contract: present the transition, save state, close audio and the database, end
+/// on a dark frame with the backlight off, then acknowledge. The platform's own deadline bounds all of
+/// this; it proceeds without us if Reborn hangs or crashes. The display stays with the caller.
+fn shut_down(
+    rt: &mut Runtime,
+    log: &Observer,
+    shutdown_intent: Option<&reborn_core::platform::ShutdownIntent>,
+) -> Option<Farewell> {
+    let mut farewell = shutdown_intent.and_then(|intent| {
         rt.model.platform.shutting_down = Some(intent.clone());
         rt.model.navigation.modal = None;
         let last = rt.ui.draw(&rt.model, &rt.model.library.tracks, rt.art);
@@ -647,7 +732,7 @@ pub(crate) fn run() -> Result<(), String> {
             );
         }
         // The screen is off for good: the DAC need not wait for it.
-        hold_dac(&log, false);
+        hold_dac(log, false);
         log.emit(
             Level::Info,
             "power",
@@ -657,30 +742,12 @@ pub(crate) fn run() -> Result<(), String> {
             json!({"frames":farewell.as_ref().map_or(0, |f| f.3.frames) + 1}),
         );
     }
-    if let Some(intent) = &shutdown_intent {
+    if let Some(intent) = shutdown_intent {
         if let Err(error) = power::acknowledge_shutdown(&intent.id, shutdown_ready) {
             log.emit(Level::Warn, "power", "ack_failed", &error, None, json!({}));
         }
     }
-    // Keep the DRM device (and its dark frame) open until the process exits;
-    // the platform powers the panel down after the acknowledgement.
-    let _keep_scanout = farewell;
-    if let Some(w) = rt.wifi {
-        let _ = w.commands.try_send(wifi::Command::Stop);
-    }
-    if let Some(b) = rt.bluetooth {
-        let _ = b.commands.try_send(bluetooth::Command::Stop);
-    }
-    let _ = fs::remove_file(socket);
-    log.emit(
-        Level::Info,
-        "core",
-        "shutdown",
-        "Reborn stopped",
-        None,
-        json!({}),
-    );
-    Ok(())
+    farewell
 }
 
 /// What the main loop keeps from one pass to the next besides the runtime: the devices and
@@ -738,6 +805,28 @@ pub(crate) struct MainLoop {
 impl MainLoop {
     /// One pass of the main loop; `Break` when the platform asked to shut down.
     fn pass(&mut self, rt: &mut Runtime) -> ControlFlow<()> {
+        self.workers(rt);
+        self.usb_and_time_zone(rt);
+        self.platform(rt);
+        self.remote_and_shutdown(rt)?;
+        self.ui_and_jack(rt);
+        self.input(rt);
+        self.playback_events(rt);
+        self.scan_results(rt);
+        self.query_results(rt);
+        self.wifi_and_replies(rt);
+        self.bluetooth(rt);
+        self.transport_epoch(rt);
+        self.control_requests(rt);
+        self.observations(rt);
+        self.periodic(rt);
+        self.render(rt);
+        self.wait(rt);
+        ControlFlow::Continue(())
+    }
+
+    /// The control socket's wakeup, the background gate, chapters, the sleep timer and the cover and logo workers.
+    fn workers(&mut self, rt: &mut Runtime) {
         // Drain before inspecting any producer queue: a later event keeps the
         // descriptor readable until the next loop and cannot be lost in wait.
         self.server.drain_wake();
@@ -908,6 +997,10 @@ impl MainLoop {
                 }
             }
         }
+    }
+
+    /// The USB cable and transfer receipt, and the automatic time zone lookup.
+    fn usb_and_time_zone(&mut self, rt: &mut Runtime) {
         // The cable and the transfer receipt, twice a second on every screen
         // (once a second with the screen off): the computer screen appears
         // within half a second instead of with the next Settings refresh.
@@ -979,6 +1072,10 @@ impl MainLoop {
                 ),
             }
         }
+    }
+
+    /// The platform snapshot and tasks, and the live update download and report records.
+    fn platform(&mut self, rt: &mut Runtime) {
         rt.poll_platform();
         if rt.platform_observed && !self.initial_platform_ready {
             self.initial_platform_ready = true;
@@ -1048,6 +1145,10 @@ impl MainLoop {
                 rt.dirty.mark_render();
             }
         }
+    }
+
+    /// AVRCP requests and the now-playing publish; a platform shutdown intent ends the loop.
+    fn remote_and_shutdown(&mut self, rt: &mut Runtime) -> ControlFlow<()> {
         if let Some(player) = &self.player {
             for request in player.actions.try_iter().take(8) {
                 if let Some(action) = request.semantic(&rt.model) {
@@ -1069,6 +1170,11 @@ impl MainLoop {
                 return ControlFlow::Break(());
             }
         }
+        ControlFlow::Continue(())
+    }
+
+    /// The UI's own ticks, the pending reconfiguration and seek, and the headphone jack.
+    fn ui_and_jack(&mut self, rt: &mut Runtime) {
         rt.wifi_idle_tick();
         self.log.heartbeat("ui", 10);
         if rt.ui.observe(&rt.model) | rt.ui.expire_notice() | rt.ui.animating() {
@@ -1124,6 +1230,10 @@ impl MainLoop {
                 }
             }
         }
+    }
+
+    /// Buttons and the wheel, and an input capture the control socket asked for.
+    fn input(&mut self, rt: &mut Runtime) {
         if let Some(input) = &mut self.inputs {
             if self.input_screen_off != rt.model.screen_off {
                 input.reset_wheel();
@@ -1234,6 +1344,10 @@ impl MainLoop {
                         "clock":"CLOCK_MONOTONIC","frame_boundary":"renderer present returned"}),
             ));
         }
+    }
+
+    /// What the playback worker reports.
+    fn playback_events(&mut self, rt: &mut Runtime) {
         while let Ok(e) = rt.playback.events.try_recv() {
             match e {
                 playback::PlaybackEvent::Artwork {
@@ -1326,6 +1440,10 @@ impl MainLoop {
                 }
             }
         }
+    }
+
+    /// The library scanner's results.
+    fn scan_results(&mut self, rt: &mut Runtime) {
         if let Ok(result) = rt.scanner.results.try_recv() {
             // A no-op scan must not rematerialize the resident catalog or
             // invalidate its cached navigation rows. Deletions alone count.
@@ -1386,6 +1504,10 @@ impl MainLoop {
             }
             rt.dirty.mark_render();
         }
+    }
+
+    /// Library query results.
+    fn query_results(&mut self, rt: &mut Runtime) {
         if let Some(rx) = &rt.query {
             if let Ok(value) = rx.try_recv() {
                 match value {
@@ -1433,6 +1555,10 @@ impl MainLoop {
                 rt.dirty.mark_render();
             }
         }
+    }
+
+    /// Wi-Fi events, playlist and radio replies, the radio, scrobbling and history ticks.
+    fn wifi_and_replies(&mut self, rt: &mut Runtime) {
         if let Some(service) = &rt.wifi {
             while let Ok(s) = service.events.try_recv() {
                 let view = wifi_view(&s);
@@ -1467,6 +1593,10 @@ impl MainLoop {
         rt.scrobble_tick();
         rt.note_history();
         rt.lastfm_tick();
+    }
+
+    /// Bluetooth events, a lost peer, the Bluetooth volume and the automatic output.
+    fn bluetooth(&mut self, rt: &mut Runtime) {
         let mut bt_lost = false;
         if let Some(service) = &rt.bluetooth {
             while let Ok(s) = service.events.try_recv() {
@@ -1572,6 +1702,10 @@ impl MainLoop {
                 rt.dirty.mark_render();
             }
         }
+    }
+
+    /// The audio transport's epoch (a sink that changed underneath).
+    fn transport_epoch(&mut self, rt: &mut Runtime) {
         match transport_epoch_state(
             &rt.model.output,
             rt.model.playback,
@@ -1602,6 +1736,10 @@ impl MainLoop {
                 rt.dirty.mark_render();
             }
         }
+    }
+
+    /// Requests on the control socket.
+    fn control_requests(&mut self, rt: &mut Runtime) {
         while let Ok(env) = self.server.requests.try_recv() {
             let req = env.request;
             let id = req.id;
@@ -1802,6 +1940,10 @@ impl MainLoop {
             };
             let _ = reply.try_send(response);
         }
+    }
+
+    /// The workload meter and the watchdog's battery and media observations.
+    fn observations(&mut self, rt: &mut Runtime) {
         if self.workload_tick.elapsed() >= Duration::from_secs(1) {
             self.workload_tick = Instant::now();
             rt.playback_hints
@@ -1945,6 +2087,10 @@ impl MainLoop {
                 self.observed = Instant::now();
             }
         }
+    }
+
+    /// The periodic block and the session checkpoint.
+    fn periodic(&mut self, rt: &mut Runtime) {
         if self.periodic.elapsed() > PERIODIC_EVERY {
             rt.loud_listening_tick(self.periodic.elapsed());
             self.periodic = Instant::now();
@@ -2007,6 +2153,10 @@ impl MainLoop {
         } else if self.checkpoint.elapsed() > CHECKPOINT_EVERY {
             self.checkpoint = Instant::now();
         }
+    }
+
+    /// Drawing and presenting a frame.
+    fn render(&mut self, rt: &mut Runtime) {
         if rt.dirty.render
             && !rt.model.screen_off
             && self.render_time.elapsed() >= frame_gap(rt.ui.gliding())
@@ -2137,6 +2287,10 @@ impl MainLoop {
                 rt.dirty.rendered();
             }
         }
+    }
+
+    /// Idle work in the dark, then the wait for the next pass.
+    fn wait(&mut self, rt: &mut Runtime) {
         // Screen off and no scan running: a long library's lists are made
         // now, one a pass, not when the screen is woken (Beta 8.39). Input
         // still comes between the pieces.
@@ -2220,6 +2374,5 @@ impl MainLoop {
         } else {
             thread::sleep(interval);
         }
-        ControlFlow::Continue(())
     }
 }
