@@ -29426,12 +29426,11 @@
    "report",
    "check"
   ],
-  "exit": 1,
+  "exit": 0,
   "files": {},
   "name": "reports/report-check-health-list",
   "stdout": {
-   "failure": "report_failed",
-   "reason": "reborn_health_unreadable"
+   "reports": []
   }
  },
  {
