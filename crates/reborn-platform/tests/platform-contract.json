@@ -8735,7 +8735,7 @@
     "negotiated_codec": "SBC",
     "packet_loss": null,
     "pcm": {
-     "channels": 1.0,
+     "channels": null,
      "format": null,
      "format_code": 7,
      "physical_bits": null,
@@ -8857,7 +8857,7 @@
      "discovering": false,
      "pairable": true,
      "path": "/org/bluez/hci0",
-     "powered": 1
+     "powered": null
     },
     "codec_inventory": {
      "codecs": {
@@ -10718,7 +10718,7 @@
     "pcm_contract": null,
     "qualified_profile": {
      "card": "Y2Audio",
-     "channels": 2.0,
+     "channels": 2,
      "qualified_formats": [
       "S16_LE"
      ],
@@ -11791,7 +11791,7 @@
       "result": "current"
      },
      "physical_qualification": false,
-     "schema": 2.0,
+     "schema": 2,
      "state": "Queued"
     },
     "uptime_seconds": "<volatile>",
@@ -18480,7 +18480,7 @@
     "pcm_contract": null,
     "qualified_profile": {
      "card": "Y2Audio",
-     "channels": 2.0,
+     "channels": 2,
      "qualified_formats": [
       "S16_LE"
      ],
@@ -19770,7 +19770,7 @@
       "result": "current"
      },
      "physical_qualification": false,
-     "schema": 2.0,
+     "schema": 2,
      "state": "Queued"
     },
     "uptime_seconds": "<volatile>",
@@ -23210,7 +23210,7 @@
       "result": "current"
      },
      "physical_qualification": false,
-     "schema": 2.0,
+     "schema": 2,
      "state": "Queued"
     },
     "uptime_seconds": "<volatile>",
@@ -33881,7 +33881,7 @@
   "files": {},
   "name": "suspend/sleep-request-battery-list",
   "stdout": {
-   "failure": "'list' object has no attribute 'get'",
+   "failure": "invalid_battery_record",
    "state": "Failed"
   }
  },
@@ -33894,7 +33894,7 @@
   "files": {},
   "name": "suspend/sleep-request-battery-null",
   "stdout": {
-   "failure": "'NoneType' object has no attribute 'get'",
+   "failure": "invalid_battery_record",
    "state": "Failed"
   }
  },
