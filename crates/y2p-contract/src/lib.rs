@@ -100,6 +100,47 @@ pub struct BootRecord {
     pub identity: Value,
 }
 
+/// /etc/y2linux/versions.json: what the installed build is (written by the build, `status system`'s
+/// `versions`). A field of another build's set is kept as it is.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Versions {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub release_version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rootfs_version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub build_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub platform_api_version: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub feature_contract_version: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub battery_profile_schema: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub low_battery_policy_schema: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub update_sequence: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub layout_version: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kernel_version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data_schema_version: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reborn_version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub build_git_commit: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reborn_source_commit: Option<String>,
+    #[serde(flatten)]
+    pub other: Map<String, Value>,
+}
+
+impl Versions {
+    pub const PATH: &'static str = "/etc/y2linux/versions.json";
+}
+
 /// The `record` block of observations (`Context.record` in common.py). A field a record lacks reads
 /// as its default.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
