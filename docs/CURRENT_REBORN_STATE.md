@@ -1,5 +1,15 @@
 # Current Reborn state on the Y2
 
+## Since Beta 9.1 (Y2Linux test build 190, 2026-10-31; not published)
+
+`effect_inner` is an exhaustive table (921 → 299 lines): the 29 longer cases are `on_<effect>` methods in
+`runtime/effects/` (platform, sound, queue, radios, system). The Bluetooth thread is `BluetoothWorker`
+(`bluetooth/worker.rs`): `run` reconnects, `session` serves one D-Bus connection, `open` sets it up and `pass`
+runs seven steps (wait, completions, refresh, discovery, pairing, commands, publish; `command` carries one out).
+The screen dispatch exists once (`native_screen`), which gives a skin without a Music layout the Music menu again
+instead of the system page. Code is written to Y2Linux's
+[coding standard](https://github.com/SchulzCode/Y2Linux/blob/main/docs/CODING-STANDARD.md) (see `AGENTS.md`).
+
 ## 1.0.0-beta.9.1 — Y2Linux 1.0 Beta 9.1 (Baseline 189), 2026-10-30 (latest): the platform's types, smaller files
 
 Published as `baseline-189` (Reborn `e309b49`; sequence 11500). Reborn reads the platform's records in the platform's own types from `y2p-contract`
