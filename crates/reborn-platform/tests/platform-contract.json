@@ -2518,10 +2518,16 @@
     "default_route": [],
     "dns_ready": false,
     "events": {
+     "association_active": null,
      "boot_id": "boot-a",
      "connected": 1,
+     "disconnected": 0,
      "last_event": "CONNECTED",
-     "real_disconnects": 0
+     "link_counts_since_s": "<volatile>",
+     "radio_off_disconnects": 0,
+     "real_disconnects": 0,
+     "reconnects": 0,
+     "service_restart": 0
     },
     "failed_network_id": null,
     "ip_addresses": [],
@@ -3107,10 +3113,16 @@
     "default_route": [],
     "dns_ready": false,
     "events": {
+     "association_active": null,
      "boot_id": "boot-a",
      "connected": 1,
+     "disconnected": 0,
      "last_event": "CONNECTED",
-     "real_disconnects": 0
+     "link_counts_since_s": "<volatile>",
+     "radio_off_disconnects": 0,
+     "real_disconnects": 0,
+     "reconnects": 0,
+     "service_restart": 0
     },
     "failed_network_id": null,
     "ip_addresses": [],
@@ -12688,10 +12700,16 @@
     ],
     "dns_ready": true,
     "events": {
+     "association_active": null,
      "boot_id": "boot-a",
      "connected": 1,
+     "disconnected": 0,
      "last_event": "CONNECTED",
-     "real_disconnects": 0
+     "link_counts_since_s": "<volatile>",
+     "radio_off_disconnects": 0,
+     "real_disconnects": 0,
+     "reconnects": 0,
+     "service_restart": 0
     },
     "failed_network_id": null,
     "ip_addresses": [
@@ -13578,10 +13596,16 @@
     "default_route": [],
     "dns_ready": false,
     "events": {
+     "association_active": null,
      "boot_id": "boot-a",
      "connected": 1,
+     "disconnected": 0,
      "last_event": "CONNECTED",
-     "real_disconnects": 0
+     "link_counts_since_s": "<volatile>",
+     "radio_off_disconnects": 0,
+     "real_disconnects": 0,
+     "reconnects": 0,
+     "service_restart": 0
     },
     "failed_network_id": null,
     "ip_addresses": [],
@@ -14421,10 +14445,16 @@
     "default_route": [],
     "dns_ready": false,
     "events": {
+     "association_active": null,
      "boot_id": "boot-a",
      "connected": 1,
+     "disconnected": 0,
      "last_event": "CONNECTED",
-     "real_disconnects": 0
+     "link_counts_since_s": "<volatile>",
+     "radio_off_disconnects": 0,
+     "real_disconnects": 0,
+     "reconnects": 0,
+     "service_restart": 0
     },
     "failed_network_id": null,
     "ip_addresses": [],
@@ -15043,10 +15073,16 @@
     "default_route": [],
     "dns_ready": false,
     "events": {
+     "association_active": null,
      "boot_id": "boot-a",
      "connected": 1,
+     "disconnected": 0,
      "last_event": "CONNECTED",
-     "real_disconnects": 0
+     "link_counts_since_s": "<volatile>",
+     "radio_off_disconnects": 0,
+     "real_disconnects": 0,
+     "reconnects": 0,
+     "service_restart": 0
     },
     "failed_network_id": null,
     "ip_addresses": [],
@@ -15669,10 +15705,16 @@
     "default_route": [],
     "dns_ready": false,
     "events": {
+     "association_active": null,
      "boot_id": "boot-a",
      "connected": 1,
+     "disconnected": 0,
      "last_event": "CONNECTED",
-     "real_disconnects": 0
+     "link_counts_since_s": "<volatile>",
+     "radio_off_disconnects": 0,
+     "real_disconnects": 0,
+     "reconnects": 0,
+     "service_restart": 0
     },
     "failed_network_id": null,
     "ip_addresses": [],
@@ -16272,10 +16314,16 @@
     "default_route": [],
     "dns_ready": false,
     "events": {
+     "association_active": null,
      "boot_id": "boot-a",
      "connected": 1,
+     "disconnected": 0,
      "last_event": "CONNECTED",
-     "real_disconnects": 0
+     "link_counts_since_s": "<volatile>",
+     "radio_off_disconnects": 0,
+     "real_disconnects": 0,
+     "reconnects": 0,
+     "service_restart": 0
     },
     "failed_network_id": null,
     "ip_addresses": [],
@@ -16861,10 +16909,16 @@
     "default_route": [],
     "dns_ready": false,
     "events": {
+     "association_active": null,
      "boot_id": "boot-a",
      "connected": 1,
+     "disconnected": 0,
      "last_event": "CONNECTED",
-     "real_disconnects": 0
+     "link_counts_since_s": "<volatile>",
+     "radio_off_disconnects": 0,
+     "real_disconnects": 0,
+     "reconnects": 0,
+     "service_restart": 0
     },
     "failed_network_id": null,
     "ip_addresses": [],
@@ -17677,10 +17731,16 @@
     "default_route": [],
     "dns_ready": false,
     "events": {
+     "association_active": null,
      "boot_id": "boot-a",
      "connected": 1,
+     "disconnected": 0,
      "last_event": "CONNECTED",
-     "real_disconnects": 0
+     "link_counts_since_s": "<volatile>",
+     "radio_off_disconnects": 0,
+     "real_disconnects": 0,
+     "reconnects": 0,
+     "service_restart": 0
     },
     "failed_network_id": null,
     "ip_addresses": [],
@@ -18268,10 +18328,16 @@
     "default_route": [],
     "dns_ready": false,
     "events": {
+     "association_active": null,
      "boot_id": "boot-a",
      "connected": 1,
+     "disconnected": 0,
      "last_event": "CONNECTED",
-     "real_disconnects": 0
+     "link_counts_since_s": "<volatile>",
+     "radio_off_disconnects": 0,
+     "real_disconnects": 0,
+     "reconnects": 0,
+     "service_restart": 0
     },
     "failed_network_id": null,
     "ip_addresses": [],
@@ -18881,10 +18947,16 @@
     "default_route": [],
     "dns_ready": false,
     "events": {
+     "association_active": null,
      "boot_id": "boot-a",
      "connected": 1,
+     "disconnected": 0,
      "last_event": "CONNECTED",
-     "real_disconnects": 0
+     "link_counts_since_s": "<volatile>",
+     "radio_off_disconnects": 0,
+     "real_disconnects": 0,
+     "reconnects": 0,
+     "service_restart": 0
     },
     "failed_network_id": null,
     "ip_addresses": [],
@@ -19527,10 +19599,16 @@
     "default_route": [],
     "dns_ready": false,
     "events": {
+     "association_active": null,
      "boot_id": "boot-a",
      "connected": 1,
+     "disconnected": 0,
      "last_event": "CONNECTED",
-     "real_disconnects": 0
+     "link_counts_since_s": "<volatile>",
+     "radio_off_disconnects": 0,
+     "real_disconnects": 0,
+     "reconnects": 0,
+     "service_restart": 0
     },
     "failed_network_id": null,
     "ip_addresses": [],
@@ -21169,10 +21247,16 @@
     ],
     "dns_ready": true,
     "events": {
+     "association_active": null,
      "boot_id": "boot-a",
      "connected": 1,
+     "disconnected": 0,
      "last_event": "CONNECTED",
-     "real_disconnects": 0
+     "link_counts_since_s": "<volatile>",
+     "radio_off_disconnects": 0,
+     "real_disconnects": 0,
+     "reconnects": 0,
+     "service_restart": 0
     },
     "failed_network_id": null,
     "ip_addresses": [
@@ -26020,10 +26104,16 @@
     "default_route": [],
     "dns_ready": false,
     "events": {
+     "association_active": null,
      "boot_id": "boot-a",
      "connected": 1,
+     "disconnected": 0,
      "last_event": "CONNECTED",
-     "real_disconnects": 0
+     "link_counts_since_s": "<volatile>",
+     "radio_off_disconnects": 0,
+     "real_disconnects": 0,
+     "reconnects": 0,
+     "service_restart": 0
     },
     "failed_network_id": null,
     "ip_addresses": [],
@@ -26104,10 +26194,16 @@
     "default_route": [],
     "dns_ready": false,
     "events": {
+     "association_active": null,
      "boot_id": "boot-a",
      "connected": 1,
+     "disconnected": 0,
      "last_event": "CONNECTED",
-     "real_disconnects": 0
+     "link_counts_since_s": "<volatile>",
+     "radio_off_disconnects": 0,
+     "real_disconnects": 0,
+     "reconnects": 0,
+     "service_restart": 0
     },
     "failed_network_id": null,
     "ip_addresses": [],
@@ -26182,10 +26278,16 @@
     "default_route": [],
     "dns_ready": false,
     "events": {
+     "association_active": null,
      "boot_id": "boot-a",
      "connected": 1,
+     "disconnected": 0,
      "last_event": "CONNECTED",
-     "real_disconnects": 0
+     "link_counts_since_s": "<volatile>",
+     "radio_off_disconnects": 0,
+     "real_disconnects": 0,
+     "reconnects": 0,
+     "service_restart": 0
     },
     "failed_network_id": null,
     "ip_addresses": [
@@ -26268,10 +26370,16 @@
     "default_route": [],
     "dns_ready": false,
     "events": {
+     "association_active": null,
      "boot_id": "boot-a",
      "connected": 1,
+     "disconnected": 0,
      "last_event": "CONNECTED",
-     "real_disconnects": 0
+     "link_counts_since_s": "<volatile>",
+     "radio_off_disconnects": 0,
+     "real_disconnects": 0,
+     "reconnects": 0,
+     "service_restart": 0
     },
     "failed_network_id": null,
     "ip_addresses": [],
@@ -26352,10 +26460,16 @@
     "default_route": [],
     "dns_ready": false,
     "events": {
+     "association_active": null,
      "boot_id": "boot-a",
      "connected": 1,
+     "disconnected": 0,
      "last_event": "CONNECTED",
-     "real_disconnects": 0
+     "link_counts_since_s": "<volatile>",
+     "radio_off_disconnects": 0,
+     "real_disconnects": 0,
+     "reconnects": 0,
+     "service_restart": 0
     },
     "failed_network_id": null,
     "ip_addresses": [],
@@ -26437,10 +26551,16 @@
     ],
     "dns_ready": false,
     "events": {
+     "association_active": null,
      "boot_id": "boot-a",
      "connected": 1,
+     "disconnected": 0,
      "last_event": "CONNECTED",
-     "real_disconnects": 0
+     "link_counts_since_s": "<volatile>",
+     "radio_off_disconnects": 0,
+     "real_disconnects": 0,
+     "reconnects": 0,
+     "service_restart": 0
     },
     "failed_network_id": null,
     "ip_addresses": [
@@ -26523,10 +26643,16 @@
     "default_route": [],
     "dns_ready": false,
     "events": {
+     "association_active": null,
      "boot_id": "boot-a",
      "connected": 1,
+     "disconnected": 0,
      "last_event": "CONNECTED",
-     "real_disconnects": 0
+     "link_counts_since_s": "<volatile>",
+     "radio_off_disconnects": 0,
+     "real_disconnects": 0,
+     "reconnects": 0,
+     "service_restart": 0
     },
     "failed_network_id": null,
     "ip_addresses": [],
@@ -26601,10 +26727,16 @@
     "default_route": [],
     "dns_ready": false,
     "events": {
+     "association_active": null,
      "boot_id": "boot-a",
      "connected": 1,
+     "disconnected": 0,
      "last_event": "CONNECTED",
-     "real_disconnects": 0
+     "link_counts_since_s": "<volatile>",
+     "radio_off_disconnects": 0,
+     "real_disconnects": 0,
+     "reconnects": 0,
+     "service_restart": 0
     },
     "failed_network_id": null,
     "ip_addresses": [],
@@ -26685,10 +26817,16 @@
     "default_route": [],
     "dns_ready": false,
     "events": {
+     "association_active": null,
      "boot_id": "boot-a",
      "connected": 1,
+     "disconnected": 0,
      "last_event": "CONNECTED",
-     "real_disconnects": 0
+     "link_counts_since_s": "<volatile>",
+     "radio_off_disconnects": 0,
+     "real_disconnects": 0,
+     "reconnects": 0,
+     "service_restart": 0
     },
     "failed_network_id": null,
     "ip_addresses": [],
@@ -26769,10 +26907,16 @@
     "default_route": [],
     "dns_ready": false,
     "events": {
+     "association_active": null,
      "boot_id": "boot-a",
      "connected": 1,
+     "disconnected": 0,
      "last_event": "CONNECTED",
-     "real_disconnects": 0
+     "link_counts_since_s": "<volatile>",
+     "radio_off_disconnects": 0,
+     "real_disconnects": 0,
+     "reconnects": 0,
+     "service_restart": 0
     },
     "failed_network_id": null,
     "ip_addresses": [],
@@ -26853,10 +26997,16 @@
     "default_route": [],
     "dns_ready": false,
     "events": {
+     "association_active": null,
      "boot_id": "boot-a",
      "connected": 1,
+     "disconnected": 0,
      "last_event": "CONNECTED",
-     "real_disconnects": 0
+     "link_counts_since_s": "<volatile>",
+     "radio_off_disconnects": 0,
+     "real_disconnects": 0,
+     "reconnects": 0,
+     "service_restart": 0
     },
     "failed_network_id": null,
     "ip_addresses": [],
@@ -26937,10 +27087,16 @@
     "default_route": [],
     "dns_ready": false,
     "events": {
+     "association_active": null,
      "boot_id": "boot-a",
      "connected": 1,
+     "disconnected": 0,
      "last_event": "CONNECTED",
-     "real_disconnects": 0
+     "link_counts_since_s": "<volatile>",
+     "radio_off_disconnects": 0,
+     "real_disconnects": 0,
+     "reconnects": 0,
+     "service_restart": 0
     },
     "failed_network_id": null,
     "ip_addresses": [],
@@ -27028,10 +27184,16 @@
     ],
     "dns_ready": false,
     "events": {
+     "association_active": null,
      "boot_id": "boot-a",
      "connected": 1,
+     "disconnected": 0,
      "last_event": "CONNECTED",
-     "real_disconnects": 0
+     "link_counts_since_s": "<volatile>",
+     "radio_off_disconnects": 0,
+     "real_disconnects": 0,
+     "reconnects": 0,
+     "service_restart": 0
     },
     "failed_network_id": null,
     "ip_addresses": [],
@@ -27112,10 +27274,16 @@
     "default_route": [],
     "dns_ready": false,
     "events": {
+     "association_active": null,
      "boot_id": "boot-a",
      "connected": 1,
+     "disconnected": 0,
      "last_event": "CONNECTED",
-     "real_disconnects": 0
+     "link_counts_since_s": "<volatile>",
+     "radio_off_disconnects": 0,
+     "real_disconnects": 0,
+     "reconnects": 0,
+     "service_restart": 0
     },
     "failed_network_id": null,
     "ip_addresses": [
@@ -27205,10 +27373,16 @@
     ],
     "dns_ready": true,
     "events": {
+     "association_active": null,
      "boot_id": "boot-a",
      "connected": 1,
+     "disconnected": 0,
      "last_event": "CONNECTED",
-     "real_disconnects": 0
+     "link_counts_since_s": "<volatile>",
+     "radio_off_disconnects": 0,
+     "real_disconnects": 0,
+     "reconnects": 0,
+     "service_restart": 0
     },
     "failed_network_id": null,
     "ip_addresses": [
@@ -27298,10 +27472,16 @@
     ],
     "dns_ready": true,
     "events": {
+     "association_active": null,
      "boot_id": "boot-a",
      "connected": 1,
+     "disconnected": 0,
      "last_event": "CONNECTED",
-     "real_disconnects": 0
+     "link_counts_since_s": "<volatile>",
+     "radio_off_disconnects": 0,
+     "real_disconnects": 0,
+     "reconnects": 0,
+     "service_restart": 0
     },
     "failed_network_id": null,
     "ip_addresses": [
@@ -27391,10 +27571,16 @@
     ],
     "dns_ready": false,
     "events": {
+     "association_active": null,
      "boot_id": "boot-a",
      "connected": 1,
+     "disconnected": 0,
      "last_event": "CONNECTED",
-     "real_disconnects": 0
+     "link_counts_since_s": "<volatile>",
+     "radio_off_disconnects": 0,
+     "real_disconnects": 0,
+     "reconnects": 0,
+     "service_restart": 0
     },
     "failed_network_id": null,
     "ip_addresses": [
@@ -27484,10 +27670,16 @@
     ],
     "dns_ready": false,
     "events": {
+     "association_active": null,
      "boot_id": "boot-a",
      "connected": 1,
+     "disconnected": 0,
      "last_event": "CONNECTED",
-     "real_disconnects": 0
+     "link_counts_since_s": "<volatile>",
+     "radio_off_disconnects": 0,
+     "real_disconnects": 0,
+     "reconnects": 0,
+     "service_restart": 0
     },
     "failed_network_id": null,
     "ip_addresses": [
@@ -27570,10 +27762,16 @@
     "default_route": [],
     "dns_ready": false,
     "events": {
+     "association_active": null,
      "boot_id": "boot-a",
      "connected": 1,
+     "disconnected": 0,
      "last_event": "CONNECTED",
-     "real_disconnects": 0
+     "link_counts_since_s": "<volatile>",
+     "radio_off_disconnects": 0,
+     "real_disconnects": 0,
+     "reconnects": 0,
+     "service_restart": 0
     },
     "failed_network_id": 3,
     "ip_addresses": [],
@@ -31485,10 +31683,16 @@
     "default_route": [],
     "dns_ready": false,
     "events": {
+     "association_active": null,
      "boot_id": "boot-a",
      "connected": 1,
+     "disconnected": 0,
      "last_event": "CONNECTED",
-     "real_disconnects": 0
+     "link_counts_since_s": "<volatile>",
+     "radio_off_disconnects": 0,
+     "real_disconnects": 0,
+     "reconnects": 0,
+     "service_restart": 0
     },
     "failed_network_id": null,
     "ip_addresses": [],
@@ -31586,10 +31790,16 @@
     "default_route": [],
     "dns_ready": false,
     "events": {
+     "association_active": null,
      "boot_id": "boot-a",
      "connected": 1,
+     "disconnected": 0,
      "last_event": "CONNECTED",
-     "real_disconnects": 0
+     "link_counts_since_s": "<volatile>",
+     "radio_off_disconnects": 0,
+     "real_disconnects": 0,
+     "reconnects": 0,
+     "service_restart": 0
     },
     "failed_network_id": null,
     "ip_addresses": [],
@@ -31687,10 +31897,16 @@
     "default_route": [],
     "dns_ready": false,
     "events": {
+     "association_active": null,
      "boot_id": "boot-a",
      "connected": 1,
+     "disconnected": 0,
      "last_event": "CONNECTED",
-     "real_disconnects": 0
+     "link_counts_since_s": "<volatile>",
+     "radio_off_disconnects": 0,
+     "real_disconnects": 0,
+     "reconnects": 0,
+     "service_restart": 0
     },
     "failed_network_id": null,
     "ip_addresses": [],
@@ -31788,10 +32004,16 @@
     "default_route": [],
     "dns_ready": false,
     "events": {
+     "association_active": null,
      "boot_id": "boot-a",
      "connected": 1,
+     "disconnected": 0,
      "last_event": "CONNECTED",
-     "real_disconnects": 0
+     "link_counts_since_s": "<volatile>",
+     "radio_off_disconnects": 0,
+     "real_disconnects": 0,
+     "reconnects": 0,
+     "service_restart": 0
     },
     "failed_network_id": null,
     "ip_addresses": [],
@@ -31878,10 +32100,16 @@
     "default_route": [],
     "dns_ready": false,
     "events": {
+     "association_active": null,
      "boot_id": "boot-a",
      "connected": 1,
+     "disconnected": 0,
      "last_event": "CONNECTED",
-     "real_disconnects": 0
+     "link_counts_since_s": "<volatile>",
+     "radio_off_disconnects": 0,
+     "real_disconnects": 0,
+     "reconnects": 0,
+     "service_restart": 0
     },
     "failed_network_id": null,
     "ip_addresses": [],
@@ -31968,10 +32196,16 @@
     "default_route": [],
     "dns_ready": false,
     "events": {
+     "association_active": null,
      "boot_id": "boot-a",
      "connected": 1,
+     "disconnected": 0,
      "last_event": "CONNECTED",
-     "real_disconnects": 0
+     "link_counts_since_s": "<volatile>",
+     "radio_off_disconnects": 0,
+     "real_disconnects": 0,
+     "reconnects": 0,
+     "service_restart": 0
     },
     "failed_network_id": null,
     "ip_addresses": [],
@@ -32058,10 +32292,16 @@
     "default_route": [],
     "dns_ready": false,
     "events": {
+     "association_active": null,
      "boot_id": "boot-a",
      "connected": 1,
+     "disconnected": 0,
      "last_event": "CONNECTED",
-     "real_disconnects": 0
+     "link_counts_since_s": "<volatile>",
+     "radio_off_disconnects": 0,
+     "real_disconnects": 0,
+     "reconnects": 0,
+     "service_restart": 0
     },
     "failed_network_id": null,
     "ip_addresses": [],
@@ -32159,10 +32399,16 @@
     "default_route": [],
     "dns_ready": false,
     "events": {
+     "association_active": null,
      "boot_id": "boot-a",
      "connected": 1,
+     "disconnected": 0,
      "last_event": "CONNECTED",
-     "real_disconnects": 0
+     "link_counts_since_s": "<volatile>",
+     "radio_off_disconnects": 0,
+     "real_disconnects": 0,
+     "reconnects": 0,
+     "service_restart": 0
     },
     "failed_network_id": null,
     "ip_addresses": [],
@@ -32249,10 +32495,16 @@
     "default_route": [],
     "dns_ready": false,
     "events": {
+     "association_active": null,
      "boot_id": "boot-a",
      "connected": 1,
+     "disconnected": 0,
      "last_event": "CONNECTED",
-     "real_disconnects": 0
+     "link_counts_since_s": "<volatile>",
+     "radio_off_disconnects": 0,
+     "real_disconnects": 0,
+     "reconnects": 0,
+     "service_restart": 0
     },
     "failed_network_id": null,
     "ip_addresses": [],
@@ -32346,10 +32598,16 @@
     "default_route": [],
     "dns_ready": false,
     "events": {
+     "association_active": null,
      "boot_id": "boot-a",
      "connected": 1,
+     "disconnected": 0,
      "last_event": "CONNECTED",
-     "real_disconnects": 0
+     "link_counts_since_s": "<volatile>",
+     "radio_off_disconnects": 0,
+     "real_disconnects": 0,
+     "reconnects": 0,
+     "service_restart": 0
     },
     "failed_network_id": null,
     "ip_addresses": [],
@@ -32443,10 +32701,16 @@
     "default_route": [],
     "dns_ready": false,
     "events": {
+     "association_active": null,
      "boot_id": "boot-a",
      "connected": 1,
+     "disconnected": 0,
      "last_event": "CONNECTED",
-     "real_disconnects": 0
+     "link_counts_since_s": "<volatile>",
+     "radio_off_disconnects": 0,
+     "real_disconnects": 0,
+     "reconnects": 0,
+     "service_restart": 0
     },
     "failed_network_id": null,
     "ip_addresses": [],
@@ -32547,10 +32811,16 @@
     "default_route": [],
     "dns_ready": false,
     "events": {
+     "association_active": null,
      "boot_id": "boot-a",
      "connected": 1,
+     "disconnected": 0,
      "last_event": "CONNECTED",
-     "real_disconnects": 0
+     "link_counts_since_s": "<volatile>",
+     "radio_off_disconnects": 0,
+     "real_disconnects": 0,
+     "reconnects": 0,
+     "service_restart": 0
     },
     "failed_network_id": null,
     "ip_addresses": [],
@@ -32651,10 +32921,16 @@
     "default_route": [],
     "dns_ready": false,
     "events": {
+     "association_active": null,
      "boot_id": "boot-a",
      "connected": 1,
+     "disconnected": 0,
      "last_event": "CONNECTED",
-     "real_disconnects": 0
+     "link_counts_since_s": "<volatile>",
+     "radio_off_disconnects": 0,
+     "real_disconnects": 0,
+     "reconnects": 0,
+     "service_restart": 0
     },
     "failed_network_id": null,
     "ip_addresses": [],
@@ -32744,10 +33020,16 @@
     "default_route": [],
     "dns_ready": false,
     "events": {
+     "association_active": null,
      "boot_id": "boot-a",
      "connected": 1,
+     "disconnected": 0,
      "last_event": "CONNECTED",
-     "real_disconnects": 0
+     "link_counts_since_s": "<volatile>",
+     "radio_off_disconnects": 0,
+     "real_disconnects": 0,
+     "reconnects": 0,
+     "service_restart": 0
     },
     "failed_network_id": null,
     "ip_addresses": [],
@@ -32845,10 +33127,16 @@
     "default_route": [],
     "dns_ready": false,
     "events": {
+     "association_active": null,
      "boot_id": "boot-a",
      "connected": 1,
+     "disconnected": 0,
      "last_event": "CONNECTED",
-     "real_disconnects": 0
+     "link_counts_since_s": "<volatile>",
+     "radio_off_disconnects": 0,
+     "real_disconnects": 0,
+     "reconnects": 0,
+     "service_restart": 0
     },
     "failed_network_id": null,
     "ip_addresses": [],
@@ -32946,10 +33234,16 @@
     "default_route": [],
     "dns_ready": false,
     "events": {
+     "association_active": null,
      "boot_id": "boot-a",
      "connected": 1,
+     "disconnected": 0,
      "last_event": "CONNECTED",
-     "real_disconnects": 0
+     "link_counts_since_s": "<volatile>",
+     "radio_off_disconnects": 0,
+     "real_disconnects": 0,
+     "reconnects": 0,
+     "service_restart": 0
     },
     "failed_network_id": null,
     "ip_addresses": [],
@@ -33036,10 +33330,16 @@
     "default_route": [],
     "dns_ready": false,
     "events": {
+     "association_active": null,
      "boot_id": "boot-a",
      "connected": 1,
+     "disconnected": 0,
      "last_event": "CONNECTED",
-     "real_disconnects": 0
+     "link_counts_since_s": "<volatile>",
+     "radio_off_disconnects": 0,
+     "real_disconnects": 0,
+     "reconnects": 0,
+     "service_restart": 0
     },
     "failed_network_id": null,
     "ip_addresses": [],
@@ -33126,10 +33426,16 @@
     "default_route": [],
     "dns_ready": false,
     "events": {
+     "association_active": null,
      "boot_id": "boot-a",
      "connected": 1,
+     "disconnected": 0,
      "last_event": "CONNECTED",
-     "real_disconnects": 0
+     "link_counts_since_s": "<volatile>",
+     "radio_off_disconnects": 0,
+     "real_disconnects": 0,
+     "reconnects": 0,
+     "service_restart": 0
     },
     "failed_network_id": null,
     "ip_addresses": [],
@@ -33216,10 +33522,16 @@
     "default_route": [],
     "dns_ready": false,
     "events": {
+     "association_active": null,
      "boot_id": "boot-a",
      "connected": 1,
+     "disconnected": 0,
      "last_event": "CONNECTED",
-     "real_disconnects": 0
+     "link_counts_since_s": "<volatile>",
+     "radio_off_disconnects": 0,
+     "real_disconnects": 0,
+     "reconnects": 0,
+     "service_restart": 0
     },
     "failed_network_id": null,
     "ip_addresses": [],
@@ -33306,10 +33618,16 @@
     "default_route": [],
     "dns_ready": false,
     "events": {
+     "association_active": null,
      "boot_id": "boot-a",
      "connected": 1,
+     "disconnected": 0,
      "last_event": "CONNECTED",
-     "real_disconnects": 0
+     "link_counts_since_s": "<volatile>",
+     "radio_off_disconnects": 0,
+     "real_disconnects": 0,
+     "reconnects": 0,
+     "service_restart": 0
     },
     "failed_network_id": null,
     "ip_addresses": [],
@@ -33407,10 +33725,16 @@
     "default_route": [],
     "dns_ready": false,
     "events": {
+     "association_active": null,
      "boot_id": "boot-a",
      "connected": 1,
+     "disconnected": 0,
      "last_event": "CONNECTED",
-     "real_disconnects": 0
+     "link_counts_since_s": "<volatile>",
+     "radio_off_disconnects": 0,
+     "real_disconnects": 0,
+     "reconnects": 0,
+     "service_restart": 0
     },
     "failed_network_id": null,
     "ip_addresses": [],
@@ -33497,10 +33821,16 @@
     "default_route": [],
     "dns_ready": false,
     "events": {
+     "association_active": null,
      "boot_id": "boot-a",
      "connected": 1,
+     "disconnected": 0,
      "last_event": "CONNECTED",
-     "real_disconnects": 0
+     "link_counts_since_s": "<volatile>",
+     "radio_off_disconnects": 0,
+     "real_disconnects": 0,
+     "reconnects": 0,
+     "service_restart": 0
     },
     "failed_network_id": null,
     "ip_addresses": [],
@@ -33602,10 +33932,16 @@
     "default_route": [],
     "dns_ready": false,
     "events": {
+     "association_active": null,
      "boot_id": "boot-a",
      "connected": 1,
+     "disconnected": 0,
      "last_event": "CONNECTED",
-     "real_disconnects": 0
+     "link_counts_since_s": "<volatile>",
+     "radio_off_disconnects": 0,
+     "real_disconnects": 0,
+     "reconnects": 0,
+     "service_restart": 0
     },
     "failed_network_id": null,
     "ip_addresses": [],
@@ -33742,10 +34078,16 @@
     ],
     "dns_ready": false,
     "events": {
+     "association_active": null,
      "boot_id": "boot-a",
      "connected": 1,
+     "disconnected": 0,
      "last_event": "CONNECTED",
-     "real_disconnects": 0
+     "link_counts_since_s": "<volatile>",
+     "radio_off_disconnects": 0,
+     "real_disconnects": 0,
+     "reconnects": 0,
+     "service_restart": 0
     },
     "failed_network_id": null,
     "ip_addresses": [
@@ -33865,10 +34207,16 @@
     ],
     "dns_ready": true,
     "events": {
+     "association_active": null,
      "boot_id": "boot-a",
      "connected": 1,
+     "disconnected": 0,
      "last_event": "CONNECTED",
-     "real_disconnects": 0
+     "link_counts_since_s": "<volatile>",
+     "radio_off_disconnects": 0,
+     "real_disconnects": 0,
+     "reconnects": 0,
+     "service_restart": 0
     },
     "failed_network_id": null,
     "ip_addresses": [
@@ -33974,10 +34322,16 @@
     ],
     "dns_ready": true,
     "events": {
+     "association_active": null,
      "boot_id": "boot-a",
      "connected": 1,
+     "disconnected": 0,
      "last_event": "CONNECTED",
-     "real_disconnects": 0
+     "link_counts_since_s": "<volatile>",
+     "radio_off_disconnects": 0,
+     "real_disconnects": 0,
+     "reconnects": 0,
+     "service_restart": 0
     },
     "failed_network_id": null,
     "ip_addresses": [
@@ -34096,10 +34450,16 @@
     ],
     "dns_ready": true,
     "events": {
+     "association_active": null,
      "boot_id": "boot-a",
      "connected": 1,
+     "disconnected": 0,
      "last_event": "CONNECTED",
-     "real_disconnects": 0
+     "link_counts_since_s": "<volatile>",
+     "radio_off_disconnects": 0,
+     "real_disconnects": 0,
+     "reconnects": 0,
+     "service_restart": 0
     },
     "failed_network_id": null,
     "ip_addresses": [
@@ -34213,10 +34573,16 @@
     "default_route": [],
     "dns_ready": false,
     "events": {
+     "association_active": null,
      "boot_id": "boot-a",
      "connected": 1,
+     "disconnected": 0,
      "last_event": "CONNECTED",
-     "real_disconnects": 0
+     "link_counts_since_s": "<volatile>",
+     "radio_off_disconnects": 0,
+     "real_disconnects": 0,
+     "reconnects": 0,
+     "service_restart": 0
     },
     "failed_network_id": null,
     "ip_addresses": [],
@@ -34308,10 +34674,16 @@
     "default_route": [],
     "dns_ready": false,
     "events": {
+     "association_active": null,
      "boot_id": "boot-a",
      "connected": 1,
+     "disconnected": 0,
      "last_event": "CONNECTED",
-     "real_disconnects": 0
+     "link_counts_since_s": "<volatile>",
+     "radio_off_disconnects": 0,
+     "real_disconnects": 0,
+     "reconnects": 0,
+     "service_restart": 0
     },
     "failed_network_id": null,
     "ip_addresses": [],
@@ -34416,10 +34788,16 @@
     "default_route": [],
     "dns_ready": false,
     "events": {
+     "association_active": null,
      "boot_id": "boot-a",
      "connected": 1,
+     "disconnected": 0,
      "last_event": "CONNECTED",
-     "real_disconnects": 0
+     "link_counts_since_s": "<volatile>",
+     "radio_off_disconnects": 0,
+     "real_disconnects": 0,
+     "reconnects": 0,
+     "service_restart": 0
     },
     "failed_network_id": null,
     "ip_addresses": [],
@@ -34517,10 +34895,16 @@
     ],
     "dns_ready": true,
     "events": {
+     "association_active": null,
      "boot_id": "boot-a",
      "connected": 1,
+     "disconnected": 0,
      "last_event": "CONNECTED",
-     "real_disconnects": 0
+     "link_counts_since_s": "<volatile>",
+     "radio_off_disconnects": 0,
+     "real_disconnects": 0,
+     "reconnects": 0,
+     "service_restart": 0
     },
     "failed_network_id": null,
     "ip_addresses": [
