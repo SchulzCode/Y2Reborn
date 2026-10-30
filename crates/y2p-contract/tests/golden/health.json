@@ -102,7 +102,7 @@
    "data"
   ],
   "kernel": "6.18.0-fixture",
-  "monotonic_ns": 101476205614677,
+  "monotonic_ns": 104559067789739,
   "parameters": {
    "mode": "quick"
   },
@@ -110,7 +110,7 @@
   "result": "FAILED",
   "rootfs_release": "v1.0",
   "units": {},
-  "wall_timestamp": "2026-10-30T13:27:00.106633+00:00",
+  "wall_timestamp": "2026-10-30T14:18:22.968808+00:00",
   "workload": "health",
   "y2linux_commit": "linux-commit"
  },
