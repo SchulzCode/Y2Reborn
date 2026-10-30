@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 use reborn_core::platform::{BatteryState, ChargingState, LowBattery, ShutdownIntent};
+use serde::Deserialize;
 use serde_json::{json, Value};
 use std::{
     fs,
@@ -9,14 +10,19 @@ use std::{
     process::Command,
     time::Duration,
 };
+use y2p_contract::power::{
+    BatterySource, BatteryState as Level, Intent, IntentState, PowerRecord, ShutdownAction,
+};
 pub fn status() -> Value {
     let boot = fs::read_to_string("/proc/sys/kernel/random/boot_id").unwrap_or_default();
     let platform = fs::read("/run/y2/power.json")
         .ok()
         .filter(|b| b.len() <= 8192)
         .and_then(|b| serde_json::from_slice::<Value>(&b).ok())
-        .filter(|v| {
-            crate::native::monotonic_seconds().is_some_and(|now| fresh_record(v, boot.trim(), now))
+        .and_then(|v| Some((PowerRecord::deserialize(&v).ok()?, v)))
+        .filter(|(record, _)| {
+            crate::native::monotonic_seconds()
+                .is_some_and(|now| fresh_record(record, boot.trim(), now))
         });
     let mut supplies = vec![];
     for entry in fs::read_dir("/sys/class/power_supply")
@@ -38,7 +44,10 @@ pub fn status() -> Value {
             // The safety owner already samples BAT0. A fresh same-boot value
             // avoids a redundant hardware ADC conversion for each UI poll.
             if name == "voltage_now" && item["type"].as_str() == Some("Battery") {
-                if let Some(uv) = platform.as_ref().and_then(recorded_voltage) {
+                if let Some(uv) = platform
+                    .as_ref()
+                    .and_then(|(record, _)| recorded_voltage(record))
+                {
                     item[name] = json!(uv.to_string());
                     continue;
                 }
@@ -49,18 +58,21 @@ pub fn status() -> Value {
         }
         supplies.push(item);
     }
+    let platform = platform.map(|(_, value)| value);
     json!({"supplies":supplies,"backlight":backlight().map(|p|p.to_string_lossy().into_owned()),"platform":platform})
 }
-fn recorded_voltage(value: &Value) -> Option<u64> {
-    value["battery"]["voltage_uv"].as_u64().filter(|v| *v > 0)
+fn recorded_voltage(record: &PowerRecord) -> Option<u64> {
+    record
+        .battery
+        .voltage_uv
+        .and_then(|v| u64::try_from(v).ok())
+        .filter(|v| *v > 0)
 }
-fn fresh_record(value: &Value, boot: &str, now: f64) -> bool {
-    value["boot_id"].as_str() == Some(boot)
-        && !boot.is_empty()
-        && value["monotonic_ns"].as_u64().is_some_and(|ns| {
-            let age = now - ns as f64 / 1_000_000_000.;
-            (0.0..5.0).contains(&age)
-        })
+fn fresh_record(record: &PowerRecord, boot: &str, now: f64) -> bool {
+    record.boot_id.as_deref() == Some(boot) && !boot.is_empty() && {
+        let age = now - record.monotonic_ns as f64 / 1_000_000_000.;
+        (0.0..5.0).contains(&age)
+    }
 }
 /// The normal-user battery state: valid SOC, charging and low-battery level.
 pub fn battery(status: &Value) -> BatteryState {
@@ -78,37 +90,36 @@ pub fn battery(status: &Value) -> BatteryState {
         Some("Discharging" | "Not charging") => ChargingState::OnBattery,
         _ => ChargingState::Unknown,
     };
-    let level = match status["platform"]["state"].as_str() {
-        Some("Low") => LowBattery::Low,
-        Some("Critical") => LowBattery::Critical,
-        Some("ShutdownPending") => LowBattery::ShuttingDown,
+    let record = PowerRecord::deserialize(&status["platform"]).ok();
+    let level = match record.as_ref().map(|r| r.state) {
+        Some(Level::Low) => LowBattery::Low,
+        Some(Level::Critical) => LowBattery::Critical,
+        Some(Level::ShutdownPending) => LowBattery::ShuttingDown,
         _ => LowBattery::Normal,
     };
     BatteryState {
-        percent: battery_percent(status),
-        estimated: matches!(
-            status["platform"]["battery"]["source"].as_str(),
-            Some("voltage_estimate" | "hybrid")
-        ),
+        percent: record.as_ref().and_then(battery_percent),
+        estimated: record.as_ref().is_some_and(|r| {
+            matches!(
+                r.battery.source,
+                BatterySource::VoltageEstimate | BatterySource::Hybrid
+            )
+        }),
         charging,
         cable,
         level,
     }
 }
 
-pub fn battery_percent(status: &Value) -> Option<u8> {
-    let battery = &status["platform"]["battery"];
-    let source = battery["source"].as_str()?;
+fn battery_percent(record: &PowerRecord) -> Option<u8> {
     // `stock_oam`: the stock open-circuit estimate the platform reports
     // since POWER-FINAL-29 (charging and resting); Reborn showed no level then.
-    if !matches!(
-        source,
-        "fuel_gauge" | "hybrid" | "voltage_estimate" | "stock_oam"
-    ) {
+    if record.battery.source == BatterySource::Unavailable {
         return None;
     }
-    let percent = battery["percent"].as_u64()?;
-    (percent <= 100).then_some(percent as u8)
+    u8::try_from(record.battery.percent?)
+        .ok()
+        .filter(|p| *p <= 100)
 }
 fn backlight() -> Option<PathBuf> {
     fs::read_dir("/sys/class/backlight")
@@ -235,21 +246,24 @@ pub fn shutdown_intent() -> Option<ShutdownIntent> {
     if data.len() > 8192 {
         return None;
     }
-    let value: Value = serde_json::from_slice(&data).ok()?;
+    let value: Intent = serde_json::from_slice(&data).ok()?;
     let boot = fs::read_to_string("/proc/sys/kernel/random/boot_id").ok()?;
     intent(&value, boot.trim())
 }
 
-fn intent(value: &Value, boot: &str) -> Option<ShutdownIntent> {
-    if value["schema"] != 1 || value["state"] != "ShutdownPending" || value["boot_id"] != boot {
+fn intent(value: &Intent, boot: &str) -> Option<ShutdownIntent> {
+    if value.schema != Some(1)
+        || value.state != IntentState::ShutdownPending
+        || !value.boot_id.is(Some(boot))
+    {
         return None;
     }
-    let id = value["id"].as_str()?;
+    let id = &value.id;
     (id.len() == 36 && id.chars().all(|c| c.is_ascii_hexdigit() || c == '-')).then(|| {
         ShutdownIntent {
-            id: id.to_owned(),
-            restart: value["action"] == "reboot",
-            low_battery: value["reason"] == "low_battery",
+            id: id.clone(),
+            restart: value.action == ShutdownAction::Reboot,
+            low_battery: value.reason.as_deref() == Some("low_battery"),
         }
     })
 }
@@ -266,31 +280,32 @@ mod tests {
     use super::*;
     #[test]
     fn voltage_reuse_requires_fresh_same_boot_valid_observation() {
-        let value = json!({"boot_id":"one","monotonic_ns":1_000_000_000u64,
-                           "battery":{"voltage_uv":3_900_000}});
+        let record = |value: Value| PowerRecord::deserialize(&value).unwrap();
+        let value = record(json!({"boot_id":"one","monotonic_ns":1_000_000_000u64,
+                           "battery":{"voltage_uv":3_900_000}}));
         assert!(fresh_record(&value, "one", 2.0));
         assert!(!fresh_record(&value, "two", 2.0));
         assert!(!fresh_record(&value, "one", 6.0));
         assert!(!fresh_record(&value, "one", 0.0));
         assert_eq!(recorded_voltage(&value), Some(3_900_000));
-        assert_eq!(recorded_voltage(&json!({"battery":{"voltage_uv":0}})), None);
-        assert_eq!(
-            recorded_voltage(&json!({"battery":{"voltage_uv":-1}})),
-            None
-        );
+        let voltage = |uv: i64| recorded_voltage(&record(json!({"battery":{"voltage_uv":uv}})));
+        assert_eq!(voltage(0), None);
+        assert_eq!(voltage(-1), None);
     }
     #[test]
     fn shutdown_intent_requires_current_boot_and_pending_state() {
         let mut value = json!({"schema":1,"state":"ShutdownPending","boot_id":"one",
-                              "id":"12345678-1234-1234-1234-123456789abc"});
-        assert!(intent(&value, "one").is_some_and(|i| !i.restart && !i.low_battery));
-        assert!(intent(&value, "two").is_none());
+            "id":"12345678-1234-1234-1234-123456789abc","action":"poweroff",
+            "deadline_monotonic_ns":0,"client":null,"acknowledgement":null});
+        let read = |value: &Value, boot: &str| intent(&Intent::deserialize(value).ok()?, boot);
+        assert!(read(&value, "one").is_some_and(|i| !i.restart && !i.low_battery));
+        assert!(read(&value, "two").is_none());
         value["action"] = json!("reboot");
-        assert!(intent(&value, "one").is_some_and(|i| i.restart));
+        assert!(read(&value, "one").is_some_and(|i| i.restart));
         value["reason"] = json!("low_battery");
-        assert!(intent(&value, "one").is_some_and(|i| i.low_battery));
+        assert!(read(&value, "one").is_some_and(|i| i.low_battery));
         value["state"] = json!("Failed");
-        assert!(intent(&value, "one").is_none());
+        assert!(read(&value, "one").is_none());
     }
 
     #[test]

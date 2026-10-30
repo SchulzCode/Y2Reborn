@@ -53,6 +53,24 @@ fn parsed(argv: &[String], out: &Value, caps: &Value) -> String {
     }
 }
 
+/// A recorded record with what the recording masks as it is on the player: a monotonic time is an
+/// integer and an intent's id a UUID (the typed readers refuse the placeholders).
+fn unmasked(value: &Value) -> Value {
+    match value {
+        Value::String(text) if text == "<volatile>" => Value::from(0),
+        Value::String(text) if text == "<uuid>" => {
+            Value::from("00000000-0000-0000-0000-000000000000")
+        }
+        Value::Array(items) => items.iter().map(unmasked).collect(),
+        Value::Object(map) => Value::Object(
+            map.iter()
+                .map(|(key, value)| (key.clone(), unmasked(value)))
+                .collect(),
+        ),
+        other => other.clone(),
+    }
+}
+
 /// What Reborn makes of one file it reads.
 fn parsed_file(path: &str, content: &Value) -> String {
     let typed = match path {
@@ -60,7 +78,7 @@ fn parsed_file(path: &str, content: &Value) -> String {
         "/run/y2/report-progress.json" => format!("{:?}", parse_report_progress(content)),
         "/run/y2/power.json" => format!(
             "{:?}",
-            crate::power::battery(&serde_json::json!({"platform": content}))
+            crate::power::battery(&serde_json::json!({"platform": unmasked(content)}))
         ),
         _ => String::new(),
     };
