@@ -13,9 +13,11 @@
 pub mod lenient;
 pub mod network;
 pub mod power;
+pub mod reports;
 pub mod sleep;
 pub mod storage;
 pub mod update;
+pub mod usb;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};

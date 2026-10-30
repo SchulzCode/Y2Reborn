@@ -12,6 +12,7 @@ use std::{
 };
 use y2p_contract::lenient::Shaped;
 use y2p_contract::storage::{Identity, MediaRecord, Y2MediaClaim};
+use y2p_contract::usb::Receipt;
 
 pub struct PinnedTrack {
     _file: fs::File,
@@ -636,20 +637,11 @@ fn sd_present_in(class: &Path) -> bool {
 pub fn usb_changes() -> (u64, bool) {
     let receipt = fs::read_to_string("/run/y2/usb-transfer.json")
         .ok()
-        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok());
+        .and_then(|s| serde_json::from_str::<Receipt>(&s).ok());
     let boot = fs::read_to_string("/proc/sys/kernel/random/boot_id").unwrap_or_default();
     receipt
-        .filter(|r| {
-            r["schema"] == y2p_contract::schema::USB_TRANSFER
-                && !boot.trim().is_empty()
-                && r["boot_id"].as_str() == Some(boot.trim())
-        })
-        .map(|r| {
-            (
-                r["refresh_generation"].as_u64().unwrap_or(0),
-                r["active"] == true,
-            )
-        })
+        .filter(|r| !boot.trim().is_empty() && r.of_boot(Some(boot.trim())))
+        .map(|r| (r.refresh_generation.unwrap_or(0), r.active))
         .unwrap_or((0, false))
 }
 

@@ -34,12 +34,14 @@ use std::{
 const LIMIT: u64 = 1024 * 1024;
 const PROGRAM: &str = "/usr/sbin/y2-platform";
 use y2p_contract::lenient;
+use y2p_contract::reports::{ReportPhase, ReportProgress};
 use y2p_contract::schema as schemas;
 pub use y2p_contract::schema::{
     CAPABILITIES as CAPABILITIES_SCHEMA, HEALTH as HEALTH_SCHEMA, STATUS as STATUS_SCHEMA,
 };
 use y2p_contract::sleep::{Product, ProductState, WakeSource};
 use y2p_contract::update::{DownloadPhase, DownloadProgress, Status as UpdateStatus};
+use y2p_contract::usb::Receipt;
 
 /// A typed reply for one task.
 pub enum Reply {
@@ -620,17 +622,13 @@ pub fn usb(status: &Value) -> UsbTransfer {
     if !attached {
         return UsbTransfer::Disconnected;
     }
-    let transfer = &status["system"]["usb"]["file_transfer"];
-    if transfer["schema"] == schemas::USB_TRANSFER
-        && transfer["boot_id"] == status["record"]["boot_id"]
-        && transfer["boot_id"].as_str().is_some()
-    {
-        if transfer["error"].as_i64().is_some_and(|code| code > 0) {
+    if let Some(transfer) = usb_receipt(status) {
+        if transfer.error.is_some_and(|code| code > 0) {
             return UsbTransfer::Error;
         }
-        return match transfer["state"].as_str() {
+        return match transfer.state.as_deref() {
             Some("Copying") => UsbTransfer::Copying,
-            Some("Ready") if transfer["mode"] == "mtp" => UsbTransfer::Ready,
+            Some("Ready") if transfer.mode.as_deref() == Some("mtp") => UsbTransfer::Ready,
             Some("Ready") => UsbTransfer::Developer,
             Some("Failed" | "Unavailable") => UsbTransfer::Error,
             _ => UsbTransfer::Starting,
@@ -709,21 +707,21 @@ pub fn report_progress() -> Option<ReportLive> {
 }
 
 pub fn parse_report_progress(record: &Value) -> Option<ReportLive> {
-    if record["schema"] != 1 {
+    let record = ReportProgress::deserialize(record).ok()?;
+    if record.schema != 1 {
         return None;
     }
-    let step = match record["phase"].as_str()? {
-        "collect" => ReportStep::Collect,
-        "scrub" | "pack" => ReportStep::Clean,
-        "upload" | "save" => ReportStep::Finish,
-        _ => return None,
+    let step = match record.phase {
+        ReportPhase::Collect => ReportStep::Collect,
+        ReportPhase::Scrub | ReportPhase::Pack => ReportStep::Clean,
+        ReportPhase::Upload | ReportPhase::Save => ReportStep::Finish,
     };
     Some(ReportLive {
         step,
-        percent: (record["percent"].as_f64()? as f32).clamp(0., 100.),
-        seconds_left: record["seconds_left"].as_u64(),
-        bytes_done: record["bytes_done"].as_u64(),
-        bytes_total: record["bytes_total"].as_u64(),
+        percent: (record.percent as f32).clamp(0., 100.),
+        seconds_left: record.seconds_left.and_then(|s| u64::try_from(s).ok()),
+        bytes_done: record.bytes_done,
+        bytes_total: record.bytes_total,
     })
 }
 
@@ -906,16 +904,17 @@ pub fn radio_firmware(status: &Value) -> RadioFirmware {
     }
 }
 
+/// The USB receipt in a status snapshot, when it is this snapshot's boot's.
+fn usb_receipt(status: &Value) -> Option<Receipt> {
+    let boot = status["record"]["boot_id"].as_str()?;
+    Receipt::deserialize(&status["system"]["usb"]["file_transfer"])
+        .ok()
+        .filter(|receipt| receipt.of_boot(Some(boot)))
+}
 fn usb_refresh_generation(status: &Value) -> u64 {
-    let transfer = &status["system"]["usb"]["file_transfer"];
-    if transfer["schema"] == schemas::USB_TRANSFER
-        && transfer["boot_id"] == status["record"]["boot_id"]
-        && transfer["boot_id"].as_str().is_some()
-    {
-        transfer["refresh_generation"].as_u64().unwrap_or(0)
-    } else {
-        0
-    }
+    usb_receipt(status)
+        .and_then(|receipt| receipt.refresh_generation)
+        .unwrap_or(0)
 }
 
 fn ldac_quality(value: &Value) -> Option<LdacQuality> {
