@@ -25305,14 +25305,52 @@
    "status",
    "readiness"
   ],
-  "exit": 1,
+  "exit": 0,
   "files": {},
   "name": "observation/status-system-update-dict-state",
   "stdout": {
-   "reason": "invalid_update_journal",
-   "schema": "org.y2linux.error/v1",
-   "state": "Failed",
-   "type": "ValueError"
+   "readiness": {
+    "audio": {
+     "reason": "profile_does_not_imply_current_physical_acceptance",
+     "state": "Unavailable"
+    },
+    "bluetooth": {
+     "reason": "dbus_observation_unavailable",
+     "state": "Unavailable"
+    },
+    "storage": {
+     "reason": "source_missing_or_wrong_controller",
+     "state": "Failed"
+    },
+    "update": {
+     "reason": null,
+     "state": "Unavailable"
+    },
+    "wifi": {
+     "reason": "radio_off",
+     "state": "Unavailable"
+    }
+   },
+   "record": {
+    "boot_id": "boot-a",
+    "build_id": "fixture-build",
+    "collection_duration_ns": "<volatile>",
+    "evidence_level": "IMPLEMENTED",
+    "failure": null,
+    "kernel": "6.18.0-fixture",
+    "monotonic_ns": "<volatile>",
+    "parameters": {},
+    "reborn_commit": "reborn",
+    "result": "observed",
+    "rootfs_release": "v1.0",
+    "units": {
+     "collection_duration": "ns"
+    },
+    "wall_timestamp": "<volatile>",
+    "workload": "observation",
+    "y2linux_commit": "linux-commit"
+   },
+   "schema": "org.y2linux.status/v1"
   }
  },
  {
@@ -25525,14 +25563,52 @@
    "status",
    "readiness"
   ],
-  "exit": 1,
+  "exit": 0,
   "files": {},
   "name": "observation/status-system-update-unhashable",
   "stdout": {
-   "reason": "invalid_update_journal",
-   "schema": "org.y2linux.error/v1",
-   "state": "Failed",
-   "type": "ValueError"
+   "readiness": {
+    "audio": {
+     "reason": "profile_does_not_imply_current_physical_acceptance",
+     "state": "Unavailable"
+    },
+    "bluetooth": {
+     "reason": "dbus_observation_unavailable",
+     "state": "Unavailable"
+    },
+    "storage": {
+     "reason": "source_missing_or_wrong_controller",
+     "state": "Failed"
+    },
+    "update": {
+     "reason": null,
+     "state": "Unavailable"
+    },
+    "wifi": {
+     "reason": "radio_off",
+     "state": "Unavailable"
+    }
+   },
+   "record": {
+    "boot_id": "boot-a",
+    "build_id": "fixture-build",
+    "collection_duration_ns": "<volatile>",
+    "evidence_level": "IMPLEMENTED",
+    "failure": null,
+    "kernel": "6.18.0-fixture",
+    "monotonic_ns": "<volatile>",
+    "parameters": {},
+    "reborn_commit": "reborn",
+    "result": "observed",
+    "rootfs_release": "v1.0",
+    "units": {
+     "collection_duration": "ns"
+    },
+    "wall_timestamp": "<volatile>",
+    "workload": "observation",
+    "y2linux_commit": "linux-commit"
+   },
+   "schema": "org.y2linux.status/v1"
   }
  },
  {
