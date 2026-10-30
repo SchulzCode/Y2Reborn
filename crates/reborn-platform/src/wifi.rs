@@ -14,6 +14,7 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
+use y2p_contract::network::Published;
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Network {
     pub ssid: String,
@@ -642,16 +643,14 @@ fn status_with_inventory(paths: &Paths, cached: Option<&Status>) -> Status {
         let record = fs::read("/run/y2/network.json")
             .ok()
             .filter(|b| b.len() <= 65536)
-            .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok());
+            .and_then(|b| serde_json::from_slice::<Published>(&b).ok());
         let boot = fs::read_to_string("/proc/sys/kernel/random/boot_id").unwrap_or_default();
         let observed = record.and_then(|r| {
             let state =
                 network_readiness(&r, boot.trim(), crate::native::monotonic_seconds()?, &s)?;
             Some((
                 state,
-                r["failed_network_id"]
-                    .as_u64()
-                    .and_then(|v| u32::try_from(v).ok()),
+                r.failed_network_id.and_then(|v| u32::try_from(v).ok()),
             ))
         });
         if let Some(((state, reason), failed)) = observed {
@@ -673,17 +672,19 @@ const RECORD_S: f64 = 15.0;
 const ONLINE_RECORD_S: f64 = 45.0;
 
 fn network_readiness(
-    record: &serde_json::Value,
+    record: &Published,
     boot: &str,
     now: f64,
     live: &Status,
 ) -> Option<(String, Option<String>)> {
-    let age = now - record["monotonic_s"].as_f64()?;
-    if record["schema"] != 1 || record["boot_id"] != boot || !(0.0..ONLINE_RECORD_S).contains(&age)
+    let age = record.age(now)?;
+    if record.schema != Some(1)
+        || !record.is_this_boot(Some(boot))
+        || !(0.0..ONLINE_RECORD_S).contains(&age)
     {
         return None;
     }
-    let state = record["state"].as_str()?;
+    let state = record.state.as_deref()?;
     // With the screen dark the platform writes every 10 s and one pass can
     // take several seconds more (Beta 4 measured 12 s ages). An Online claim
     // is checked against the live association and address below, so it may
@@ -707,21 +708,14 @@ fn network_readiness(
     }
     if state == "Online"
         && (live.state != "COMPLETED"
-            || live.association_id.as_deref() != record["association_id"].as_str()
+            || live.association_id != record.association_id
             || live.association_id.is_none()
             || live.ip.is_empty()
-            || !record["ip_addresses"].as_array().is_some_and(|addresses| {
-                addresses
-                    .iter()
-                    .any(|address| address.as_str() == Some(live.ip.as_str()))
-            }))
+            || !record.has_address(&live.ip))
     {
         return None;
     }
-    Some((
-        state.to_owned(),
-        record["reason"].as_str().map(str::to_owned),
-    ))
+    Some((state.to_owned(), record.reason.clone()))
 }
 struct Scan {
     id: u64,
@@ -1265,6 +1259,10 @@ mod tests {
         assert_eq!(association_transition(&mut previous, "OFF"), (false, false));
     }
 
+    fn read(value: &serde_json::Value) -> Published {
+        Published::deserialize(value).unwrap()
+    }
+
     #[test]
     fn platform_readiness_rejects_old_boot_and_stale_online_claims() {
         let value = json!({"schema":1,"boot_id":"one","monotonic_s":100.0,"state":"Online","reason":null,
@@ -1276,18 +1274,20 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(
-            network_readiness(&value, "one", 101.0, &live).unwrap().0,
+            network_readiness(&read(&value), "one", 101.0, &live)
+                .unwrap()
+                .0,
             "Online"
         );
-        assert!(network_readiness(&value, "two", 101.0, &live).is_none());
+        assert!(network_readiness(&read(&value), "two", 101.0, &live).is_none());
         // A late Online record still matches the live association.
-        assert!(network_readiness(&value, "one", 116.0, &live).is_some());
-        assert!(network_readiness(&value, "one", 146.0, &live).is_none());
-        assert!(network_readiness(&value, "one", 99.0, &live).is_none());
+        assert!(network_readiness(&read(&value), "one", 116.0, &live).is_some());
+        assert!(network_readiness(&read(&value), "one", 146.0, &live).is_none());
+        assert!(network_readiness(&read(&value), "one", 99.0, &live).is_none());
         let mut acquiring = value.clone();
         acquiring["state"] = json!("AcquiringIP");
-        assert!(network_readiness(&acquiring, "one", 114.0, &live).is_some());
-        assert!(network_readiness(&acquiring, "one", 116.0, &live).is_none());
+        assert!(network_readiness(&read(&acquiring), "one", 114.0, &live).is_some());
+        assert!(network_readiness(&read(&acquiring), "one", 116.0, &live).is_none());
     }
     #[test]
     fn online_readiness_must_match_current_association_and_address() {
@@ -1299,14 +1299,14 @@ mod tests {
             ip: "192.0.2.2".into(),
             ..Default::default()
         };
-        assert!(network_readiness(&value, "one", 101.0, &live).is_none());
+        assert!(network_readiness(&read(&value), "one", 101.0, &live).is_none());
         live.association_id = Some("peer-one".into());
-        assert!(network_readiness(&value, "one", 101.0, &live).is_some());
+        assert!(network_readiness(&read(&value), "one", 101.0, &live).is_some());
         live.ip = "192.0.2.3".into();
-        assert!(network_readiness(&value, "one", 101.0, &live).is_none());
+        assert!(network_readiness(&read(&value), "one", 101.0, &live).is_none());
         live.ip = "192.0.2.2".into();
         live.state = "ERROR".into();
-        assert!(network_readiness(&value, "one", 101.0, &live).is_none());
+        assert!(network_readiness(&read(&value), "one", 101.0, &live).is_none());
     }
     use std::sync::{
         atomic::{AtomicBool, AtomicUsize},
