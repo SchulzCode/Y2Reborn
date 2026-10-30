@@ -137,10 +137,6 @@ pub struct Versions {
     pub other: Map<String, Value>,
 }
 
-impl Versions {
-    pub const PATH: &'static str = "/etc/y2linux/versions.json";
-}
-
 /// The `record` block of observations (`Context.record` in common.py). A field a record lacks reads
 /// as its default.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
