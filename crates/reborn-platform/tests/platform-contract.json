@@ -27135,14 +27135,80 @@
    "status",
    "wifi"
   ],
-  "exit": 1,
+  "exit": 0,
   "files": {},
   "name": "observation/status-wifi-signal-list",
   "stdout": {
-   "reason": "invalid_network_record",
-   "schema": "org.y2linux.error/v1",
-   "state": "Failed",
-   "type": "ValueError"
+   "record": {
+    "boot_id": "boot-a",
+    "build_id": "fixture-build",
+    "collection_duration_ns": "<volatile>",
+    "evidence_level": "IMPLEMENTED",
+    "failure": null,
+    "kernel": "6.18.0-fixture",
+    "monotonic_ns": "<volatile>",
+    "parameters": {},
+    "reborn_commit": "reborn",
+    "result": "observed",
+    "rootfs_release": "v1.0",
+    "units": {
+     "collection_duration": "ns"
+    },
+    "wall_timestamp": "<volatile>",
+    "workload": "observation",
+    "y2linux_commit": "linux-commit"
+   },
+   "schema": "org.y2linux.status/v1",
+   "wifi": {
+    "association": "COMPLETED",
+    "association_id": "aa:bb:cc:dd:ee:ff",
+    "coexistence": {
+     "bt": 1
+    },
+    "default_route": [
+     {
+      "dev": "wlan0",
+      "dst": "default",
+      "flags": [],
+      "gateway": "192.168.1.1"
+     }
+    ],
+    "dns_ready": false,
+    "events": {
+     "boot_id": "boot-a",
+     "connected": 1,
+     "last_event": "CONNECTED",
+     "real_disconnects": 0
+    },
+    "failed_network_id": null,
+    "ip_addresses": [
+     "192.168.1.40"
+    ],
+    "power_save": {
+     "enabled": true
+    },
+    "radio_present": true,
+    "reason": "dns_unavailable",
+    "reconnect_owner": "wpa_supplicant",
+    "rssi_dbm": -55,
+    "signal_observation": {
+     "boot_id": "boot-a",
+     "bssid": "aa:bb:cc:dd:ee:ff",
+     "monotonic_s": "<volatile>",
+     "ok": true,
+     "reason": null
+    },
+    "state": "Authenticated",
+    "supplicant_observation": {
+     "duration_ns": "<volatile>",
+     "ok": true,
+     "reason": null
+    },
+    "traffic_counters": {
+     "rx_bytes": 1000,
+     "tx_bytes": null
+    }
+   }
   }
  },
  {
@@ -27150,14 +27216,80 @@
    "status",
    "wifi"
   ],
-  "exit": 1,
+  "exit": 0,
   "files": {},
   "name": "observation/status-wifi-signal-text",
   "stdout": {
-   "reason": "invalid_network_record",
-   "schema": "org.y2linux.error/v1",
-   "state": "Failed",
-   "type": "ValueError"
+   "record": {
+    "boot_id": "boot-a",
+    "build_id": "fixture-build",
+    "collection_duration_ns": "<volatile>",
+    "evidence_level": "IMPLEMENTED",
+    "failure": null,
+    "kernel": "6.18.0-fixture",
+    "monotonic_ns": "<volatile>",
+    "parameters": {},
+    "reborn_commit": "reborn",
+    "result": "observed",
+    "rootfs_release": "v1.0",
+    "units": {
+     "collection_duration": "ns"
+    },
+    "wall_timestamp": "<volatile>",
+    "workload": "observation",
+    "y2linux_commit": "linux-commit"
+   },
+   "schema": "org.y2linux.status/v1",
+   "wifi": {
+    "association": "COMPLETED",
+    "association_id": "aa:bb:cc:dd:ee:ff",
+    "coexistence": {
+     "bt": 1
+    },
+    "default_route": [
+     {
+      "dev": "wlan0",
+      "dst": "default",
+      "flags": [],
+      "gateway": "192.168.1.1"
+     }
+    ],
+    "dns_ready": false,
+    "events": {
+     "boot_id": "boot-a",
+     "connected": 1,
+     "last_event": "CONNECTED",
+     "real_disconnects": 0
+    },
+    "failed_network_id": null,
+    "ip_addresses": [
+     "192.168.1.40"
+    ],
+    "power_save": {
+     "enabled": true
+    },
+    "radio_present": true,
+    "reason": "dns_unavailable",
+    "reconnect_owner": "wpa_supplicant",
+    "rssi_dbm": -55,
+    "signal_observation": {
+     "boot_id": "boot-a",
+     "bssid": "aa:bb:cc:dd:ee:ff",
+     "monotonic_s": "<volatile>",
+     "ok": true,
+     "reason": null
+    },
+    "state": "Authenticated",
+    "supplicant_observation": {
+     "duration_ns": "<volatile>",
+     "ok": true,
+     "reason": null
+    },
+    "traffic_counters": {
+     "rx_bytes": 1000,
+     "tx_bytes": null
+    }
+   }
   }
  },
  {
