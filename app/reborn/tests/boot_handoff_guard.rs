@@ -84,7 +84,7 @@ fn first_presented_frame_is_the_real_ui_under_the_boot_cover() {
             "Reborn must not present a static boot screen itself ({forbidden})"
         );
     }
-    let start = at(&source, "let mut first_frame_presented = false;");
+    let start = at(&source, "first_frame_presented = false;");
     let frame = at(&source, "let mut draw = rt.ui.draw(");
     let cover = at(&source, "reborn_ui::boot_transition(");
     let render = at(&source, "g.render(&draw)");

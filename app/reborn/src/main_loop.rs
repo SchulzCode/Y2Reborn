@@ -1,10 +1,11 @@
 //! Startup and the main loop: `run` builds the runtime and drives input, playback, the platform and the screen.
 use crate::*;
+use std::ops::ControlFlow;
 
 pub(crate) fn run() -> Result<(), String> {
     let process_started = Instant::now();
     let args = std::env::args().skip(1).collect::<Vec<_>>();
-    let mut performance = performance::Trace::new(option(&args, "--performance-trace"));
+    let performance = performance::Trace::new(option(&args, "--performance-trace"));
     if args.iter().any(|s| s == "--default-settings") {
         let value = json!({"session_schema":reborn_core::SESSION_SCHEMA_VERSION,
             "settings":reborn_core::Settings::default()});
@@ -135,10 +136,10 @@ pub(crate) fn run() -> Result<(), String> {
     // The early splash keeps the display, showing real startup progress, until
     // the first complete UI frame below is ready. That frame is the hand-off:
     // it is presented under a full boot-screen cover that dissolves at once.
-    let mut first_frame_presented = false;
-    let mut first_interactive_presented = false;
-    let mut initial_library_ready = false;
-    let mut initial_platform_ready = false;
+    let first_frame_presented = false;
+    let first_interactive_presented = false;
+    let initial_library_ready = false;
+    let initial_platform_ready = false;
     if let Some(m) = option(&args, "--music-dir") {
         model.settings.music_directory = m.into();
     } else if !headless && storage::platform_manages_media() {
@@ -443,9 +444,9 @@ pub(crate) fn run() -> Result<(), String> {
             }
         })
         .map_err(|e| e.to_string())?;
-    let mut inputs = inputs;
+    let inputs = inputs;
     // #28: the headphone jack, when the kernel reports it.
-    let mut jack = if headless {
+    let jack = if headless {
         None
     } else {
         reborn_platform::jack::Jack::open().ok()
@@ -455,8 +456,8 @@ pub(crate) fn run() -> Result<(), String> {
         rt.model.speaker_active = rt.speaker_route();
     }
     // #28: the vibration motor, when the kernel has one (Linux with VIBR).
-    let mut seek_ticked: Option<Instant> = None;
-    let mut motor = if headless {
+    let seek_ticked: Option<Instant> = None;
+    let motor = if headless {
         None
     } else {
         reborn_platform::haptics::Motor::open()
@@ -472,26 +473,26 @@ pub(crate) fn run() -> Result<(), String> {
             })
             .ok()
     };
-    let mut workload_tick = Instant::now();
+    let workload_tick = Instant::now();
     // The last observation request and snapshot (`dark` spaces them out),
     // and whether the snapshot was taken dark and quiet.
-    let mut observed = Instant::now();
-    let (mut snapshot_taken, mut snapshot_quiet) = (Instant::now(), false);
-    let mut was_dark = rt.model.screen_off;
-    let (mut periodic, mut checkpoint, mut render_time) = (
+    let observed = Instant::now();
+    let (snapshot_taken, snapshot_quiet) = (Instant::now(), false);
+    let was_dark = rt.model.screen_off;
+    let (periodic, checkpoint, render_time) = (
         Instant::now(),
         Instant::now(),
         Instant::now() - Duration::from_secs(1),
     );
-    let mut monitor: Option<(Instant, SyncSender<Response>, u64, Vec<Value>)> = None;
-    let mut action_router = input::ActionRouter::default();
-    let mut input_screen_off = rt.model.screen_off;
-    let mut last_sd = storage::sd_present();
-    let mut usb_refresh = storage::TransferRefresh::default();
-    let mut observation_pending = None;
-    let mut xrun_bundle = 0.;
-    let mut shutdown_intent = None;
-    let mut power_poll = Instant::now() - Duration::from_secs(1);
+    let monitor: Option<(Instant, SyncSender<Response>, u64, Vec<Value>)> = None;
+    let action_router = input::ActionRouter::default();
+    let input_screen_off = rt.model.screen_off;
+    let last_sd = storage::sd_present();
+    let usb_refresh = storage::TransferRefresh::default();
+    let observation_pending = None;
+    let xrun_bundle = 0.;
+    let shutdown_intent = None;
+    let power_poll = Instant::now() - Duration::from_secs(1);
     let player = if headless {
         None
     } else {
@@ -502,29 +503,250 @@ pub(crate) fn run() -> Result<(), String> {
         })
         .ok()
     };
-    let mut player_publish = Instant::now() - Duration::from_secs(1);
-    let mut platform_refresh = Instant::now() - Duration::from_secs(30);
-    let mut usb_poll = Instant::now();
+    let player_publish = Instant::now() - Duration::from_secs(1);
+    let platform_refresh = Instant::now() - Duration::from_secs(30);
+    let usb_poll = Instant::now();
     // Automatic time zone (Beta 7.1): one lookup per Wi-Fi network, in the
     // background; a failed one is tried again after ten minutes.
     let (zone_tx, zone_rx) = std::sync::mpsc::channel::<(String, Result<String, String>)>();
-    let mut zone_found_on: Option<String> = None;
-    let mut zone_tried: Option<Instant> = None;
-    let mut zone_in_flight = false;
-    let mut download_poll = Instant::now();
-    let mut last_platform_screen = rt.model.screen;
-    let mut codec_reconnect = CodecReconnect::default();
-    let mut auto_output = AutoOutput::default();
+    let zone_found_on: Option<String> = None;
+    let zone_tried: Option<Instant> = None;
+    let zone_in_flight = false;
+    let download_poll = Instant::now();
+    let last_platform_screen = rt.model.screen;
+    let codec_reconnect = CodecReconnect::default();
+    let auto_output = AutoOutput::default();
+    let mut main_loop = MainLoop {
+        log,
+        process_started,
+        performance,
+        server,
+        diagnostics,
+        inputs,
+        jack,
+        motor,
+        player,
+        observation_requests,
+        observations,
+        last_snapshot,
+        dark_quiet,
+        zone_tx,
+        zone_rx,
+        first_frame_presented,
+        first_interactive_presented,
+        initial_library_ready,
+        initial_platform_ready,
+        seek_ticked,
+        workload_tick,
+        observed,
+        snapshot_taken,
+        snapshot_quiet,
+        was_dark,
+        periodic,
+        checkpoint,
+        render_time,
+        monitor,
+        action_router,
+        input_screen_off,
+        last_sd,
+        usb_refresh,
+        observation_pending,
+        xrun_bundle,
+        shutdown_intent,
+        power_poll,
+        player_publish,
+        platform_refresh,
+        usb_poll,
+        zone_found_on,
+        zone_tried,
+        zone_in_flight,
+        download_poll,
+        last_platform_screen,
+        codec_reconnect,
+        auto_output,
+    };
     while !reborn_platform::stop_requested() {
+        if main_loop.pass(&mut rt).is_break() {
+            break;
+        }
+    }
+    let MainLoop {
+        log,
+        shutdown_intent,
+        ..
+    } = main_loop;
+    // Platform shutdown contract: present the transition, save state, close
+    // audio and the database, end on a dark frame with the backlight off,
+    // then acknowledge. The platform's own deadline bounds all of this; it
+    // proceeds without us if Reborn hangs or crashes.
+    let mut farewell = shutdown_intent.as_ref().and_then(|intent| {
+        rt.model.platform.shutting_down = Some(intent.clone());
+        rt.model.navigation.modal = None;
+        let last = rt.ui.draw(&rt.model, &rt.model.library.tracks, rt.art);
+        let closing = reborn_ui::closing_label(intent.restart, intent.low_battery);
+        let plan = reborn_ui::shutdown_plan(intent.low_battery);
+        rt.graphics.take().map(|g| (g, last, closing, plan))
+    });
+    // The UI dissolves into the shutdown screen, which says "Saving" while the
+    // real save below runs; its status then becomes the closing label.
+    if let Some((g, last, closing, plan)) = farewell.as_mut() {
+        for frame in 0..plan.close_frame {
+            let started = Instant::now();
+            let _ = g.render(&reborn_ui::shutdown_frame(last, frame, closing, *plan));
+            thread::sleep(Duration::from_millis(34).saturating_sub(started.elapsed()));
+        }
+    }
+    rt.model.invalidate();
+    let mut shutdown_ready = true;
+    if let Err(e) = rt.playback.shutdown(rt.model.generation) {
+        shutdown_ready = false;
+        log.emit(
+            Level::Error,
+            "audio",
+            "shutdown_failed",
+            &e,
+            None,
+            json!({}),
+        );
+    }
+    rt.model.playback = PlaybackState::Paused;
+    rt.pending_reconfiguration = None;
+    rt.checkpoint();
+    shutdown_ready &= !rt.dirty.persistence;
+    rt.scanner.stop();
+    if let Err(error) = rt.db.shutdown(Duration::from_secs(2)) {
+        shutdown_ready = false;
+        log.emit(
+            Level::Error,
+            "database",
+            "shutdown_failed",
+            &error,
+            None,
+            json!({}),
+        );
+    }
+    if let Some((g, last, closing, plan)) = farewell.as_mut() {
+        for frame in plan.close_frame..plan.frames {
+            let started = Instant::now();
+            let _ = g.render(&reborn_ui::shutdown_frame(last, frame, closing, *plan));
+            thread::sleep(Duration::from_millis(34).saturating_sub(started.elapsed()));
+        }
+        // Final dark frame first, then the backlight: the panel never shows a
+        // white, stale or console framebuffer while it is lit. One refresh
+        // lets the black frame reach the panel before its light goes out.
+        let _ = g.render(&reborn_ui::black_frame());
+        thread::sleep(Duration::from_millis(34));
+        if let Err(error) = power::blank(true) {
+            log.emit(
+                Level::Warn,
+                "power",
+                "backlight_off_failed",
+                &error,
+                None,
+                json!({}),
+            );
+        }
+        // The screen is off for good: the DAC need not wait for it.
+        hold_dac(&log, false);
+        log.emit(
+            Level::Info,
+            "power",
+            "shutdown_presented",
+            "Shutdown transition presented",
+            None,
+            json!({"frames":farewell.as_ref().map_or(0, |f| f.3.frames) + 1}),
+        );
+    }
+    if let Some(intent) = &shutdown_intent {
+        if let Err(error) = power::acknowledge_shutdown(&intent.id, shutdown_ready) {
+            log.emit(Level::Warn, "power", "ack_failed", &error, None, json!({}));
+        }
+    }
+    // Keep the DRM device (and its dark frame) open until the process exits;
+    // the platform powers the panel down after the acknowledgement.
+    let _keep_scanout = farewell;
+    if let Some(w) = rt.wifi {
+        let _ = w.commands.try_send(wifi::Command::Stop);
+    }
+    if let Some(b) = rt.bluetooth {
+        let _ = b.commands.try_send(bluetooth::Command::Stop);
+    }
+    let _ = fs::remove_file(socket);
+    log.emit(
+        Level::Info,
+        "core",
+        "shutdown",
+        "Reborn stopped",
+        None,
+        json!({}),
+    );
+    Ok(())
+}
+
+/// What the main loop keeps from one pass to the next besides the runtime: the devices and
+/// workers only it reads, its channels, timers and flags.
+pub(crate) struct MainLoop {
+    log: Observer,
+    process_started: Instant,
+    performance: performance::Trace,
+    server: reborn_control::Server,
+    diagnostics: diagnostics::Diagnostics,
+    inputs: Option<input::InputManager>,
+    jack: Option<reborn_platform::jack::Jack>,
+    motor: Option<reborn_platform::haptics::Motor>,
+    player: Option<avrcp::Player>,
+    observation_requests: SyncSender<background::Request>,
+    observations: std::sync::mpsc::Receiver<Observation>,
+    last_snapshot: Arc<Mutex<Value>>,
+    dark_quiet: Arc<std::sync::atomic::AtomicBool>,
+    zone_tx: std::sync::mpsc::Sender<(String, Result<String, String>)>,
+    zone_rx: std::sync::mpsc::Receiver<(String, Result<String, String>)>,
+    first_frame_presented: bool,
+    first_interactive_presented: bool,
+    initial_library_ready: bool,
+    initial_platform_ready: bool,
+    seek_ticked: Option<Instant>,
+    workload_tick: Instant,
+    observed: Instant,
+    snapshot_taken: Instant,
+    snapshot_quiet: bool,
+    was_dark: bool,
+    periodic: Instant,
+    checkpoint: Instant,
+    render_time: Instant,
+    monitor: Option<(Instant, SyncSender<Response>, u64, Vec<Value>)>,
+    action_router: input::ActionRouter,
+    input_screen_off: bool,
+    last_sd: bool,
+    usb_refresh: storage::TransferRefresh,
+    observation_pending: Option<background::Request>,
+    xrun_bundle: f64,
+    shutdown_intent: Option<reborn_core::platform::ShutdownIntent>,
+    power_poll: Instant,
+    player_publish: Instant,
+    platform_refresh: Instant,
+    usb_poll: Instant,
+    zone_found_on: Option<String>,
+    zone_tried: Option<Instant>,
+    zone_in_flight: bool,
+    download_poll: Instant,
+    last_platform_screen: Screen,
+    codec_reconnect: CodecReconnect,
+    auto_output: AutoOutput,
+}
+
+impl MainLoop {
+    /// One pass of the main loop; `Break` when the platform asked to shut down.
+    fn pass(&mut self, rt: &mut Runtime) -> ControlFlow<()> {
         // Drain before inspecting any producer queue: a later event keeps the
         // descriptor readable until the next loop and cannot be lost in wait.
-        server.drain_wake();
+        self.server.drain_wake();
         if rt.background.update(
             &rt.model.settings.music_directory,
             &rt.model.sources,
             rt.sleep_prepared,
         ) {
-            observation_pending = None;
+            self.observation_pending = None;
         }
         rt.receive_chapters();
         rt.sleep_timer_tick();
@@ -535,8 +757,8 @@ pub(crate) fn run() -> Result<(), String> {
                 let Some(reply) = worker.try_reply() else {
                     break;
                 };
-                if performance.enabled() {
-                    performance.record("artwork", json!({"decode_ms":reply.decode_ms,"cache_hit":reply.cache_hit,"pixels":reply.rgba.as_ref().map(Vec::len)}));
+                if self.performance.enabled() {
+                    self.performance.record("artwork", json!({"decode_ms":reply.decode_ms,"cache_hit":reply.cache_hit,"pixels":reply.rgba.as_ref().map(Vec::len)}));
                 }
                 if reply.full && rt.radio_art == Some(reply.thumb) {
                     // The station's logo as Now Playing's picture and colour.
@@ -690,8 +912,8 @@ pub(crate) fn run() -> Result<(), String> {
         // (once a second with the screen off): the computer screen appears
         // within half a second instead of with the next Settings refresh.
         let usb_every = Duration::from_millis(if rt.model.screen_off { 1000 } else { 500 });
-        if usb_poll.elapsed() >= usb_every {
-            usb_poll = Instant::now();
+        if self.usb_poll.elapsed() >= usb_every {
+            self.usb_poll = Instant::now();
             let usb = client::usb_now();
             let was = rt.model.platform.snapshot.usb;
             if usb != was && usb != reborn_core::platform::UsbTransfer::Unknown {
@@ -707,18 +929,20 @@ pub(crate) fn run() -> Result<(), String> {
             }
         }
         if std::mem::take(&mut rt.zone_lookup_again) {
-            zone_found_on = None;
-            zone_tried = None;
+            self.zone_found_on = None;
+            self.zone_tried = None;
         }
         if let WifiStatus::Connected(network) = &rt.ui.wifi.status {
             if rt.model.settings.zone_auto()
-                && !zone_in_flight
-                && zone_found_on.as_ref() != Some(network)
-                && zone_tried.is_none_or(|t| t.elapsed() >= Duration::from_secs(600))
+                && !self.zone_in_flight
+                && self.zone_found_on.as_ref() != Some(network)
+                && self
+                    .zone_tried
+                    .is_none_or(|t| t.elapsed() >= Duration::from_secs(600))
             {
-                zone_in_flight = true;
-                zone_tried = Some(Instant::now());
-                let (tx, network) = (zone_tx.clone(), network.clone());
+                self.zone_in_flight = true;
+                self.zone_tried = Some(Instant::now());
+                let (tx, network) = (self.zone_tx.clone(), network.clone());
                 let _ = thread::Builder::new()
                     .name("time-zone".into())
                     .spawn(move || {
@@ -726,13 +950,13 @@ pub(crate) fn run() -> Result<(), String> {
                     });
             }
         }
-        if let Ok((network, result)) = zone_rx.try_recv() {
-            zone_in_flight = false;
+        if let Ok((network, result)) = self.zone_rx.try_recv() {
+            self.zone_in_flight = false;
             match result {
                 Ok(zone) => {
-                    zone_found_on = Some(network);
+                    self.zone_found_on = Some(network);
                     if rt.model.settings.zone_auto() && zone != rt.model.settings.time_zone {
-                        log.emit(
+                        self.log.emit(
                             Level::Info,
                             "clock",
                             "zone_found",
@@ -745,7 +969,7 @@ pub(crate) fn run() -> Result<(), String> {
                         rt.dirty.mark_render();
                     }
                 }
-                Err(error) => log.emit(
+                Err(error) => self.log.emit(
                     Level::Warn,
                     "clock",
                     "zone_lookup_failed",
@@ -756,15 +980,15 @@ pub(crate) fn run() -> Result<(), String> {
             }
         }
         rt.poll_platform();
-        if rt.platform_observed && !initial_platform_ready {
-            initial_platform_ready = true;
-            log.emit(
+        if rt.platform_observed && !self.initial_platform_ready {
+            self.initial_platform_ready = true;
+            self.log.emit(
                 Level::Info,
                 "startup",
                 "platform_ready",
                 "First platform snapshot published",
                 None,
-                json!({"elapsed_ms":process_started.elapsed().as_millis()}),
+                json!({"elapsed_ms":self.process_started.elapsed().as_millis()}),
             );
         }
         rt.ask_about_reports();
@@ -776,10 +1000,11 @@ pub(crate) fn run() -> Result<(), String> {
             && !rt.platform_refresh_pending
             && rt.model.platform.busy.is_none()
             && (platform_backed(rt.model.screen)
-                || (!rt.platform_observed && process_started.elapsed() >= Duration::from_secs(20)))
-            && (rt.model.screen != last_platform_screen
-                || platform_refresh.elapsed() >= platform_refresh_interval(rt.model.screen))
-            && platform_refresh.elapsed() >= Duration::from_secs(2)
+                || (!rt.platform_observed
+                    && self.process_started.elapsed() >= Duration::from_secs(20)))
+            && (rt.model.screen != self.last_platform_screen
+                || self.platform_refresh.elapsed() >= platform_refresh_interval(rt.model.screen))
+            && self.platform_refresh.elapsed() >= Duration::from_secs(2)
         {
             if let Some(worker) = &rt.platform {
                 if worker
@@ -788,20 +1013,20 @@ pub(crate) fn run() -> Result<(), String> {
                     .is_ok()
                 {
                     rt.platform_refresh_pending = true;
-                    platform_refresh = Instant::now();
+                    self.platform_refresh = Instant::now();
                 }
             }
         }
-        last_platform_screen = rt.model.screen;
+        self.last_platform_screen = rt.model.screen;
         // The download task answers only when it is finished: show its live
         // progress from the platform's RAM file meanwhile (OTA-48).
         if (rt.model.platform.busy == Some(reborn_core::PlatformTask::UpdateStage)
             || rt.model.platform.snapshot.update.phase
                 == reborn_core::platform::UpdatePhase::Downloading)
             && !rt.model.screen_off
-            && download_poll.elapsed() >= Duration::from_millis(200)
+            && self.download_poll.elapsed() >= Duration::from_millis(200)
         {
-            download_poll = Instant::now();
+            self.download_poll = Instant::now();
             let live = client::download_progress();
             if live != rt.model.platform.download {
                 rt.model.platform.download = live;
@@ -814,16 +1039,16 @@ pub(crate) fn run() -> Result<(), String> {
             rt.model.platform.busy,
             Some(reborn_core::PlatformTask::ReportSend | reborn_core::PlatformTask::ReportSave(_))
         ) && !rt.model.screen_off
-            && download_poll.elapsed() >= Duration::from_millis(200)
+            && self.download_poll.elapsed() >= Duration::from_millis(200)
         {
-            download_poll = Instant::now();
+            self.download_poll = Instant::now();
             let live = client::report_progress();
             if live != rt.model.platform.report {
                 rt.model.platform.report = live;
                 rt.dirty.mark_render();
             }
         }
-        if let Some(player) = &player {
+        if let Some(player) = &self.player {
             for request in player.actions.try_iter().take(8) {
                 if let Some(action) = request.semantic(&rt.model) {
                     let effect = rt.ui.model_action(&mut rt.model, action);
@@ -832,27 +1057,27 @@ pub(crate) fn run() -> Result<(), String> {
                     }
                 }
             }
-            if player_publish.elapsed() >= Duration::from_millis(250) {
+            if self.player_publish.elapsed() >= Duration::from_millis(250) {
                 player.publish(&rt.model);
-                player_publish = Instant::now();
+                self.player_publish = Instant::now();
             }
         }
-        if !headless && power_poll.elapsed() >= Duration::from_millis(250) {
-            power_poll = Instant::now();
-            shutdown_intent = power::shutdown_intent();
-            if shutdown_intent.is_some() {
-                break;
+        if !rt.headless && self.power_poll.elapsed() >= Duration::from_millis(250) {
+            self.power_poll = Instant::now();
+            self.shutdown_intent = power::shutdown_intent();
+            if self.shutdown_intent.is_some() {
+                return ControlFlow::Break(());
             }
         }
         rt.wifi_idle_tick();
-        log.heartbeat("ui", 10);
+        self.log.heartbeat("ui", 10);
         if rt.ui.observe(&rt.model) | rt.ui.expire_notice() | rt.ui.animating() {
             rt.dirty.mark_render();
         }
         // #28: a computer connecting ticks with its message (it lights the
         // screen); never in the dark.
         if rt.ui.take_connect_tick() && !rt.model.screen_off {
-            haptic_tick(&mut motor, rt.model.settings.haptics, &log);
+            haptic_tick(&mut self.motor, rt.model.settings.haptics, &self.log);
         }
         // A glide continues after the last wheel detent; keep the short
         // interactive CPU lease alive until it rests. The playing wave keeps
@@ -877,12 +1102,16 @@ pub(crate) fn run() -> Result<(), String> {
             rt.interaction_hints.clear();
         }
         if std::mem::take(&mut rt.input_resume) {
-            if let Some(input) = &mut inputs {
+            if let Some(input) = &mut self.inputs {
                 input.resumed();
             }
-            action_router.reset();
+            self.action_router.reset();
         }
-        if let Some(plugged) = jack.as_mut().and_then(reborn_platform::jack::Jack::poll) {
+        if let Some(plugged) = self
+            .jack
+            .as_mut()
+            .and_then(reborn_platform::jack::Jack::poll)
+        {
             rt.jack_pending = Some(plugged);
         }
         // As a user action: the reconfiguration it starts is polled to its
@@ -895,12 +1124,12 @@ pub(crate) fn run() -> Result<(), String> {
                 }
             }
         }
-        if let Some(input) = &mut inputs {
-            if input_screen_off != rt.model.screen_off {
+        if let Some(input) = &mut self.inputs {
+            if self.input_screen_off != rt.model.screen_off {
                 input.reset_wheel();
-                input_screen_off = rt.model.screen_off;
+                self.input_screen_off = rt.model.screen_off;
             }
-            action_router.begin_batch();
+            self.action_router.begin_batch();
             for event in input.poll() {
                 // The first frame is revealed under the boot cover; input only
                 // counts once the finished UI is fully visible.
@@ -910,7 +1139,7 @@ pub(crate) fn run() -> Result<(), String> {
                 if !rt.model.screen_off {
                     rt.interaction_hints.interactive();
                 }
-                log.emit(
+                self.log.emit(
                     Level::Debug,
                     "input",
                     "normalized_event",
@@ -920,24 +1149,25 @@ pub(crate) fn run() -> Result<(), String> {
                 );
                 // Per event: an action earlier in this batch may have opened
                 // or closed the keyboard.
-                action_router.set_keyboard(rt.ui.keyboard.is_some());
-                action_router.set_keyboard_wheel(
+                self.action_router.set_keyboard(rt.ui.keyboard.is_some());
+                self.action_router.set_keyboard_wheel(
                     rt.ui
                         .keyboard
                         .as_ref()
                         .is_some_and(reborn_ui::keyboard::Keyboard::live),
                 );
-                action_router.set_screen_off_buttons(rt.model.settings.screen_off_buttons);
+                self.action_router
+                    .set_screen_off_buttons(rt.model.settings.screen_off_buttons);
                 let lit = !rt.model.screen_off;
                 let seek_run = rt.seek_run;
-                let actions = action_router.route(&event, !rt.model.screen_off);
+                let actions = self.action_router.route(&event, !rt.model.screen_off);
                 for &action in &actions {
                     let action_started = Instant::now();
-                    if performance.enabled() {
-                        performance.record("input", json!({"action":action,"screen":rt.model.screen,"focus":rt.model.navigation.focus,"kernel_mono_us":event.kernel_mono_us}));
+                    if self.performance.enabled() {
+                        self.performance.record("input", json!({"action":action,"screen":rt.model.screen,"focus":rt.model.navigation.focus,"kernel_mono_us":event.kernel_mono_us}));
                     }
 
-                    log.emit(
+                    self.log.emit(
                         Level::Debug,
                         "input",
                         "action",
@@ -952,12 +1182,12 @@ pub(crate) fn run() -> Result<(), String> {
                     if let Err(e) = rt.effect(effect) {
                         rt.fail("ui", e)
                     }
-                    log.gauge(
+                    self.log.gauge(
                         "ui_action_ms",
                         action_started.elapsed().as_secs_f64() * 1000.,
                     );
-                    if performance.enabled() {
-                        performance.record("state", json!({"action":action,"screen":rt.model.screen,"focus":rt.model.navigation.focus,"action_ms":action_started.elapsed().as_secs_f64()*1000.,"playback":rt.model.playback,"volume":rt.model.settings.volume}));
+                    if self.performance.enabled() {
+                        self.performance.record("state", json!({"action":action,"screen":rt.model.screen,"focus":rt.model.navigation.focus,"action_ms":action_started.elapsed().as_secs_f64()*1000.,"playback":rt.model.playback,"volume":rt.model.settings.volume}));
                     }
                 }
                 // #28: as stock, one tick per button press on a lit screen
@@ -968,38 +1198,40 @@ pub(crate) fn run() -> Result<(), String> {
                 // setting is read after the action, so choosing a strength
                 // ticks at it.
                 let seeked = rt.seek_run != seek_run
-                    && seek_ticked.is_none_or(|at| at.elapsed() >= SEEK_TICK_GAP);
+                    && self
+                        .seek_ticked
+                        .is_none_or(|at| at.elapsed() >= SEEK_TICK_GAP);
                 if input_ticks(lit, event.input, &actions, seeked) {
                     if seeked {
-                        seek_ticked = Some(Instant::now());
+                        self.seek_ticked = Some(Instant::now());
                     }
-                    haptic_tick(&mut motor, rt.model.settings.haptics, &log);
+                    haptic_tick(&mut self.motor, rt.model.settings.haptics, &self.log);
                 }
-                if let Some((_, _, _, events)) = &mut monitor {
+                if let Some((_, _, _, events)) = &mut self.monitor {
                     if events.len() < 512 {
                         events.push(json!({"device":event.device,"normalized":event.input,
-                            "kernel_mono_us":event.kernel_mono_us,"actions":actions,
-                            "state_applied_mono_us":input::monotonic_us(),
-                            "screen":rt.model.screen,"screen_off":rt.model.screen_off,
-                            "focus":rt.model.navigation.focus,"scroll":rt.model.navigation.scroll,
-                            "modal_focus":rt.model.navigation.modal_focus,"volume":rt.model.settings.volume,
-                            "pending_frame":!actions.is_empty() && !rt.model.screen_off && rt.dirty.render,
-                            "present_return_mono_us":null}));
+                                "kernel_mono_us":event.kernel_mono_us,"actions":actions,
+                                "state_applied_mono_us":input::monotonic_us(),
+                                "screen":rt.model.screen,"screen_off":rt.model.screen_off,
+                                "focus":rt.model.navigation.focus,"scroll":rt.model.navigation.scroll,
+                                "modal_focus":rt.model.navigation.modal_focus,"volume":rt.model.settings.volume,
+                                "pending_frame":!actions.is_empty() && !rt.model.screen_off && rt.dirty.render,
+                                "present_return_mono_us":null}));
                     }
                 }
-                if input_screen_off != rt.model.screen_off {
+                if self.input_screen_off != rt.model.screen_off {
                     input.reset_wheel();
-                    input_screen_off = rt.model.screen_off;
+                    self.input_screen_off = rt.model.screen_off;
                 }
             }
         }
-        if monitor.as_ref().is_some_and(|m| Instant::now() > m.0) {
-            let (_, reply, id, events) = monitor.take().unwrap();
+        if self.monitor.as_ref().is_some_and(|m| Instant::now() > m.0) {
+            let (_, reply, id, events) = self.monitor.take().unwrap();
             let _ = reply.try_send(Response::ok(
                 id,
                 json!({"events":events,"count":events.len(),
-                    "raw":inputs.as_mut().and_then(input::InputManager::finish_capture),
-                    "clock":"CLOCK_MONOTONIC","frame_boundary":"renderer present returned"}),
+                        "raw":self.inputs.as_mut().and_then(input::InputManager::finish_capture),
+                        "clock":"CLOCK_MONOTONIC","frame_boundary":"renderer present returned"}),
             ));
         }
         while let Ok(e) = rt.playback.events.try_recv() {
@@ -1082,7 +1314,9 @@ pub(crate) fn run() -> Result<(), String> {
                     if error {
                         rt.model.invalidate();
                         rt.playback.stop(rt.model.generation);
-                        let _ = log.diagnostic(&root.join("diagnostics"), rt.snapshot(), true);
+                        let _ =
+                            self.log
+                                .diagnostic(&rt.root.join("diagnostics"), rt.snapshot(), true);
                     }
                     if ended {
                         if let Err(e) = rt.finish_track() {
@@ -1133,12 +1367,14 @@ pub(crate) fn run() -> Result<(), String> {
                         stats.failures
                     );
                     rt.model.apply(Event::LibraryScanFailed(error.clone()));
-                    log.health_set("scanner", HealthState::Degraded, true, &error);
+                    self.log
+                        .health_set("scanner", HealthState::Degraded, true, &error);
                     rt.fail("scanner", error);
                 }
                 Err(e) => {
                     rt.model.apply(Event::LibraryScanFailed(e.clone()));
-                    log.health_set("scanner", HealthState::Failed, true, &e);
+                    self.log
+                        .health_set("scanner", HealthState::Failed, true, &e);
                     rt.fail("scanner", e);
                 }
             }
@@ -1182,9 +1418,9 @@ pub(crate) fn run() -> Result<(), String> {
                                 rt.fail("playlists", e);
                             }
                         }
-                        if !initial_library_ready {
-                            initial_library_ready = true;
-                            log.emit(Level::Info, "startup", "library_ready", "Initial library published", None, json!({"elapsed_ms":process_started.elapsed().as_millis(),"tracks":rt.model.library.tracks.len()}));
+                        if !self.initial_library_ready {
+                            self.initial_library_ready = true;
+                            self.log.emit(Level::Info, "startup", "library_ready", "Initial library published", None, json!({"elapsed_ms":self.process_started.elapsed().as_millis(),"tracks":rt.model.library.tracks.len()}));
                         }
                         rt.ui.invalidate_catalog();
                         if let Some(worker) = &mut rt.thumbs {
@@ -1234,7 +1470,7 @@ pub(crate) fn run() -> Result<(), String> {
         let mut bt_lost = false;
         if let Some(service) = &rt.bluetooth {
             while let Ok(s) = service.events.try_recv() {
-                if let Some(address) = codec_reconnect.next(
+                if let Some(address) = self.codec_reconnect.next(
                     &s,
                     rt.model.playback,
                     rt.pending_reconfiguration.is_some(),
@@ -1247,7 +1483,7 @@ pub(crate) fn run() -> Result<(), String> {
                         })
                         .is_ok()
                     {
-                        codec_reconnect.sent(address);
+                        self.codec_reconnect.sent(address);
                     }
                 }
                 // Several snapshots can arrive in one tick (after a wake, or a
@@ -1297,7 +1533,7 @@ pub(crate) fn run() -> Result<(), String> {
         }
         rt.sync_bt_volume();
         if rt.pending_reconfiguration.is_none() {
-            if let Some(address) = auto_output.next(&rt.bt_state, &rt.model.output) {
+            if let Some(address) = self.auto_output.next(&rt.bt_state, &rt.model.output) {
                 let name = rt
                     .bt_state
                     .devices
@@ -1307,13 +1543,13 @@ pub(crate) fn run() -> Result<(), String> {
                     .filter(|name| !name.is_empty())
                     .unwrap_or_else(|| "Bluetooth headphones".into());
                 // One attempt per connection, also when it fails: no retry loop.
-                auto_output.routed(address.clone());
+                self.auto_output.routed(address.clone());
                 match rt
                     .with_model_action(|runtime| runtime.switch(AudioOutput::Bluetooth(address)))
                 {
                     Ok(()) => {
                         rt.ui.flash(format!("Audio switched to {name}"));
-                        log.emit(
+                        self.log.emit(
                             Level::Info,
                             "audio",
                             "output_automatic",
@@ -1323,7 +1559,7 @@ pub(crate) fn run() -> Result<(), String> {
                         );
                     }
                     Err(error) => {
-                        log.emit(
+                        self.log.emit(
                             Level::Warn,
                             "audio",
                             "output_automatic_failed",
@@ -1366,7 +1602,7 @@ pub(crate) fn run() -> Result<(), String> {
                 rt.dirty.mark_render();
             }
         }
-        while let Ok(env) = server.requests.try_recv() {
+        while let Ok(env) = self.server.requests.try_recv() {
             let req = env.request;
             let id = req.id;
             let reply = env.reply;
@@ -1381,22 +1617,24 @@ pub(crate) fn run() -> Result<(), String> {
                 Command::Audio => Ok(
                     json!({"audio":rt.playback.audio_state(),"ffmpeg":reborn_media::runtime_components_if_loaded()}),
                 ),
-                Command::Health => Ok(log.health()),
-                Command::Metrics => Ok(log.metrics()),
+                Command::Health => Ok(self.log.health()),
+                Command::Metrics => Ok(self.log.metrics()),
                 Command::Snapshot => Ok(rt.snapshot()),
-                Command::Events { last } => Ok(json!(log.events(last, None, None, None))),
+                Command::Events { last } => Ok(json!(self.log.events(last, None, None, None))),
                 Command::Logs {
                     last,
                     subsystem,
                     level,
                     since_ms,
-                } => Ok(json!(log.events(
+                } => Ok(json!(self.log.events(
                     last,
                     subsystem.as_deref(),
                     level,
                     since_ms
                 ))),
-                Command::LogLevel { subsystem, level } => log.level(subsystem.as_deref(), level),
+                Command::LogLevel { subsystem, level } => {
+                    self.log.level(subsystem.as_deref(), level)
+                }
                 Command::Tests => Ok(
                     json!({"tests":reborn_control::TESTS.iter().map(|(n,a)|json!({"name":n,"audible":a,"bounded":true})).collect::<Vec<_>>()}),
                 ),
@@ -1475,8 +1713,8 @@ pub(crate) fn run() -> Result<(), String> {
                         rt.jack_pending = plugged;
                     }
                     Ok(json!({"headphones":rt.headphones,"pending":rt.jack_pending,
-                        "speaker_active":rt.model.speaker_active,"speaker":rt.model.settings.speaker,
-                        "playback":rt.model.playback,"output":rt.model.output}))
+                            "speaker_active":rt.model.speaker_active,"speaker":rt.model.settings.speaker,
+                            "playback":rt.model.playback,"output":rt.model.output}))
                 }
                 Command::Action { action } => {
                     // As the router would hand it over (device tests).
@@ -1484,12 +1722,12 @@ pub(crate) fn run() -> Result<(), String> {
                     let effect = rt.ui.model_action(&mut rt.model, action);
                     rt.dirty.mark_render();
                     rt.effect(effect).map(|_| {
-                        json!({"screen":rt.model.screen,"focus":rt.model.navigation.focus,
-                            "modal":rt.model.navigation.modal.is_some(),
-                            "modal_focus":rt.model.navigation.modal_focus,
-                            "queue_position":rt.model.queue_position,"queue":rt.model.queue.len(),
-                            "queued":rt.model.queued_count(),"notice":rt.ui.notice})
-                    })
+                            json!({"screen":rt.model.screen,"focus":rt.model.navigation.focus,
+                                "modal":rt.model.navigation.modal.is_some(),
+                                "modal_focus":rt.model.navigation.modal_focus,
+                                "queue_position":rt.model.queue_position,"queue":rt.model.queue.len(),
+                                "queued":rt.model.queued_count(),"notice":rt.ui.notice})
+                        })
                 }
                 Command::Theme { id } => {
                     let applied = match id {
@@ -1497,20 +1735,20 @@ pub(crate) fn run() -> Result<(), String> {
                         None => rt.effect(Effect::ScanThemes),
                     };
                     applied.map(|_| {
-                        json!({"theme":rt.model.settings.theme,
-                            "active":rt.ui.skin.as_ref().map(|s| json!({"id":s.id,"name":s.name,"layouts":s.layout_names(),"warnings":s.warnings,"atlas":[s.atlas_width,s.atlas_height]})),
-                            "notice":rt.ui.notice,
-                            "installed":rt.ui.themes.iter().map(|t| json!({"id":t.id,"name":t.name,"author":t.author,"version":t.version,"dir":t.dir,"problem":t.problem})).collect::<Vec<_>>()})
-                    })
+                            json!({"theme":rt.model.settings.theme,
+                                "active":rt.ui.skin.as_ref().map(|s| json!({"id":s.id,"name":s.name,"layouts":s.layout_names(),"warnings":s.warnings,"atlas":[s.atlas_width,s.atlas_height]})),
+                                "notice":rt.ui.notice,
+                                "installed":rt.ui.themes.iter().map(|t| json!({"id":t.id,"name":t.name,"author":t.author,"version":t.version,"dir":t.dir,"problem":t.problem})).collect::<Vec<_>>()})
+                        })
                 }
                 Command::InputMonitor { seconds } => {
-                    if monitor.is_some() {
+                    if self.monitor.is_some() {
                         Err("input monitor busy".into())
                     } else {
-                        if let Some(input) = &mut inputs {
+                        if let Some(input) = &mut self.inputs {
                             input.begin_capture();
                         }
-                        monitor = Some((
+                        self.monitor = Some((
                             Instant::now() + Duration::from_secs(seconds),
                             reply,
                             id,
@@ -1551,7 +1789,7 @@ pub(crate) fn run() -> Result<(), String> {
                             PlaybackState::Playing | PlaybackState::Buffering
                         ),
                     };
-                    if diagnostics.sender.try_send(job).is_err() {
+                    if self.diagnostics.sender.try_send(job).is_err() {
                         Err("diagnostic worker busy".into())
                     } else {
                         continue;
@@ -1564,8 +1802,8 @@ pub(crate) fn run() -> Result<(), String> {
             };
             let _ = reply.try_send(response);
         }
-        if workload_tick.elapsed() >= Duration::from_secs(1) {
-            workload_tick = Instant::now();
+        if self.workload_tick.elapsed() >= Duration::from_secs(1) {
+            self.workload_tick = Instant::now();
             rt.playback_hints
                 .publish(reborn_platform::workload::playback_class(
                     matches!(
@@ -1581,25 +1819,25 @@ pub(crate) fn run() -> Result<(), String> {
             &rt.model.sources,
             rt.sleep_prepared,
         ) {
-            observation_pending = None;
+            self.observation_pending = None;
         }
-        if let Ok(observation) = observations.try_recv().and_then(|o| {
+        if let Ok(observation) = self.observations.try_recv().and_then(|o| {
             if rt.background.accepts(&o.request) {
                 Ok(o)
             } else {
                 Err(std::sync::mpsc::TryRecvError::Empty)
             }
         }) {
-            observation_pending = None;
-            if performance.enabled() {
-                performance.record(
+            self.observation_pending = None;
+            if self.performance.enabled() {
+                self.performance.record(
                     "background_observation",
                     json!({"elapsed_ms":observation.elapsed_ms}),
                 );
             }
             let next_power = observation.power;
             if next_power["supplies"] != rt.power["supplies"] {
-                log.emit(
+                self.log.emit(
                     Level::Debug,
                     "power",
                     "supply_changed",
@@ -1614,23 +1852,23 @@ pub(crate) fn run() -> Result<(), String> {
                 .media
                 .filter(|_| observation.request.music == rt.model.settings.music_directory)
             {
-                if sd && !last_sd && !storage::platform_manages_media() {
+                if sd && !self.last_sd && !storage::platform_manages_media() {
                     let _ = storage::mount_sd();
                 }
-                if !sd && last_sd {
+                if !sd && self.last_sd {
                     rt.pause();
                     if !storage::platform_manages_media() {
                         let _ = storage::unmount_sd();
                     }
                 }
-                last_sd = sd;
+                self.last_sd = sd;
                 if sources != rt.model.sources {
                     rt.abandon_pending_reconfiguration();
                     let old = rt.model.sources.clone();
                     for s in &sources {
                         if !old.iter().any(|v| v.id == s.id) {
-                            log.add("sd_insertions", 1.);
-                            log.emit(
+                            self.log.add("sd_insertions", 1.);
+                            self.log.emit(
                                 Level::Info,
                                 "storage",
                                 "source_inserted",
@@ -1645,8 +1883,8 @@ pub(crate) fn run() -> Result<(), String> {
                             if matches!(s.kind, reborn_core::MediaSource::SdCard(_)) {
                                 rt.ui.flash("SD card removed");
                             }
-                            log.add("sd_removals", 1.);
-                            log.emit(
+                            self.log.add("sd_removals", 1.);
+                            self.log.emit(
                                 Level::Info,
                                 "storage",
                                 "source_removed",
@@ -1679,15 +1917,15 @@ pub(crate) fn run() -> Result<(), String> {
                 }
                 let (generation, copying) = storage::usb_changes();
                 let now = Instant::now();
-                usb_refresh.observe(generation, copying, now);
-                if usb_refresh.ready(
+                self.usb_refresh.observe(generation, copying, now);
+                if self.usb_refresh.ready(
                     rt.model.library.scanning,
                     !rt.model.sources.is_empty(),
                     rt.sleep_prepared,
                     now,
                 ) && rt.scanner.scan(rt.model.sources.clone()).is_ok()
                 {
-                    usb_refresh.requested();
+                    self.usb_refresh.requested();
                     rt.model.apply(Event::LibraryScanStarted);
                     rt.dirty.mark_render();
                 }
@@ -1695,21 +1933,21 @@ pub(crate) fn run() -> Result<(), String> {
         }
         // The screen just lit: battery and media are observed now, not
         // with the next periodic block (they were read seldom in the dark).
-        let woke = was_dark && !rt.model.screen_off;
-        was_dark = rt.model.screen_off;
-        if woke && observation_pending.is_none() {
-            rt.background.refresh_pending(&mut observation_pending);
+        let woke = self.was_dark && !rt.model.screen_off;
+        self.was_dark = rt.model.screen_off;
+        if woke && self.observation_pending.is_none() {
+            rt.background.refresh_pending(&mut self.observation_pending);
             if request_observation(
                 &rt.background,
-                &observation_requests,
-                &mut observation_pending,
+                &self.observation_requests,
+                &mut self.observation_pending,
             ) {
-                observed = Instant::now();
+                self.observed = Instant::now();
             }
         }
-        if periodic.elapsed() > PERIODIC_EVERY {
-            rt.loud_listening_tick(periodic.elapsed());
-            periodic = Instant::now();
+        if self.periodic.elapsed() > PERIODIC_EVERY {
+            rt.loud_listening_tick(self.periodic.elapsed());
+            self.periodic = Instant::now();
             rt.automatic_sleep_tick();
             let quiet = rt.dark_and_quiet();
             if rt.background.update(
@@ -1717,20 +1955,20 @@ pub(crate) fn run() -> Result<(), String> {
                 &rt.model.sources,
                 rt.sleep_prepared,
             ) {
-                observation_pending = None;
+                self.observation_pending = None;
             }
-            rt.background.refresh_pending(&mut observation_pending);
-            if observation_pending.is_none()
-                && (!quiet || observed.elapsed() >= dark::OBSERVATION)
+            rt.background.refresh_pending(&mut self.observation_pending);
+            if self.observation_pending.is_none()
+                && (!quiet || self.observed.elapsed() >= dark::OBSERVATION)
                 && request_observation(
                     &rt.background,
-                    &observation_requests,
-                    &mut observation_pending,
+                    &self.observation_requests,
+                    &mut self.observation_pending,
                 )
             {
-                observed = Instant::now();
+                self.observed = Instant::now();
             }
-            if !headless
+            if !rt.headless
                 && !rt.model.screen_off
                 && !matches!(
                     rt.model.platform.busy,
@@ -1747,31 +1985,33 @@ pub(crate) fn run() -> Result<(), String> {
             }
             // For the watchdog's bundle and the panic record: nothing changes
             // while dark and quiet, so once as the quiet begins, then seldom.
-            if !quiet || !snapshot_quiet || snapshot_taken.elapsed() >= dark::SNAPSHOT {
-                if let Ok(mut s) = last_snapshot.lock() {
+            if !quiet || !self.snapshot_quiet || self.snapshot_taken.elapsed() >= dark::SNAPSHOT {
+                if let Ok(mut s) = self.last_snapshot.lock() {
                     let status = rt.status();
                     *s = rt.snapshot_with(status.clone());
-                    log.context(status);
+                    self.log.context(status);
                 }
-                (snapshot_taken, snapshot_quiet) = (Instant::now(), quiet);
+                (self.snapshot_taken, self.snapshot_quiet) = (Instant::now(), quiet);
             }
-            let xruns = log.metric("audio_xruns");
-            if xruns - xrun_bundle >= 3. {
-                xrun_bundle = xruns;
-                let _ = log.diagnostic(&root.join("diagnostics"), rt.snapshot(), true);
+            let xruns = self.log.metric("audio_xruns");
+            if xruns - self.xrun_bundle >= 3. {
+                self.xrun_bundle = xruns;
+                let _ = self
+                    .log
+                    .diagnostic(&rt.root.join("diagnostics"), rt.snapshot(), true);
             }
         }
-        if checkpoint.elapsed() > CHECKPOINT_EVERY && rt.dirty.checkpoint_due() {
+        if self.checkpoint.elapsed() > CHECKPOINT_EVERY && rt.dirty.checkpoint_due() {
             rt.checkpoint();
-            checkpoint = Instant::now();
-        } else if checkpoint.elapsed() > CHECKPOINT_EVERY {
-            checkpoint = Instant::now();
+            self.checkpoint = Instant::now();
+        } else if self.checkpoint.elapsed() > CHECKPOINT_EVERY {
+            self.checkpoint = Instant::now();
         }
         if rt.dirty.render
             && !rt.model.screen_off
-            && render_time.elapsed() >= frame_gap(rt.ui.gliding())
+            && self.render_time.elapsed() >= frame_gap(rt.ui.gliding())
         {
-            render_time = Instant::now();
+            self.render_time = Instant::now();
             let frame_started = Instant::now();
             let tracks = std::mem::take(&mut rt.model.library.tracks);
             rt.ui.normalize(&mut rt.model, &tracks);
@@ -1790,8 +2030,8 @@ pub(crate) fn run() -> Result<(), String> {
             rt.ui.set_heard(heard);
             let mut draw = rt.ui.draw(&rt.model, &rt.model.library.tracks, rt.art);
             let layout_ms = frame_started.elapsed().as_secs_f64() * 1000.;
-            log.gauge("ui_layout_ms", layout_ms);
-            if !first_frame_presented {
+            self.log.gauge("ui_layout_ms", layout_ms);
+            if !self.first_frame_presented {
                 // The splash's bar completes while this first frame renders.
                 reborn_platform::contract::boot_milestone("ready");
             }
@@ -1821,14 +2061,16 @@ pub(crate) fn run() -> Result<(), String> {
                                 rt.fail("graphics", error);
                             }
                         }
-                        let _ = log.diagnostic(&root.join("diagnostics"), rt.snapshot(), true);
+                        let _ =
+                            self.log
+                                .diagnostic(&rt.root.join("diagnostics"), rt.snapshot(), true);
                     }
                 } else {
                     rt.graphics_recovery.presented();
-                    if performance.enabled() {
-                        performance.record("frame", json!({"screen":rt.model.screen,"focus":rt.model.navigation.focus,"quads":draw.len(),"layout_ms":layout_ms,"frame_ms":frame_started.elapsed().as_secs_f64()*1000.,"render":g.timings}));
+                    if self.performance.enabled() {
+                        self.performance.record("frame", json!({"screen":rt.model.screen,"focus":rt.model.navigation.focus,"quads":draw.len(),"layout_ms":layout_ms,"frame_ms":frame_started.elapsed().as_secs_f64()*1000.,"render":g.timings}));
                     }
-                    if let Some((_, _, _, events)) = &mut monitor {
+                    if let Some((_, _, _, events)) = &mut self.monitor {
                         let presented = input::monotonic_us();
                         for event in events
                             .iter_mut()
@@ -1841,27 +2083,27 @@ pub(crate) fn run() -> Result<(), String> {
                     if fading {
                         rt.boot_fade -= 1;
                     }
-                    if rt.boot_fade == 0 && !first_interactive_presented {
-                        first_interactive_presented = true;
-                        log.emit(
+                    if rt.boot_fade == 0 && !self.first_interactive_presented {
+                        self.first_interactive_presented = true;
+                        self.log.emit(
                             Level::Info,
                             "startup",
                             "interactive",
                             "Boot cover fully revealed; input enabled",
                             None,
-                            json!({"elapsed_ms":process_started.elapsed().as_millis()}),
+                            json!({"elapsed_ms":self.process_started.elapsed().as_millis()}),
                         );
                     }
-                    if !first_frame_presented {
-                        first_frame_presented = true;
-                        if !headless {
+                    if !self.first_frame_presented {
+                        self.first_frame_presented = true;
+                        if !rt.headless {
                             // The UI is up with the screen on: the DAC stays
                             // powered until the screen sleeps.
                             if !rt.model.screen_off {
-                                hold_dac(&log, true);
+                                hold_dac(&self.log, true);
                             }
                             if let Err(error) = reborn_platform::contract::application_ready() {
-                                log.emit(
+                                self.log.emit(
                                     Level::Warn,
                                     "platform",
                                     "readiness",
@@ -1871,20 +2113,20 @@ pub(crate) fn run() -> Result<(), String> {
                                 );
                             }
                         }
-                        log.emit(
+                        self.log.emit(
                             Level::Info,
                             "startup",
                             "ready",
                             "First Reborn frame presented",
                             None,
                             json!({"display_handoff":"explicit KMS presentation",
-                            "elapsed_ms":process_started.elapsed().as_millis()}),
+                                "elapsed_ms":self.process_started.elapsed().as_millis()}),
                         );
                         // Early splash evidence lives on the /run mount carried out
                         // of initramfs; retain this bounded record alongside app logs.
                         if let Some(bytes) = reborn_platform::contract::splash_evidence() {
                             let _ = reborn_core::atomic_write(
-                                &root.join("logs/splash-boot.jsonl"),
+                                &rt.root.join("logs/splash-boot.jsonl"),
                                 &bytes,
                             );
                         }
@@ -1922,15 +2164,16 @@ pub(crate) fn run() -> Result<(), String> {
                     rt.model.playback,
                     PlaybackState::Playing | PlaybackState::Buffering
                 ),
-                render_time.elapsed(),
+                self.render_time.elapsed(),
             )
         };
         let quiet = !prewarming
-            && monitor.is_none()
-            && inputs.as_ref().is_some_and(|input| !input.held())
+            && self.monitor.is_none()
+            && self.inputs.as_ref().is_some_and(|input| !input.held())
             && rt.dark_and_quiet();
-        dark_quiet.store(quiet, std::sync::atomic::Ordering::Relaxed);
-        if let (true, Some(input)) = (quiet, &inputs) {
+        self.dark_quiet
+            .store(quiet, std::sync::atomic::Ordering::Relaxed);
+        if let (true, Some(input)) = (quiet, &self.inputs) {
             // Dark and quiet: the next full pass comes with an event or the
             // first timer the loop owes (at most `dark::PASS`); in between,
             // once a second, only what lights the screen or shuts down.
@@ -1938,12 +2181,12 @@ pub(crate) fn run() -> Result<(), String> {
             let due = rt
                 .dirty
                 .checkpoint_due()
-                .then(|| checkpoint + CHECKPOINT_EVERY);
+                .then(|| self.checkpoint + CHECKPOINT_EVERY);
             let until = now
                 + dark::pass_wait(
                     now,
                     rt.dark_timers().chain(due),
-                    periodic + PERIODIC_EVERY + Duration::from_millis(1),
+                    self.periodic + PERIODIC_EVERY + Duration::from_millis(1),
                 );
             let shown = rt.model.platform.snapshot.usb;
             loop {
@@ -1952,7 +2195,7 @@ pub(crate) fn run() -> Result<(), String> {
                     .min(dark::TICK);
                 // Not the jack: the kernel reads its detector only while the
                 // DAC is powered (screen on or playing), never dark and quiet.
-                let others = std::iter::once(server.wake_fd());
+                let others = std::iter::once(self.server.wake_fd());
                 let ready = input.wait_with(slice, others).unwrap_or_else(|_| {
                     thread::sleep(slice);
                     false
@@ -1967,9 +2210,9 @@ pub(crate) fn run() -> Result<(), String> {
                     break;
                 }
             }
-        } else if let Some(input) = &inputs {
+        } else if let Some(input) = &self.inputs {
             if input
-                .wait_with(interval, std::iter::once(server.wake_fd()))
+                .wait_with(interval, std::iter::once(self.server.wake_fd()))
                 .is_err()
             {
                 thread::sleep(interval);
@@ -1977,111 +2220,6 @@ pub(crate) fn run() -> Result<(), String> {
         } else {
             thread::sleep(interval);
         }
+        ControlFlow::Continue(())
     }
-    // Platform shutdown contract: present the transition, save state, close
-    // audio and the database, end on a dark frame with the backlight off,
-    // then acknowledge. The platform's own deadline bounds all of this; it
-    // proceeds without us if Reborn hangs or crashes.
-    let mut farewell = shutdown_intent.as_ref().and_then(|intent| {
-        rt.model.platform.shutting_down = Some(intent.clone());
-        rt.model.navigation.modal = None;
-        let last = rt.ui.draw(&rt.model, &rt.model.library.tracks, rt.art);
-        let closing = reborn_ui::closing_label(intent.restart, intent.low_battery);
-        let plan = reborn_ui::shutdown_plan(intent.low_battery);
-        rt.graphics.take().map(|g| (g, last, closing, plan))
-    });
-    // The UI dissolves into the shutdown screen, which says "Saving" while the
-    // real save below runs; its status then becomes the closing label.
-    if let Some((g, last, closing, plan)) = farewell.as_mut() {
-        for frame in 0..plan.close_frame {
-            let started = Instant::now();
-            let _ = g.render(&reborn_ui::shutdown_frame(last, frame, closing, *plan));
-            thread::sleep(Duration::from_millis(34).saturating_sub(started.elapsed()));
-        }
-    }
-    rt.model.invalidate();
-    let mut shutdown_ready = true;
-    if let Err(e) = rt.playback.shutdown(rt.model.generation) {
-        shutdown_ready = false;
-        log.emit(
-            Level::Error,
-            "audio",
-            "shutdown_failed",
-            &e,
-            None,
-            json!({}),
-        );
-    }
-    rt.model.playback = PlaybackState::Paused;
-    rt.pending_reconfiguration = None;
-    rt.checkpoint();
-    shutdown_ready &= !rt.dirty.persistence;
-    rt.scanner.stop();
-    if let Err(error) = rt.db.shutdown(Duration::from_secs(2)) {
-        shutdown_ready = false;
-        log.emit(
-            Level::Error,
-            "database",
-            "shutdown_failed",
-            &error,
-            None,
-            json!({}),
-        );
-    }
-    if let Some((g, last, closing, plan)) = farewell.as_mut() {
-        for frame in plan.close_frame..plan.frames {
-            let started = Instant::now();
-            let _ = g.render(&reborn_ui::shutdown_frame(last, frame, closing, *plan));
-            thread::sleep(Duration::from_millis(34).saturating_sub(started.elapsed()));
-        }
-        // Final dark frame first, then the backlight: the panel never shows a
-        // white, stale or console framebuffer while it is lit. One refresh
-        // lets the black frame reach the panel before its light goes out.
-        let _ = g.render(&reborn_ui::black_frame());
-        thread::sleep(Duration::from_millis(34));
-        if let Err(error) = power::blank(true) {
-            log.emit(
-                Level::Warn,
-                "power",
-                "backlight_off_failed",
-                &error,
-                None,
-                json!({}),
-            );
-        }
-        // The screen is off for good: the DAC need not wait for it.
-        hold_dac(&log, false);
-        log.emit(
-            Level::Info,
-            "power",
-            "shutdown_presented",
-            "Shutdown transition presented",
-            None,
-            json!({"frames":farewell.as_ref().map_or(0, |f| f.3.frames) + 1}),
-        );
-    }
-    if let Some(intent) = &shutdown_intent {
-        if let Err(error) = power::acknowledge_shutdown(&intent.id, shutdown_ready) {
-            log.emit(Level::Warn, "power", "ack_failed", &error, None, json!({}));
-        }
-    }
-    // Keep the DRM device (and its dark frame) open until the process exits;
-    // the platform powers the panel down after the acknowledgement.
-    let _keep_scanout = farewell;
-    if let Some(w) = rt.wifi {
-        let _ = w.commands.try_send(wifi::Command::Stop);
-    }
-    if let Some(b) = rt.bluetooth {
-        let _ = b.commands.try_send(bluetooth::Command::Stop);
-    }
-    let _ = fs::remove_file(socket);
-    log.emit(
-        Level::Info,
-        "core",
-        "shutdown",
-        "Reborn stopped",
-        None,
-        json!({}),
-    );
-    Ok(())
 }
