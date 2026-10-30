@@ -101,6 +101,16 @@ pub fn sleep_retry_seconds(refusals: u32) -> u64 {
     (60u64 << refusals.min(5)).min(30 * 60)
 }
 
+/// After the platform refused a sleep because a charger or computer is
+/// connected, automatic sleep waits while the battery still shows a cable
+/// (charging or full): the platform would refuse each try the same way, and
+/// every try starts a platform process (once a minute for as long as the
+/// player lies on its cable). Unplugged (on battery) or unknown, the normal
+/// tries resume. Power still asks at once.
+pub fn charger_holds_sleep(refused_for_charger: bool, charging: ChargingState) -> bool {
+    refused_for_charger && matches!(charging, ChargingState::Charging | ChargingState::Full)
+}
+
 /// With Bluetooth headphones connected, a pause keeps the player awake this
 /// long so the headphones' own play button can continue (Beta 8.18): asleep,
 /// the radio is off and nothing hears the button.
@@ -594,6 +604,18 @@ pub fn human_bytes(bytes: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_charger_refusal_holds_automatic_sleep_only_while_a_cable_shows() {
+        use ChargingState::*;
+        assert!(charger_holds_sleep(true, Charging));
+        assert!(charger_holds_sleep(true, Full));
+        assert!(!charger_holds_sleep(true, OnBattery));
+        assert!(!charger_holds_sleep(true, Unknown));
+        for charging in [Unknown, OnBattery, Charging, Full] {
+            assert!(!charger_holds_sleep(false, charging));
+        }
+    }
     #[test]
     fn bytes_use_decimal_units_like_computers_show_for_cards() {
         assert_eq!(human_bytes(3_221_225_472), "3.2 GB");

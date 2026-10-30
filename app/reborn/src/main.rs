@@ -350,6 +350,9 @@ struct Runtime {
     sleep_attempt: Option<Instant>,
     /// Sleeps refused in a row after preparation; spaces automatic tries.
     sleep_refusals: u32,
+    /// The platform refused the last sleep because a charger or computer is
+    /// connected: automatic sleep waits until the battery shows no cable.
+    sleep_refused_for_charger: bool,
     /// Power asked to sleep (the screen went dark at once); a wake before the
     /// platform prepares means the person changed their mind (F48).
     sleep_requested_at: Option<Instant>,
@@ -3488,6 +3491,10 @@ impl Runtime {
                         // A refusal leaves the screen as it is: the request
                         // turned it off already, and lit now means a press
                         // woke it (F48: it went dark again ≈1 s after a wake).
+                        self.sleep_refused_for_charger = state.phase
+                            == reborn_core::platform::SleepPhase::SleepRefused
+                            && state.problem
+                                == Some(reborn_core::platform::SleepProblem::ChargerActive);
                         if state.phase == reborn_core::platform::SleepPhase::SleepRefused {
                             self.log.emit(
                                 Level::Info,
@@ -3929,6 +3936,13 @@ impl Runtime {
         ) {
             return;
         }
+        if reborn_core::platform::charger_holds_sleep(
+            self.sleep_refused_for_charger,
+            self.model.platform.battery.charging,
+        ) {
+            return;
+        }
+        self.sleep_refused_for_charger = false;
         if reborn_core::platform::automatic_sleep_due(
             self.model.screen_off,
             self.dark_since.map(|since| since.elapsed().as_secs()),
@@ -4945,6 +4959,7 @@ fn run() -> Result<(), String> {
         dark_since: None,
         sleep_attempt: None,
         sleep_refusals: 0,
+        sleep_refused_for_charger: false,
         sleep_requested_at: None,
         headset_paused: None,
         wifi_idle_off: false,
