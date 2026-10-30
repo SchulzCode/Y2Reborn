@@ -3540,12 +3540,44 @@
   "argv": [
    "codec-settings"
   ],
-  "exit": 1,
+  "exit": 0,
   "files": {},
   "name": "devices/codec-settings-live-null-arguments",
   "stdout": {
-   "failure": "invalid_codec_runtime_record",
-   "schema": "org.y2linux.codec-settings/v1"
+   "apply_action": "restart_player",
+   "effective": null,
+   "effective_scope": "daemon_start_arguments",
+   "pending_restart": true,
+   "requested": {
+    "aac_abr": true,
+    "aac_quality": "high",
+    "experimental": false,
+    "ldac_abr": true,
+    "ldac_quality": "standard",
+    "sbc_abr": true,
+    "sbc_quality": "high",
+    "schema": 1
+   },
+   "schema": "org.y2linux.codec-settings/v1",
+   "supported": {
+    "aac_abr": true,
+    "aac_quality": [
+     "standard",
+     "high"
+    ],
+    "ldac_abr": true,
+    "ldac_quality": [
+     "mobile",
+     "standard",
+     "high"
+    ],
+    "sbc_abr": true,
+    "sbc_quality": [
+     "high",
+     "xq",
+     "xq+"
+    ]
+   }
   }
  },
  {
@@ -3554,12 +3586,55 @@
    "--sbc-abr",
    "off"
   ],
-  "exit": 1,
-  "files": {},
+  "exit": 0,
+  "files": {
+   "/data/bluetooth/codec-policy.json": {
+    "aac_abr": true,
+    "aac_quality": "high",
+    "experimental": false,
+    "ldac_abr": true,
+    "ldac_quality": "standard",
+    "sbc_abr": false,
+    "sbc_quality": "high",
+    "schema": 1
+   }
+  },
   "name": "devices/codec-settings-live-number-arguments",
   "stdout": {
-   "failure": "invalid_codec_runtime_record",
-   "schema": "org.y2linux.codec-settings/v1"
+   "apply_action": "restart_player",
+   "effective": null,
+   "effective_scope": "daemon_start_arguments",
+   "pending_restart": true,
+   "requested": {
+    "aac_abr": true,
+    "aac_quality": "high",
+    "experimental": false,
+    "ldac_abr": true,
+    "ldac_quality": "standard",
+    "sbc_abr": false,
+    "sbc_quality": "high",
+    "schema": 1
+   },
+   "schema": "org.y2linux.codec-settings/v1",
+   "supported": {
+    "aac_abr": true,
+    "aac_quality": [
+     "standard",
+     "high"
+    ],
+    "ldac_abr": true,
+    "ldac_quality": [
+     "mobile",
+     "standard",
+     "high"
+    ],
+    "sbc_abr": true,
+    "sbc_quality": [
+     "high",
+     "xq",
+     "xq+"
+    ]
+   }
   }
  },
  {
@@ -3691,7 +3766,7 @@
   "files": {},
   "name": "devices/codec-settings-no-aac",
   "stdout": {
-   "failure": "aac_encoder_not_compiled",
+   "failure": "invalid_codec_inventory",
    "schema": "org.y2linux.codec-settings/v1"
   }
  },
@@ -7859,16 +7934,140 @@
   "name": "observation/status-bluetooth-arguments-int",
   "stdout": {
    "bluetooth": {
-    "actual_bitrate_bps": null,
-    "adapter": null,
-    "codec_inventory": null,
-    "codec_settings": null,
-    "mutually_usable": null,
-    "negotiated_codec": null,
+    "actual_bitrate_bps": 552000,
+    "adapter": {
+     "bluez_owner": ":1.2",
+     "discoverable": false,
+     "discovering": false,
+     "pairable": true,
+     "path": "/org/bluez/hci0",
+     "powered": true
+    },
+    "codec_inventory": {
+     "codecs": {
+      "AAC": {
+       "compiled_locally": true,
+       "distribution_approved": true,
+       "platform_qualified": true
+      },
+      "LDAC": {
+       "compiled_locally": true,
+       "owner_private_experiment": true
+      },
+      "SBC": {
+       "compiled_locally": true,
+       "platform_qualified": true
+      },
+      "aptX": {
+       "compiled_locally": false
+      }
+     },
+     "schema": 1
+    },
+    "codec_settings": {
+     "apply_action": "restart_player",
+     "effective": null,
+     "effective_scope": "daemon_start_arguments",
+     "pending_restart": true,
+     "requested": {
+      "aac_abr": true,
+      "aac_quality": "high",
+      "experimental": false,
+      "ldac_abr": true,
+      "ldac_quality": "standard",
+      "sbc_abr": true,
+      "sbc_quality": "high",
+      "schema": 1
+     },
+     "schema": "org.y2linux.codec-settings/v1",
+     "supported": {
+      "aac_abr": true,
+      "aac_quality": [
+       "standard",
+       "high"
+      ],
+      "ldac_abr": true,
+      "ldac_quality": [
+       "mobile",
+       "standard",
+       "high"
+      ],
+      "sbc_abr": true,
+      "sbc_quality": [
+       "high",
+       "xq",
+       "xq+"
+      ]
+     }
+    },
+    "devices": [
+     {
+      "address": "ZZ:ZZ:00:00:00:01",
+      "bonded": null,
+      "connected": true,
+      "paired": true,
+      "path": "/org/bluez/hci0/dev_ZZ",
+      "services_resolved": null,
+      "trusted": null
+     },
+     {
+      "address": "AA:BB:CC:00:00:02",
+      "bonded": null,
+      "connected": false,
+      "paired": true,
+      "path": "/org/bluez/hci0/dev_AA",
+      "services_resolved": null,
+      "trusted": null
+     }
+    ],
+    "encoder": {
+     "aac_abr_adjustments": null,
+     "aac_abr_enabled": null,
+     "aac_abr_level": null,
+     "bitrate_bps": 552000,
+     "bitrate_scope": "encoder_payload_nominal_not_radio_throughput",
+     "encoder_errors": 0,
+     "encoder_observed": true,
+     "ldac_abr_adaptation_observed": false,
+     "ldac_abr_adjustments": null,
+     "ldac_abr_enabled": null,
+     "ldac_nominal_choices_kbps": null,
+     "ldac_quality_index": null,
+     "preference": {
+      "aac_abr": true,
+      "aac_quality": "high",
+      "experimental": false,
+      "ldac_abr": true,
+      "ldac_quality": "standard",
+      "sbc_abr": true,
+      "sbc_quality": "high",
+      "schema": 1
+     },
+     "sbc_abr_adjustments": 3,
+     "sbc_abr_enabled": true,
+     "sbc_bitpool": 47,
+     "sbc_negotiated_bitpool_range": [
+      2,
+      47
+     ],
+     "sbc_quality": "xq+",
+     "sbc_xq_peer_mode": true
+    },
+    "mutually_usable": {
+     "SBC": true
+    },
+    "negotiated_codec": "SBC",
     "packet_loss": null,
-    "pcm": null,
+    "pcm": {
+     "channels": 2,
+     "format": "S16_LE",
+     "format_code": 33296,
+     "physical_bits": 16,
+     "rate_hz": 44100,
+     "valid_bits": 16
+    },
     "preferred_codec": null,
-    "reason": "dbus_observation_unavailable",
+    "reason": "controller_bluez_bluealsa_observed",
     "reconnect": {
      "boot_id": "boot-a",
      "monotonic_us": "<volatile>",
@@ -7878,10 +8077,27 @@
     "remote_advertised": null,
     "remote_advertised_reason": "API_exposes_mutual_subset_only",
     "requested_codec": null,
-    "runtime_enabled": null,
-    "selected_peer": null,
-    "state": "Unavailable",
-    "transport": null
+    "runtime_enabled": [
+     "SBC",
+     "AAC"
+    ],
+    "selected_peer": {
+     "address": "ZZ:ZZ:00:00:00:01",
+     "bonded": null,
+     "connected": true,
+     "paired": true,
+     "path": "/org/bluez/hci0/dev_ZZ",
+     "services_resolved": null,
+     "trusted": null
+    },
+    "state": "Ready",
+    "transport": {
+     "bluealsa_owner": ":1.3",
+     "connection_sequence": 4,
+     "lifetime_note": "snapshot; use ObjectManager removal signals for per-open lifetime",
+     "object": "/org/bluealsa/hci0/dev_ZZ/a2dpsrc/sink",
+     "running": true
+    }
    },
    "record": {
     "boot_id": "boot-a",
@@ -7915,16 +8131,140 @@
   "name": "observation/status-bluetooth-arguments-text",
   "stdout": {
    "bluetooth": {
-    "actual_bitrate_bps": null,
-    "adapter": null,
-    "codec_inventory": null,
-    "codec_settings": null,
-    "mutually_usable": null,
-    "negotiated_codec": null,
+    "actual_bitrate_bps": 552000,
+    "adapter": {
+     "bluez_owner": ":1.2",
+     "discoverable": false,
+     "discovering": false,
+     "pairable": true,
+     "path": "/org/bluez/hci0",
+     "powered": true
+    },
+    "codec_inventory": {
+     "codecs": {
+      "AAC": {
+       "compiled_locally": true,
+       "distribution_approved": true,
+       "platform_qualified": true
+      },
+      "LDAC": {
+       "compiled_locally": true,
+       "owner_private_experiment": true
+      },
+      "SBC": {
+       "compiled_locally": true,
+       "platform_qualified": true
+      },
+      "aptX": {
+       "compiled_locally": false
+      }
+     },
+     "schema": 1
+    },
+    "codec_settings": {
+     "apply_action": "restart_player",
+     "effective": null,
+     "effective_scope": "daemon_start_arguments",
+     "pending_restart": true,
+     "requested": {
+      "aac_abr": true,
+      "aac_quality": "high",
+      "experimental": false,
+      "ldac_abr": true,
+      "ldac_quality": "standard",
+      "sbc_abr": true,
+      "sbc_quality": "high",
+      "schema": 1
+     },
+     "schema": "org.y2linux.codec-settings/v1",
+     "supported": {
+      "aac_abr": true,
+      "aac_quality": [
+       "standard",
+       "high"
+      ],
+      "ldac_abr": true,
+      "ldac_quality": [
+       "mobile",
+       "standard",
+       "high"
+      ],
+      "sbc_abr": true,
+      "sbc_quality": [
+       "high",
+       "xq",
+       "xq+"
+      ]
+     }
+    },
+    "devices": [
+     {
+      "address": "ZZ:ZZ:00:00:00:01",
+      "bonded": null,
+      "connected": true,
+      "paired": true,
+      "path": "/org/bluez/hci0/dev_ZZ",
+      "services_resolved": null,
+      "trusted": null
+     },
+     {
+      "address": "AA:BB:CC:00:00:02",
+      "bonded": null,
+      "connected": false,
+      "paired": true,
+      "path": "/org/bluez/hci0/dev_AA",
+      "services_resolved": null,
+      "trusted": null
+     }
+    ],
+    "encoder": {
+     "aac_abr_adjustments": null,
+     "aac_abr_enabled": null,
+     "aac_abr_level": null,
+     "bitrate_bps": 552000,
+     "bitrate_scope": "encoder_payload_nominal_not_radio_throughput",
+     "encoder_errors": 0,
+     "encoder_observed": true,
+     "ldac_abr_adaptation_observed": false,
+     "ldac_abr_adjustments": null,
+     "ldac_abr_enabled": null,
+     "ldac_nominal_choices_kbps": null,
+     "ldac_quality_index": null,
+     "preference": {
+      "aac_abr": true,
+      "aac_quality": "high",
+      "experimental": false,
+      "ldac_abr": true,
+      "ldac_quality": "standard",
+      "sbc_abr": true,
+      "sbc_quality": "high",
+      "schema": 1
+     },
+     "sbc_abr_adjustments": 3,
+     "sbc_abr_enabled": true,
+     "sbc_bitpool": 47,
+     "sbc_negotiated_bitpool_range": [
+      2,
+      47
+     ],
+     "sbc_quality": "xq+",
+     "sbc_xq_peer_mode": true
+    },
+    "mutually_usable": {
+     "SBC": true
+    },
+    "negotiated_codec": "SBC",
     "packet_loss": null,
-    "pcm": null,
+    "pcm": {
+     "channels": 2,
+     "format": "S16_LE",
+     "format_code": 33296,
+     "physical_bits": 16,
+     "rate_hz": 44100,
+     "valid_bits": 16
+    },
     "preferred_codec": null,
-    "reason": "dbus_observation_unavailable",
+    "reason": "controller_bluez_bluealsa_observed",
     "reconnect": {
      "boot_id": "boot-a",
      "monotonic_us": "<volatile>",
@@ -7934,10 +8274,27 @@
     "remote_advertised": null,
     "remote_advertised_reason": "API_exposes_mutual_subset_only",
     "requested_codec": null,
-    "runtime_enabled": null,
-    "selected_peer": null,
-    "state": "Unavailable",
-    "transport": null
+    "runtime_enabled": [
+     "SBC",
+     "AAC"
+    ],
+    "selected_peer": {
+     "address": "ZZ:ZZ:00:00:00:01",
+     "bonded": null,
+     "connected": true,
+     "paired": true,
+     "path": "/org/bluez/hci0/dev_ZZ",
+     "services_resolved": null,
+     "trusted": null
+    },
+    "state": "Ready",
+    "transport": {
+     "bluealsa_owner": ":1.3",
+     "connection_sequence": 4,
+     "lifetime_note": "snapshot; use ObjectManager removal signals for per-open lifetime",
+     "object": "/org/bluealsa/hci0/dev_ZZ/a2dpsrc/sink",
+     "running": true
+    }
    },
    "record": {
     "boot_id": "boot-a",
@@ -8286,14 +8643,142 @@
    "status",
    "bluetooth"
   ],
-  "exit": 1,
+  "exit": 0,
   "files": {},
   "name": "observation/status-bluetooth-inventory-list",
   "stdout": {
-   "reason": "invalid_codec_inventory",
-   "schema": "org.y2linux.error/v1",
-   "state": "Failed",
-   "type": "ValueError"
+   "bluetooth": {
+    "actual_bitrate_bps": 552000,
+    "adapter": {
+     "bluez_owner": ":1.2",
+     "discoverable": false,
+     "discovering": false,
+     "pairable": true,
+     "path": "/org/bluez/hci0",
+     "powered": true
+    },
+    "codec_inventory": {
+     "codecs": [],
+     "schema": 1
+    },
+    "codec_settings": {
+     "effective": null,
+     "pending_restart": false,
+     "reason": "invalid_codec_inventory",
+     "requested": null,
+     "schema": "org.y2linux.codec-settings/v1",
+     "state": "Failed",
+     "supported": {}
+    },
+    "devices": [
+     {
+      "address": "ZZ:ZZ:00:00:00:01",
+      "bonded": null,
+      "connected": true,
+      "paired": true,
+      "path": "/org/bluez/hci0/dev_ZZ",
+      "services_resolved": null,
+      "trusted": null
+     },
+     {
+      "address": "AA:BB:CC:00:00:02",
+      "bonded": null,
+      "connected": false,
+      "paired": true,
+      "path": "/org/bluez/hci0/dev_AA",
+      "services_resolved": null,
+      "trusted": null
+     }
+    ],
+    "encoder": {
+     "aac_abr_adjustments": null,
+     "aac_abr_enabled": null,
+     "aac_abr_level": null,
+     "bitrate_bps": 552000,
+     "bitrate_scope": "encoder_payload_nominal_not_radio_throughput",
+     "encoder_errors": 0,
+     "encoder_observed": true,
+     "ldac_abr_adaptation_observed": false,
+     "ldac_abr_adjustments": null,
+     "ldac_abr_enabled": null,
+     "ldac_nominal_choices_kbps": null,
+     "ldac_quality_index": null,
+     "preference": null,
+     "sbc_abr_adjustments": 3,
+     "sbc_abr_enabled": true,
+     "sbc_bitpool": 47,
+     "sbc_negotiated_bitpool_range": [
+      2,
+      47
+     ],
+     "sbc_quality": "xq+",
+     "sbc_xq_peer_mode": true
+    },
+    "mutually_usable": {
+     "SBC": true
+    },
+    "negotiated_codec": "SBC",
+    "packet_loss": null,
+    "pcm": {
+     "channels": 2,
+     "format": "S16_LE",
+     "format_code": 33296,
+     "physical_bits": 16,
+     "rate_hz": 44100,
+     "valid_bits": 16
+    },
+    "preferred_codec": null,
+    "reason": "controller_bluez_bluealsa_observed",
+    "reconnect": {
+     "reason": "reconnect_record_stale_or_absent",
+     "state": "Unavailable"
+    },
+    "reconnect_owner": "y2-bt-reconnect",
+    "remote_advertised": null,
+    "remote_advertised_reason": "API_exposes_mutual_subset_only",
+    "requested_codec": null,
+    "runtime_enabled": [
+     "SBC",
+     "AAC"
+    ],
+    "selected_peer": {
+     "address": "ZZ:ZZ:00:00:00:01",
+     "bonded": null,
+     "connected": true,
+     "paired": true,
+     "path": "/org/bluez/hci0/dev_ZZ",
+     "services_resolved": null,
+     "trusted": null
+    },
+    "state": "Ready",
+    "transport": {
+     "bluealsa_owner": ":1.3",
+     "connection_sequence": 4,
+     "lifetime_note": "snapshot; use ObjectManager removal signals for per-open lifetime",
+     "object": "/org/bluealsa/hci0/dev_ZZ/a2dpsrc/sink",
+     "running": true
+    }
+   },
+   "record": {
+    "boot_id": "boot-a",
+    "build_id": "fixture-build",
+    "collection_duration_ns": "<volatile>",
+    "evidence_level": "IMPLEMENTED",
+    "failure": null,
+    "kernel": "6.18.0-fixture",
+    "monotonic_ns": "<volatile>",
+    "parameters": {},
+    "reborn_commit": "reborn",
+    "result": "observed",
+    "rootfs_release": "v1.0",
+    "units": {
+     "collection_duration": "ns"
+    },
+    "wall_timestamp": "<volatile>",
+    "workload": "observation",
+    "y2linux_commit": "linux-commit"
+   },
+   "schema": "org.y2linux.status/v1"
   }
  },
  {
