@@ -2777,9 +2777,9 @@
     "vmstat": null
    },
    "power": {
-    "battery": {},
+    "battery": null,
     "low_battery": {
-     "reason": "policy_not_running_or_stale",
+     "reason": "policy_not_running",
      "state": "Unavailable"
     },
     "measured_current_ua": null,
@@ -11599,23 +11599,41 @@
    },
    "power": {
     "battery": {
-     "confidence": "high",
+     "charge_counter_uah": null,
+     "charging": false,
+     "confidence": "hardware",
      "current_ua": -120000,
      "percent": 81,
-     "source": "ui_soc",
-     "temperature_millicelsius": 30000
+     "provisional": true,
+     "resting": false,
+     "source": "fuel_gauge",
+     "status": null,
+     "temperature_millicelsius": 30000,
+     "voltage_uv": null
     },
     "low_battery": {
      "battery": {
-      "confidence": "high",
+      "charge_counter_uah": null,
+      "charging": false,
+      "confidence": "hardware",
       "current_ua": -120000,
       "percent": 81,
-      "source": "ui_soc",
-      "temperature_millicelsius": 30000
+      "provisional": true,
+      "resting": false,
+      "source": "fuel_gauge",
+      "status": null,
+      "temperature_millicelsius": 30000,
+      "voltage_uv": null
      },
      "boot_id": "boot-a",
      "monotonic_ns": "<volatile>",
-     "state": "Normal"
+     "qualification_reference": null,
+     "reason": null,
+     "schema": 0,
+     "shutdown": null,
+     "state": "Normal",
+     "thresholds_enabled": false,
+     "voltage_uv": null
     },
     "measured_current_ua": -120000,
     "normal_boot": 1,
@@ -11630,9 +11648,9 @@
      "state": "restored",
      "wake_reason": "power"
     },
-    "soc_confidence": "high",
+    "soc_confidence": "hardware",
     "soc_percent": 81,
-    "soc_source": "ui_soc",
+    "soc_source": "fuel_gauge",
     "supplies": [
      {
       "constant_charge_current": "450000",
@@ -12733,9 +12751,9 @@
     "vmstat": null
    },
    "power": {
-    "battery": {},
+    "battery": null,
     "low_battery": {
-     "reason": "policy_not_running_or_stale",
+     "reason": "policy_not_running",
      "state": "Unavailable"
     },
     "measured_current_ua": null,
@@ -13563,9 +13581,9 @@
     "vmstat": null
    },
    "power": {
-    "battery": {},
+    "battery": null,
     "low_battery": {
-     "reason": "policy_not_running_or_stale",
+     "reason": "policy_not_running",
      "state": "Unavailable"
     },
     "measured_current_ua": null,
@@ -14198,9 +14216,9 @@
     "vmstat": null
    },
    "power": {
-    "battery": {},
+    "battery": null,
     "low_battery": {
-     "reason": "policy_not_running_or_stale",
+     "reason": "policy_not_running",
      "state": "Unavailable"
     },
     "measured_current_ua": null,
@@ -14824,9 +14842,9 @@
     "vmstat": null
    },
    "power": {
-    "battery": {},
+    "battery": null,
     "low_battery": {
-     "reason": "policy_not_running_or_stale",
+     "reason": "policy_not_running",
      "state": "Unavailable"
     },
     "measured_current_ua": null,
@@ -15427,9 +15445,9 @@
     "vmstat": null
    },
    "power": {
-    "battery": {},
+    "battery": null,
     "low_battery": {
-     "reason": "policy_not_running_or_stale",
+     "reason": "policy_not_running",
      "state": "Unavailable"
     },
     "measured_current_ua": null,
@@ -16016,9 +16034,9 @@
     "vmstat": null
    },
    "power": {
-    "battery": {},
+    "battery": null,
     "low_battery": {
-     "reason": "policy_not_running_or_stale",
+     "reason": "policy_not_running",
      "state": "Unavailable"
     },
     "measured_current_ua": null,
@@ -16374,14 +16392,94 @@
    "status",
    "power"
   ],
-  "exit": 1,
+  "exit": 0,
   "files": {},
   "name": "observation/status-power-battery-list",
   "stdout": {
-   "reason": "invalid_power_record",
-   "schema": "org.y2linux.error/v1",
-   "state": "Failed",
-   "type": "ValueError"
+   "power": {
+    "battery": null,
+    "low_battery": {
+     "reason": "policy_not_running_or_stale",
+     "state": "Unavailable"
+    },
+    "measured_current_ua": null,
+    "normal_boot": null,
+    "pack_temperature": null,
+    "sleep": {
+     "boot_id": "boot-a",
+     "kernel_completed": true,
+     "reason": null,
+     "request_boot_id": "boot-a",
+     "same_boot": true,
+     "schema": "org.y2linux.sleep/v1",
+     "state": "restored",
+     "wake_reason": "power"
+    },
+    "soc_confidence": null,
+    "soc_percent": null,
+    "soc_source": null,
+    "supplies": [
+     {
+      "constant_charge_current": null,
+      "constant_charge_current_max": null,
+      "constant_charge_voltage": null,
+      "constant_charge_voltage_max": null,
+      "health": null,
+      "input_current_limit": null,
+      "name": "BAT0",
+      "online": null,
+      "present": null,
+      "status": "Charging",
+      "type": "Battery",
+      "usb_type": null,
+      "voltage_max_design": null,
+      "voltage_min_design": null,
+      "voltage_now": "4149316"
+     },
+     {
+      "constant_charge_current": null,
+      "constant_charge_current_max": null,
+      "constant_charge_voltage": null,
+      "constant_charge_voltage_max": null,
+      "health": null,
+      "input_current_limit": null,
+      "name": "y2-usb-presence",
+      "online": "1",
+      "present": null,
+      "status": null,
+      "type": "USB",
+      "usb_type": null,
+      "voltage_max_design": null,
+      "voltage_min_design": null,
+      "voltage_now": null
+     }
+    ],
+    "unavailable_reason": "not_exposed_by_qualified_y2_battery_driver",
+    "units": {
+     "configured_current": "uA",
+     "voltage": "uV"
+    }
+   },
+   "record": {
+    "boot_id": "boot-a",
+    "build_id": "fixture-build",
+    "collection_duration_ns": "<volatile>",
+    "evidence_level": "IMPLEMENTED",
+    "failure": null,
+    "kernel": "6.18.0-fixture",
+    "monotonic_ns": "<volatile>",
+    "parameters": {},
+    "reborn_commit": "reborn",
+    "result": "observed",
+    "rootfs_release": "v1.0",
+    "units": {
+     "collection_duration": "ns"
+    },
+    "wall_timestamp": "<volatile>",
+    "workload": "observation",
+    "y2linux_commit": "linux-commit"
+   },
+   "schema": "org.y2linux.status/v1"
   }
  },
  {
@@ -16389,14 +16487,94 @@
    "status",
    "power"
   ],
-  "exit": 1,
+  "exit": 0,
   "files": {},
   "name": "observation/status-power-battery-null",
   "stdout": {
-   "reason": "invalid_power_record",
-   "schema": "org.y2linux.error/v1",
-   "state": "Failed",
-   "type": "ValueError"
+   "power": {
+    "battery": null,
+    "low_battery": {
+     "reason": "policy_not_running_or_stale",
+     "state": "Unavailable"
+    },
+    "measured_current_ua": null,
+    "normal_boot": null,
+    "pack_temperature": null,
+    "sleep": {
+     "boot_id": "boot-a",
+     "kernel_completed": true,
+     "reason": null,
+     "request_boot_id": "boot-a",
+     "same_boot": true,
+     "schema": "org.y2linux.sleep/v1",
+     "state": "restored",
+     "wake_reason": "power"
+    },
+    "soc_confidence": null,
+    "soc_percent": null,
+    "soc_source": null,
+    "supplies": [
+     {
+      "constant_charge_current": null,
+      "constant_charge_current_max": null,
+      "constant_charge_voltage": null,
+      "constant_charge_voltage_max": null,
+      "health": null,
+      "input_current_limit": null,
+      "name": "BAT0",
+      "online": null,
+      "present": null,
+      "status": "Charging",
+      "type": "Battery",
+      "usb_type": null,
+      "voltage_max_design": null,
+      "voltage_min_design": null,
+      "voltage_now": "4149316"
+     },
+     {
+      "constant_charge_current": null,
+      "constant_charge_current_max": null,
+      "constant_charge_voltage": null,
+      "constant_charge_voltage_max": null,
+      "health": null,
+      "input_current_limit": null,
+      "name": "y2-usb-presence",
+      "online": "1",
+      "present": null,
+      "status": null,
+      "type": "USB",
+      "usb_type": null,
+      "voltage_max_design": null,
+      "voltage_min_design": null,
+      "voltage_now": null
+     }
+    ],
+    "unavailable_reason": "not_exposed_by_qualified_y2_battery_driver",
+    "units": {
+     "configured_current": "uA",
+     "voltage": "uV"
+    }
+   },
+   "record": {
+    "boot_id": "boot-a",
+    "build_id": "fixture-build",
+    "collection_duration_ns": "<volatile>",
+    "evidence_level": "IMPLEMENTED",
+    "failure": null,
+    "kernel": "6.18.0-fixture",
+    "monotonic_ns": "<volatile>",
+    "parameters": {},
+    "reborn_commit": "reborn",
+    "result": "observed",
+    "rootfs_release": "v1.0",
+    "units": {
+     "collection_duration": "ns"
+    },
+    "wall_timestamp": "<volatile>",
+    "workload": "observation",
+    "y2linux_commit": "linux-commit"
+   },
+   "schema": "org.y2linux.status/v1"
   }
  },
  {
@@ -16409,7 +16587,7 @@
   "name": "observation/status-power-bool-stamp",
   "stdout": {
    "power": {
-    "battery": {},
+    "battery": null,
     "low_battery": {
      "reason": "policy_not_running_or_stale",
      "state": "Unavailable"
@@ -16504,9 +16682,9 @@
   "name": "observation/status-power-sleep-int-key-idle",
   "stdout": {
    "power": {
-    "battery": {},
+    "battery": null,
     "low_battery": {
-     "reason": "policy_not_running_or_stale",
+     "reason": "policy_not_running",
      "state": "Unavailable"
     },
     "measured_current_ua": null,
@@ -16629,9 +16807,9 @@
   "name": "observation/status-power-sleep-list",
   "stdout": {
    "power": {
-    "battery": {},
+    "battery": null,
     "low_battery": {
-     "reason": "policy_not_running_or_stale",
+     "reason": "policy_not_running",
      "state": "Unavailable"
     },
     "measured_current_ua": null,
@@ -16769,9 +16947,9 @@
   "name": "observation/status-power-sleep-pairs",
   "stdout": {
    "power": {
-    "battery": {},
+    "battery": null,
     "low_battery": {
-     "reason": "policy_not_running_or_stale",
+     "reason": "policy_not_running",
      "state": "Unavailable"
     },
     "measured_current_ua": null,
@@ -16877,7 +17055,7 @@
   "name": "observation/status-power-stale",
   "stdout": {
    "power": {
-    "battery": {},
+    "battery": null,
     "low_battery": {
      "reason": "policy_not_running_or_stale",
      "state": "Unavailable"
@@ -17262,9 +17440,9 @@
     "vmstat": null
    },
    "power": {
-    "battery": {},
+    "battery": null,
     "low_battery": {
-     "reason": "policy_not_running_or_stale",
+     "reason": "policy_not_running",
      "state": "Unavailable"
     },
     "measured_current_ua": null,
@@ -17865,9 +18043,9 @@
     "vmstat": null
    },
    "power": {
-    "battery": {},
+    "battery": null,
     "low_battery": {
-     "reason": "policy_not_running_or_stale",
+     "reason": "policy_not_running",
      "state": "Unavailable"
     },
     "measured_current_ua": null,
@@ -18521,9 +18699,9 @@
     "vmstat": null
    },
    "power": {
-    "battery": {},
+    "battery": null,
     "low_battery": {
-     "reason": "policy_not_running_or_stale",
+     "reason": "policy_not_running",
      "state": "Unavailable"
     },
     "measured_current_ua": null,
@@ -19650,23 +19828,41 @@
   "stdout": {
    "power": {
     "battery": {
-     "confidence": "high",
+     "charge_counter_uah": null,
+     "charging": false,
+     "confidence": "hardware",
      "current_ua": -120000,
      "percent": 81,
-     "source": "ui_soc",
-     "temperature_millicelsius": 30000
+     "provisional": true,
+     "resting": false,
+     "source": "fuel_gauge",
+     "status": null,
+     "temperature_millicelsius": 30000,
+     "voltage_uv": null
     },
     "low_battery": {
      "battery": {
-      "confidence": "high",
+      "charge_counter_uah": null,
+      "charging": false,
+      "confidence": "hardware",
       "current_ua": -120000,
       "percent": 81,
-      "source": "ui_soc",
-      "temperature_millicelsius": 30000
+      "provisional": true,
+      "resting": false,
+      "source": "fuel_gauge",
+      "status": null,
+      "temperature_millicelsius": 30000,
+      "voltage_uv": null
      },
      "boot_id": "boot-a",
      "monotonic_ns": "<volatile>",
-     "state": "Normal"
+     "qualification_reference": null,
+     "reason": null,
+     "schema": 0,
+     "shutdown": null,
+     "state": "Normal",
+     "thresholds_enabled": false,
+     "voltage_uv": null
     },
     "measured_current_ua": -120000,
     "normal_boot": 1,
@@ -19681,9 +19877,9 @@
      "state": "restored",
      "wake_reason": "power"
     },
-    "soc_confidence": "high",
+    "soc_confidence": "hardware",
     "soc_percent": 81,
-    "soc_source": "ui_soc",
+    "soc_source": "fuel_gauge",
     "supplies": [
      {
       "constant_charge_current": "450000",
