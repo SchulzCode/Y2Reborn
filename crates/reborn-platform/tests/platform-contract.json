@@ -10622,14 +10622,9 @@
      "clockevents": {},
      "clocksource": null,
      "highres_active": null,
-     "no_hz_active": true,
-     "per_cpu": [
-      {
-       "cpu": 1,
-       "nohz": 2
-      }
-     ],
-     "reason": null,
+     "no_hz_active": null,
+     "per_cpu": [],
+     "reason": "runtime_timer_state_unavailable",
      "source": "/proc/timer_list"
     },
     "utilization_percent": null,
@@ -10686,14 +10681,215 @@
    "status",
    "cpu"
   ],
-  "exit": 1,
+  "exit": 0,
   "files": {},
   "name": "observation/status-cpu-timer-superscript",
   "stdout": {
-   "reason": "invalid literal for int() with base 10: '\u00b2'",
-   "schema": "org.y2linux.error/v1",
-   "state": "Failed",
-   "type": "ValueError"
+   "cpu": {
+    "cirq": null,
+    "clock_blockers": {},
+    "counters": {
+     "ctxt": null,
+     "intr": null,
+     "processes": null,
+     "procs_blocked": null,
+     "procs_running": null,
+     "softirq": null
+    },
+    "dormant_preflight": "prerequisite_system_running=1\nprerequisite_boot_policy=1\nprerequisite_spm=1\nprerequisite_local_events=1\nprerequisite_cirq=1\nprerequisite_linux_context=1\nprerequisite_timer_context=1\nprerequisite_broken=1",
+    "dvfs_ceiling_khz": null,
+    "dvfs_diagnostics": {},
+    "dvfs_fault": null,
+    "idle": [
+     {
+      "cpu": "cpu0",
+      "disabled": 1,
+      "exit_latency_us": null,
+      "name": "DORMANT",
+      "rejected": null,
+      "state": "state2",
+      "target_residency_us": null,
+      "time_us": null,
+      "usage": null
+     }
+    ],
+    "idle_completion": {
+     "C1": {
+      "enabled": null,
+      "entries": null,
+      "failures": null,
+      "per_cpu": [],
+      "registered": false,
+      "residency_us": null
+     },
+     "C2": {
+      "attribution": {},
+      "blocker_owners": null,
+      "enabled": null,
+      "entries": null,
+      "failures": null,
+      "last_blocker": null,
+      "per_cpu": [],
+      "registered": false,
+      "residency_us": null,
+      "shared_dma_owners": [
+       {
+        "name": "18070000.connectivity",
+        "runtime_status": null
+       },
+       {
+        "name": "11007000.i2c",
+        "runtime_status": null
+       },
+       {
+        "name": "11008000.i2c",
+        "runtime_status": null
+       }
+      ]
+     },
+     "C3": {
+      "blocker_owners": [],
+      "boot_policy": {},
+      "context": null,
+      "display_idle": {},
+      "enabled": false,
+      "entries": null,
+      "entry_budget": 0,
+      "failures": null,
+      "per_cpu": [
+       {
+        "cpu": "cpu0",
+        "disabled": 1,
+        "exit_latency_us": null,
+        "name": "DORMANT",
+        "rejected": null,
+        "state": "state2",
+        "target_residency_us": null,
+        "time_us": null,
+        "usage": null
+       }
+      ],
+      "preflight": "prerequisite_system_running=1\nprerequisite_boot_policy=1\nprerequisite_spm=1\nprerequisite_local_events=1\nprerequisite_cirq=1\nprerequisite_linux_context=1\nprerequisite_timer_context=1\nprerequisite_broken=1",
+      "prerequisites": {
+       "boot_policy": true,
+       "broken": true,
+       "cirq": true,
+       "linux_context": true,
+       "local_events": true,
+       "spm": true,
+       "system_running": true,
+       "timer_context": true
+      },
+      "registered": true,
+      "residency_us": null,
+      "uart_clock_handoff": null,
+      "uart_sleep": {},
+      "unmet": [],
+      "unused_clock_handoff": null
+     }
+    },
+    "idle_diagnostics": {},
+    "load_average": null,
+    "mmc_runtime_pm": {},
+    "online": null,
+    "policies": [],
+    "pwrap_readiness": null,
+    "radio_boot_retries": null,
+    "recovery_options": {},
+    "slidle_attribution": {},
+    "slidle_clock_owners": null,
+    "spm": null,
+    "stock_bin": null,
+    "suspend_persistent": {
+     "backstop": null,
+     "current": null,
+     "device_callbacks": null,
+     "device_callbacks_previous_boot": null,
+     "durable": {
+      "product": {
+       "kernel_completed": true,
+       "reason": null,
+       "request_boot_id": "boot-a",
+       "state": "restored",
+       "wake_reason": "power"
+      }
+     },
+     "previous_boot": null,
+     "radio_restore": null,
+     "reset_status": "valid=1 cause=software_reset raw=0x00000004",
+     "retention": null,
+     "selftest": null,
+     "usb_restore": {}
+    },
+    "suspend_stage": null,
+    "system_idle": {},
+    "throttling_reason": null,
+    "ticks": {
+     "cpu": [
+      100,
+      0,
+      50,
+      1000,
+      5,
+      0,
+      1,
+      0
+     ],
+     "cpu0": [
+      100,
+      0,
+      50,
+      1000,
+      5,
+      0,
+      1,
+      0
+     ]
+    },
+    "ticks_unit": "USER_HZ_ticks",
+    "timer": {
+     "admission": {},
+     "broadcast_clockevent": null,
+     "clockevents": {},
+     "clocksource": null,
+     "highres_active": null,
+     "no_hz_active": null,
+     "per_cpu": [],
+     "reason": "runtime_timer_state_unavailable",
+     "source": "/proc/timer_list"
+    },
+    "utilization_percent": null,
+    "voltage_ownership": null,
+    "voltage_uv": null,
+    "wakeup_count": null,
+    "wakeup_count_reason": "fixture",
+    "workload_qos": {
+     "implemented": false,
+     "interactive_max_ms": 500,
+     "lease_max_ms": 30000,
+     "leases": null
+    }
+   },
+   "record": {
+    "boot_id": "boot-a",
+    "build_id": "fixture-build",
+    "collection_duration_ns": "<volatile>",
+    "evidence_level": "IMPLEMENTED",
+    "failure": null,
+    "kernel": "6.18.0-fixture",
+    "monotonic_ns": "<volatile>",
+    "parameters": {},
+    "reborn_commit": "reborn",
+    "result": "observed",
+    "rootfs_release": "v1.0",
+    "units": {
+     "collection_duration": "ns"
+    },
+    "wall_timestamp": "<volatile>",
+    "workload": "observation",
+    "y2linux_commit": "linux-commit"
+   },
+   "schema": "org.y2linux.status/v1"
   }
  },
  {
@@ -20116,7 +20312,6 @@
     "bus_parameters": null,
     "controllers": [
      {
-      "cap_hz": 5,
       "clock_error": -1,
       "mode": null,
       "name": "11230000.mmc",
@@ -21677,14 +21872,202 @@
    "status",
    "storage"
   ],
-  "exit": 1,
+  "exit": 0,
   "files": {},
   "name": "observation/status-storage-sd-superscript-size",
   "stdout": {
-   "reason": "invalid literal for int() with base 10: '\u00b2'",
-   "schema": "org.y2linux.error/v1",
-   "state": "Failed",
-   "type": "ValueError"
+   "record": {
+    "boot_id": "boot-a",
+    "build_id": "fixture-build",
+    "collection_duration_ns": "<volatile>",
+    "evidence_level": "IMPLEMENTED",
+    "failure": null,
+    "kernel": "6.18.0-fixture",
+    "monotonic_ns": "<volatile>",
+    "parameters": {},
+    "reborn_commit": "reborn",
+    "result": "observed",
+    "rootfs_release": "v1.0",
+    "units": {
+     "collection_duration": "ns"
+    },
+    "wall_timestamp": "<volatile>",
+    "workload": "observation",
+    "y2linux_commit": "linux-commit"
+   },
+   "schema": "org.y2linux.status/v1",
+   "storage": {
+    "blocks": [
+     {
+      "cid": null,
+      "io_error_count": 0,
+      "name": "11230000.mmc-blk",
+      "name_id": null,
+      "serial": null,
+      "size_sectors": 7634944,
+      "stat": "1 2 3 4",
+      "stat_unit": "Linux_block_stat_fields_sectors_512_bytes",
+      "type": "MMC"
+     }
+    ],
+    "bus_parameters": "clock: 200000000 Hz",
+    "controllers": [
+     {
+      "actual_hz": 187500000,
+      "cap_hz": 200000000,
+      "clock_error": -3,
+      "fallbacks": 1,
+      "mode": {
+       "a": -2,
+       "bus_width": 8,
+       "crc_events": 0,
+       "mode": "hs200",
+       "tuning": 31
+      },
+      "name": "11230000.mmc",
+      "runtime_pm": {
+       "delay_ms": 200,
+       "enabled": 1
+      },
+      "runtime_status": "active",
+      "transport_errors": 0,
+      "tuning": "phase=3"
+     }
+    ],
+    "internal_setup": {
+     "bytes": 9,
+     "files": 3,
+     "reason": null,
+     "state": "Ready"
+    },
+    "media": {
+     "last_operation": {
+      "reason": null,
+      "state": "Ready"
+     },
+     "lifecycle": {
+      "state": "Mounted"
+     }
+    },
+    "sd_bus_parameters": null,
+    "volumes": [
+     {
+      "available_bytes": "<volatile>",
+      "available_inodes": "<volatile>",
+      "controller_valid": true,
+      "device_id": "179:19",
+      "filesystem": "ext4",
+      "free_bytes": "<volatile>",
+      "generation": "boot-a:22:179:19",
+      "mount_id": 22,
+      "options": [
+       "ro"
+      ],
+      "path": "/",
+      "reason": "read_only",
+      "root": "/",
+      "source": "/dev/mmcblk0p19",
+      "source_instance": "block:179:19:diskseq:7",
+      "space_state": "ReadOnlyRisk",
+      "state": "Degraded",
+      "super_options": [
+       "ro"
+      ],
+      "total_bytes": "<volatile>",
+      "uuid": "79324c69-6e75-4801-8000-000000000101"
+     },
+     {
+      "available_bytes": "<volatile>",
+      "available_inodes": "<volatile>",
+      "controller_valid": true,
+      "device_id": "179:20",
+      "filesystem": "ext4",
+      "free_bytes": "<volatile>",
+      "generation": "boot-a:30:179:20",
+      "mount_id": 30,
+      "options": [
+       "rw",
+       "noatime"
+      ],
+      "path": "/data",
+      "reason": null,
+      "root": "/",
+      "source": "/dev/mmcblk0p20",
+      "source_instance": "block:179:20:diskseq:7",
+      "space_state": "Normal",
+      "state": "Ready",
+      "super_options": [
+       "rw"
+      ],
+      "total_bytes": "<volatile>",
+      "uuid": "79324c69-6e75-4801-8000-000000000102"
+     },
+     {
+      "available_bytes": "<volatile>",
+      "available_inodes": "<volatile>",
+      "controller_valid": true,
+      "device_id": "179:33",
+      "filesystem": "vfat",
+      "free_bytes": "<volatile>",
+      "generation": "boot-a:40:179:33",
+      "identity": {
+       "cid": "1b534d454231515430",
+       "filesystem": "vfat",
+       "geometry": {
+        "partition": "1",
+        "size": "\u00b2",
+        "start": "8192"
+       },
+       "id": "a45eaca6dfd1b8e283d3d776b106d064069e94e80589a05fbe53dc3d6d871082",
+       "uuid": "1234-ABCD"
+      },
+      "mount_id": 40,
+      "options": [
+       "ro",
+       "nosuid"
+      ],
+      "path": "/media/sd",
+      "reason": "media_identity_changed_or_missing",
+      "root": "/",
+      "source": "/dev/mmcblk1p1",
+      "source_instance": "block:179:33:diskseq:12",
+      "space_state": "Failed",
+      "state": "Failed",
+      "super_options": [
+       "ro"
+      ],
+      "total_bytes": "<volatile>",
+      "uuid": "1234-ABCD",
+      "writable": false
+     },
+     {
+      "available_bytes": "<volatile>",
+      "available_inodes": "<volatile>",
+      "controller_valid": true,
+      "device_id": "179:21",
+      "filesystem": "ext4",
+      "free_bytes": "<volatile>",
+      "generation": "boot-a:41:179:21",
+      "mount_id": 41,
+      "options": [
+       "rw",
+       "noatime"
+      ],
+      "path": "/media/internal",
+      "reason": null,
+      "root": "/",
+      "source": "/dev/mmcblk0p21",
+      "source_instance": "block:179:21:diskseq:7",
+      "space_state": "Normal",
+      "state": "Ready",
+      "super_options": [
+       "rw"
+      ],
+      "total_bytes": "<volatile>",
+      "uuid": "79324c69-6e75-4801-8000-000000000103"
+     }
+    ]
+   }
   }
  },
  {
