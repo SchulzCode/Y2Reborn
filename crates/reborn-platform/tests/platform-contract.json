@@ -11975,16 +11975,21 @@
     "kernel_warning_reason": "no_dedicated_counter; retain_bounded_owner_dmesg_capture",
     "previous_boot_evidence": {
      "captured_on_boot_id": "boot-z",
-     "kernel_panic_retention_guaranteed": null,
-     "loader": null,
+     "kernel_panic_retention_guaranteed": false,
+     "loader": {
+      "boot_reason": null,
+      "reset": null
+     },
      "log_tails": [
       {
        "name": "system.log",
-       "source_bytes_at_capture": null,
+       "source_bytes_at_capture": 0,
        "tail_sha256": "ab"
       }
      ],
      "pmic": {
+      "long_press_reset": null,
+      "long_press_reset_reason": "",
       "state": "Ready"
      },
      "previous_boot_id": "boot-y",
@@ -11995,7 +12000,13 @@
      "reset_cause_reason": null,
      "reset_status_raw": null,
      "retained": {
-      "files": []
+      "archive": "",
+      "captured_on_boot_id": "",
+      "errors": [],
+      "files": [],
+      "previous_boot_id": null,
+      "pstore_mounted": false,
+      "source_entries_deleted": false
      }
     },
     "pstore_files": [
@@ -20107,16 +20118,21 @@
     "kernel_warning_reason": "no_dedicated_counter; retain_bounded_owner_dmesg_capture",
     "previous_boot_evidence": {
      "captured_on_boot_id": "boot-z",
-     "kernel_panic_retention_guaranteed": null,
-     "loader": null,
+     "kernel_panic_retention_guaranteed": false,
+     "loader": {
+      "boot_reason": null,
+      "reset": null
+     },
      "log_tails": [
       {
        "name": "system.log",
-       "source_bytes_at_capture": null,
+       "source_bytes_at_capture": 0,
        "tail_sha256": "ab"
       }
      ],
      "pmic": {
+      "long_press_reset": null,
+      "long_press_reset_reason": "",
       "state": "Ready"
      },
      "previous_boot_id": "boot-y",
@@ -20127,7 +20143,13 @@
      "reset_cause_reason": null,
      "reset_status_raw": null,
      "retained": {
-      "files": []
+      "archive": "",
+      "captured_on_boot_id": "",
+      "errors": [],
+      "files": [],
+      "previous_boot_id": null,
+      "pstore_mounted": false,
+      "source_entries_deleted": false
      }
     },
     "pstore_files": [
@@ -23303,14 +23325,156 @@
    "status",
    "system"
   ],
-  "exit": 1,
+  "exit": 0,
   "files": {},
   "name": "observation/status-system-evidence-bad-logs",
   "stdout": {
-   "reason": "invalid_previous_boot_evidence",
-   "schema": "org.y2linux.error/v1",
-   "state": "Failed",
-   "type": "ValueError"
+   "record": {
+    "boot_id": "boot-a",
+    "build_id": "fixture-build",
+    "collection_duration_ns": "<volatile>",
+    "evidence_level": "IMPLEMENTED",
+    "failure": null,
+    "kernel": "6.18.0-fixture",
+    "monotonic_ns": "<volatile>",
+    "parameters": {},
+    "reborn_commit": "reborn",
+    "result": "observed",
+    "rootfs_release": "v1.0",
+    "units": {
+     "collection_duration": "ns"
+    },
+    "wall_timestamp": "<volatile>",
+    "workload": "observation",
+    "y2linux_commit": "linux-commit"
+   },
+   "schema": "org.y2linux.status/v1",
+   "system": {
+    "application_readiness": null,
+    "boot_history": {
+     "boot_count": 41,
+     "boot_id": "boot-z",
+     "consecutive_unclean": 2,
+     "history": [
+      {
+       "boot_id": "boot-0",
+       "last_stage": "shutdown_complete"
+      },
+      {
+       "boot_id": "boot-1",
+       "last_stage": "shutdown_complete"
+      },
+      {
+       "boot_id": "boot-2",
+       "last_stage": "shutdown_complete"
+      },
+      {
+       "boot_id": "boot-3",
+       "last_stage": "shutdown_complete"
+      },
+      {
+       "boot_id": "boot-4",
+       "last_stage": "shutdown_complete"
+      },
+      {
+       "boot_id": "boot-5",
+       "last_stage": "shutdown_complete"
+      },
+      {
+       "boot_id": "boot-6",
+       "last_stage": "shutdown_complete"
+      },
+      {
+       "boot_id": "boot-7",
+       "last_stage": "shutdown_complete"
+      }
+     ],
+     "identity": {
+      "release_version": "1.0.0-old"
+     },
+     "last_stage": "application_ready",
+     "orderly_shutdown": false,
+     "schema": 1
+    },
+    "boot_stages": [],
+    "crng_ready": null,
+    "entropy_available_bits": null,
+    "kernel_taint": 0,
+    "kernel_warning_count": null,
+    "kernel_warning_reason": "no_dedicated_counter; retain_bounded_owner_dmesg_capture",
+    "previous_boot_evidence": {
+     "reason": "invalid_previous_boot_evidence",
+     "state": "Unavailable"
+    },
+    "pstore_files": [],
+    "radio_core": null,
+    "radio_firmware": {
+     "file": "system.img",
+     "folder": "Firmware",
+     "location": "drive",
+     "state": "Missing"
+    },
+    "reborn_supervisor": null,
+    "reset_cause": "software_reset",
+    "reset_cause_reason": "rgu_wdt_status_at_probe",
+    "reset_status_raw": "0x00000004",
+    "rtc": [],
+    "ssh": {
+     "reason": "ssh_record_stale_or_absent",
+     "state": "Unavailable"
+    },
+    "time": "<volatile>",
+    "update": {
+     "channel": null,
+     "download": null,
+     "failure": "data_state_unavailable",
+     "full_system": true,
+     "last_check": null,
+     "physical_qualification": false,
+     "schema": 1,
+     "state": "Unavailable"
+    },
+    "uptime_seconds": "<volatile>",
+    "usb": {
+     "charging": {
+      "class_ceiling_ua": null,
+      "host_allowance_ua": null,
+      "owner_charge_ceiling_ua": null,
+      "programmed_charge_ua": null,
+      "sense_current_basis": "bsp-200mohm-unvalidated-charger-path-estimate",
+      "sense_current_est_ua": null,
+      "source_type": null,
+      "state": "Charging",
+      "stock_request_ua": null,
+      "thermal_level": null,
+      "usb_online": "1"
+     },
+     "dma": null,
+     "file_transfer": {},
+     "functions": [],
+     "link": {},
+     "mode": "peripheral",
+     "mtp_roots": {},
+     "negotiated_speed": null,
+     "network": {
+      "address": null,
+      "ipv4": null,
+      "operstate": null
+     },
+     "out_path": {},
+     "udcs": []
+    },
+    "versions": {
+     "build_git_commit": "linux-commit",
+     "feature_contract_version": 2,
+     "kernel_version": "6.18.0-fixture",
+     "platform_api_version": 1,
+     "reborn_source_commit": "reborn",
+     "release_version": "1.0.0-fixture",
+     "rootfs_version": "v1.0"
+    },
+    "watchdogs": []
+   }
   }
  },
  {
@@ -23318,14 +23482,156 @@
    "status",
    "system"
   ],
-  "exit": 1,
+  "exit": 0,
   "files": {},
   "name": "observation/status-system-evidence-list-log",
   "stdout": {
-   "reason": "invalid_previous_boot_evidence",
-   "schema": "org.y2linux.error/v1",
-   "state": "Failed",
-   "type": "ValueError"
+   "record": {
+    "boot_id": "boot-a",
+    "build_id": "fixture-build",
+    "collection_duration_ns": "<volatile>",
+    "evidence_level": "IMPLEMENTED",
+    "failure": null,
+    "kernel": "6.18.0-fixture",
+    "monotonic_ns": "<volatile>",
+    "parameters": {},
+    "reborn_commit": "reborn",
+    "result": "observed",
+    "rootfs_release": "v1.0",
+    "units": {
+     "collection_duration": "ns"
+    },
+    "wall_timestamp": "<volatile>",
+    "workload": "observation",
+    "y2linux_commit": "linux-commit"
+   },
+   "schema": "org.y2linux.status/v1",
+   "system": {
+    "application_readiness": null,
+    "boot_history": {
+     "boot_count": 41,
+     "boot_id": "boot-z",
+     "consecutive_unclean": 2,
+     "history": [
+      {
+       "boot_id": "boot-0",
+       "last_stage": "shutdown_complete"
+      },
+      {
+       "boot_id": "boot-1",
+       "last_stage": "shutdown_complete"
+      },
+      {
+       "boot_id": "boot-2",
+       "last_stage": "shutdown_complete"
+      },
+      {
+       "boot_id": "boot-3",
+       "last_stage": "shutdown_complete"
+      },
+      {
+       "boot_id": "boot-4",
+       "last_stage": "shutdown_complete"
+      },
+      {
+       "boot_id": "boot-5",
+       "last_stage": "shutdown_complete"
+      },
+      {
+       "boot_id": "boot-6",
+       "last_stage": "shutdown_complete"
+      },
+      {
+       "boot_id": "boot-7",
+       "last_stage": "shutdown_complete"
+      }
+     ],
+     "identity": {
+      "release_version": "1.0.0-old"
+     },
+     "last_stage": "application_ready",
+     "orderly_shutdown": false,
+     "schema": 1
+    },
+    "boot_stages": [],
+    "crng_ready": null,
+    "entropy_available_bits": null,
+    "kernel_taint": 0,
+    "kernel_warning_count": null,
+    "kernel_warning_reason": "no_dedicated_counter; retain_bounded_owner_dmesg_capture",
+    "previous_boot_evidence": {
+     "reason": "invalid_previous_boot_evidence",
+     "state": "Unavailable"
+    },
+    "pstore_files": [],
+    "radio_core": null,
+    "radio_firmware": {
+     "file": "system.img",
+     "folder": "Firmware",
+     "location": "drive",
+     "state": "Missing"
+    },
+    "reborn_supervisor": null,
+    "reset_cause": "software_reset",
+    "reset_cause_reason": "rgu_wdt_status_at_probe",
+    "reset_status_raw": "0x00000004",
+    "rtc": [],
+    "ssh": {
+     "reason": "ssh_record_stale_or_absent",
+     "state": "Unavailable"
+    },
+    "time": "<volatile>",
+    "update": {
+     "channel": null,
+     "download": null,
+     "failure": "data_state_unavailable",
+     "full_system": true,
+     "last_check": null,
+     "physical_qualification": false,
+     "schema": 1,
+     "state": "Unavailable"
+    },
+    "uptime_seconds": "<volatile>",
+    "usb": {
+     "charging": {
+      "class_ceiling_ua": null,
+      "host_allowance_ua": null,
+      "owner_charge_ceiling_ua": null,
+      "programmed_charge_ua": null,
+      "sense_current_basis": "bsp-200mohm-unvalidated-charger-path-estimate",
+      "sense_current_est_ua": null,
+      "source_type": null,
+      "state": "Charging",
+      "stock_request_ua": null,
+      "thermal_level": null,
+      "usb_online": "1"
+     },
+     "dma": null,
+     "file_transfer": {},
+     "functions": [],
+     "link": {},
+     "mode": "peripheral",
+     "mtp_roots": {},
+     "negotiated_speed": null,
+     "network": {
+      "address": null,
+      "ipv4": null,
+      "operstate": null
+     },
+     "out_path": {},
+     "udcs": []
+    },
+    "versions": {
+     "build_git_commit": "linux-commit",
+     "feature_contract_version": 2,
+     "kernel_version": "6.18.0-fixture",
+     "platform_api_version": 1,
+     "reborn_source_commit": "reborn",
+     "release_version": "1.0.0-fixture",
+     "rootfs_version": "v1.0"
+    },
+    "watchdogs": []
+   }
   }
  },
  {
@@ -23333,14 +23639,156 @@
    "status",
    "system"
   ],
-  "exit": 1,
+  "exit": 0,
   "files": {},
   "name": "observation/status-system-evidence-null-logs",
   "stdout": {
-   "reason": "invalid_previous_boot_evidence",
-   "schema": "org.y2linux.error/v1",
-   "state": "Failed",
-   "type": "ValueError"
+   "record": {
+    "boot_id": "boot-a",
+    "build_id": "fixture-build",
+    "collection_duration_ns": "<volatile>",
+    "evidence_level": "IMPLEMENTED",
+    "failure": null,
+    "kernel": "6.18.0-fixture",
+    "monotonic_ns": "<volatile>",
+    "parameters": {},
+    "reborn_commit": "reborn",
+    "result": "observed",
+    "rootfs_release": "v1.0",
+    "units": {
+     "collection_duration": "ns"
+    },
+    "wall_timestamp": "<volatile>",
+    "workload": "observation",
+    "y2linux_commit": "linux-commit"
+   },
+   "schema": "org.y2linux.status/v1",
+   "system": {
+    "application_readiness": null,
+    "boot_history": {
+     "boot_count": 41,
+     "boot_id": "boot-z",
+     "consecutive_unclean": 2,
+     "history": [
+      {
+       "boot_id": "boot-0",
+       "last_stage": "shutdown_complete"
+      },
+      {
+       "boot_id": "boot-1",
+       "last_stage": "shutdown_complete"
+      },
+      {
+       "boot_id": "boot-2",
+       "last_stage": "shutdown_complete"
+      },
+      {
+       "boot_id": "boot-3",
+       "last_stage": "shutdown_complete"
+      },
+      {
+       "boot_id": "boot-4",
+       "last_stage": "shutdown_complete"
+      },
+      {
+       "boot_id": "boot-5",
+       "last_stage": "shutdown_complete"
+      },
+      {
+       "boot_id": "boot-6",
+       "last_stage": "shutdown_complete"
+      },
+      {
+       "boot_id": "boot-7",
+       "last_stage": "shutdown_complete"
+      }
+     ],
+     "identity": {
+      "release_version": "1.0.0-old"
+     },
+     "last_stage": "application_ready",
+     "orderly_shutdown": false,
+     "schema": 1
+    },
+    "boot_stages": [],
+    "crng_ready": null,
+    "entropy_available_bits": null,
+    "kernel_taint": 0,
+    "kernel_warning_count": null,
+    "kernel_warning_reason": "no_dedicated_counter; retain_bounded_owner_dmesg_capture",
+    "previous_boot_evidence": {
+     "reason": "invalid_previous_boot_evidence",
+     "state": "Unavailable"
+    },
+    "pstore_files": [],
+    "radio_core": null,
+    "radio_firmware": {
+     "file": "system.img",
+     "folder": "Firmware",
+     "location": "drive",
+     "state": "Missing"
+    },
+    "reborn_supervisor": null,
+    "reset_cause": "software_reset",
+    "reset_cause_reason": "rgu_wdt_status_at_probe",
+    "reset_status_raw": "0x00000004",
+    "rtc": [],
+    "ssh": {
+     "reason": "ssh_record_stale_or_absent",
+     "state": "Unavailable"
+    },
+    "time": "<volatile>",
+    "update": {
+     "channel": null,
+     "download": null,
+     "failure": "data_state_unavailable",
+     "full_system": true,
+     "last_check": null,
+     "physical_qualification": false,
+     "schema": 1,
+     "state": "Unavailable"
+    },
+    "uptime_seconds": "<volatile>",
+    "usb": {
+     "charging": {
+      "class_ceiling_ua": null,
+      "host_allowance_ua": null,
+      "owner_charge_ceiling_ua": null,
+      "programmed_charge_ua": null,
+      "sense_current_basis": "bsp-200mohm-unvalidated-charger-path-estimate",
+      "sense_current_est_ua": null,
+      "source_type": null,
+      "state": "Charging",
+      "stock_request_ua": null,
+      "thermal_level": null,
+      "usb_online": "1"
+     },
+     "dma": null,
+     "file_transfer": {},
+     "functions": [],
+     "link": {},
+     "mode": "peripheral",
+     "mtp_roots": {},
+     "negotiated_speed": null,
+     "network": {
+      "address": null,
+      "ipv4": null,
+      "operstate": null
+     },
+     "out_path": {},
+     "udcs": []
+    },
+    "versions": {
+     "build_git_commit": "linux-commit",
+     "feature_contract_version": 2,
+     "kernel_version": "6.18.0-fixture",
+     "platform_api_version": 1,
+     "reborn_source_commit": "reborn",
+     "release_version": "1.0.0-fixture",
+     "rootfs_version": "v1.0"
+    },
+    "watchdogs": []
+   }
   }
  },
  {
@@ -23348,14 +23796,156 @@
    "status",
    "system"
   ],
-  "exit": 1,
+  "exit": 0,
   "files": {},
   "name": "observation/status-system-evidence-text-logs",
   "stdout": {
-   "reason": "invalid_previous_boot_evidence",
-   "schema": "org.y2linux.error/v1",
-   "state": "Failed",
-   "type": "ValueError"
+   "record": {
+    "boot_id": "boot-a",
+    "build_id": "fixture-build",
+    "collection_duration_ns": "<volatile>",
+    "evidence_level": "IMPLEMENTED",
+    "failure": null,
+    "kernel": "6.18.0-fixture",
+    "monotonic_ns": "<volatile>",
+    "parameters": {},
+    "reborn_commit": "reborn",
+    "result": "observed",
+    "rootfs_release": "v1.0",
+    "units": {
+     "collection_duration": "ns"
+    },
+    "wall_timestamp": "<volatile>",
+    "workload": "observation",
+    "y2linux_commit": "linux-commit"
+   },
+   "schema": "org.y2linux.status/v1",
+   "system": {
+    "application_readiness": null,
+    "boot_history": {
+     "boot_count": 41,
+     "boot_id": "boot-z",
+     "consecutive_unclean": 2,
+     "history": [
+      {
+       "boot_id": "boot-0",
+       "last_stage": "shutdown_complete"
+      },
+      {
+       "boot_id": "boot-1",
+       "last_stage": "shutdown_complete"
+      },
+      {
+       "boot_id": "boot-2",
+       "last_stage": "shutdown_complete"
+      },
+      {
+       "boot_id": "boot-3",
+       "last_stage": "shutdown_complete"
+      },
+      {
+       "boot_id": "boot-4",
+       "last_stage": "shutdown_complete"
+      },
+      {
+       "boot_id": "boot-5",
+       "last_stage": "shutdown_complete"
+      },
+      {
+       "boot_id": "boot-6",
+       "last_stage": "shutdown_complete"
+      },
+      {
+       "boot_id": "boot-7",
+       "last_stage": "shutdown_complete"
+      }
+     ],
+     "identity": {
+      "release_version": "1.0.0-old"
+     },
+     "last_stage": "application_ready",
+     "orderly_shutdown": false,
+     "schema": 1
+    },
+    "boot_stages": [],
+    "crng_ready": null,
+    "entropy_available_bits": null,
+    "kernel_taint": 0,
+    "kernel_warning_count": null,
+    "kernel_warning_reason": "no_dedicated_counter; retain_bounded_owner_dmesg_capture",
+    "previous_boot_evidence": {
+     "reason": "invalid_previous_boot_evidence",
+     "state": "Unavailable"
+    },
+    "pstore_files": [],
+    "radio_core": null,
+    "radio_firmware": {
+     "file": "system.img",
+     "folder": "Firmware",
+     "location": "drive",
+     "state": "Missing"
+    },
+    "reborn_supervisor": null,
+    "reset_cause": "software_reset",
+    "reset_cause_reason": "rgu_wdt_status_at_probe",
+    "reset_status_raw": "0x00000004",
+    "rtc": [],
+    "ssh": {
+     "reason": "ssh_record_stale_or_absent",
+     "state": "Unavailable"
+    },
+    "time": "<volatile>",
+    "update": {
+     "channel": null,
+     "download": null,
+     "failure": "data_state_unavailable",
+     "full_system": true,
+     "last_check": null,
+     "physical_qualification": false,
+     "schema": 1,
+     "state": "Unavailable"
+    },
+    "uptime_seconds": "<volatile>",
+    "usb": {
+     "charging": {
+      "class_ceiling_ua": null,
+      "host_allowance_ua": null,
+      "owner_charge_ceiling_ua": null,
+      "programmed_charge_ua": null,
+      "sense_current_basis": "bsp-200mohm-unvalidated-charger-path-estimate",
+      "sense_current_est_ua": null,
+      "source_type": null,
+      "state": "Charging",
+      "stock_request_ua": null,
+      "thermal_level": null,
+      "usb_online": "1"
+     },
+     "dma": null,
+     "file_transfer": {},
+     "functions": [],
+     "link": {},
+     "mode": "peripheral",
+     "mtp_roots": {},
+     "negotiated_speed": null,
+     "network": {
+      "address": null,
+      "ipv4": null,
+      "operstate": null
+     },
+     "out_path": {},
+     "udcs": []
+    },
+    "versions": {
+     "build_git_commit": "linux-commit",
+     "feature_contract_version": 2,
+     "kernel_version": "6.18.0-fixture",
+     "platform_api_version": 1,
+     "reborn_source_commit": "reborn",
+     "release_version": "1.0.0-fixture",
+     "rootfs_version": "v1.0"
+    },
+    "watchdogs": []
+   }
   }
  },
  {
@@ -23763,16 +24353,21 @@
     "kernel_warning_reason": "no_dedicated_counter; retain_bounded_owner_dmesg_capture",
     "previous_boot_evidence": {
      "captured_on_boot_id": "boot-z",
-     "kernel_panic_retention_guaranteed": null,
-     "loader": null,
+     "kernel_panic_retention_guaranteed": false,
+     "loader": {
+      "boot_reason": null,
+      "reset": null
+     },
      "log_tails": [
       {
        "name": "system.log",
-       "source_bytes_at_capture": null,
+       "source_bytes_at_capture": 0,
        "tail_sha256": "ab"
       }
      ],
      "pmic": {
+      "long_press_reset": null,
+      "long_press_reset_reason": "",
       "state": "Ready"
      },
      "previous_boot_id": "boot-y",
@@ -23783,7 +24378,13 @@
      "reset_cause_reason": null,
      "reset_status_raw": null,
      "retained": {
-      "files": []
+      "archive": "",
+      "captured_on_boot_id": "",
+      "errors": [],
+      "files": [],
+      "previous_boot_id": null,
+      "pstore_mounted": false,
+      "source_entries_deleted": false
      }
     },
     "pstore_files": [
