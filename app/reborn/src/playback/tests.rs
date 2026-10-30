@@ -1,4 +1,3 @@
-
 use super::*;
 use reborn_audio::Parameters;
 use reborn_core::{AudioOutput, PcmFormat};
