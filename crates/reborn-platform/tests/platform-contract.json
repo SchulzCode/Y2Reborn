@@ -27615,14 +27615,29 @@
    "report",
    "check"
   ],
-  "exit": 0,
+  "exit": 1,
   "files": {},
   "name": "reports/report-check-fired-reported-text",
   "stdout": {
+   "failure": "report_failed",
+   "reason": "report_state_unreadable"
+  }
+ },
+ {
+  "argv": [
+   "report",
+   "check"
+  ],
+  "exit": 0,
+  "files": {},
+  "name": "reports/report-check-fired-settings-number",
+  "stdout": {
    "reports": [
     {
-     "queued": false,
-     "reason": "already_reported_this_boot",
+     "bytes": "<volatile>",
+     "name": "<stamp>-<uuid>.tar.gz",
+     "queued": true,
+     "report_id": "<uuid>",
      "trigger": "kernel_warning",
      "triggers": [
       "kernel_warning"
@@ -27636,25 +27651,22 @@
    "report",
    "check"
   ],
-  "exit": 1,
-  "files": {},
-  "name": "reports/report-check-fired-settings-number",
-  "stdout": {
-   "failure": "report_failed",
-   "reason": "session_unreadable"
-  }
- },
- {
-  "argv": [
-   "report",
-   "check"
-  ],
-  "exit": 1,
+  "exit": 0,
   "files": {},
   "name": "reports/report-check-fired-settings-text",
   "stdout": {
-   "failure": "report_failed",
-   "reason": "ValueError"
+   "reports": [
+    {
+     "bytes": "<volatile>",
+     "name": "<stamp>-<uuid>.tar.gz",
+     "queued": true,
+     "report_id": "<uuid>",
+     "trigger": "kernel_warning",
+     "triggers": [
+      "kernel_warning"
+     ]
+    }
+   ]
   }
  },
  {
