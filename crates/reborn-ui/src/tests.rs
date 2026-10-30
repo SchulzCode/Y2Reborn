@@ -2078,12 +2078,12 @@ fn full_system_update_wording_and_versions() {
     m.platform.busy = None;
     m.platform.download = None;
     m.platform.snapshot.update.phase = UpdatePhase::Downloading;
-    m.platform.snapshot.update.download_percent = Some(40);
-    assert!(pages::page(&ui, &m, &m.library.tracks)
-        .hero
-        .unwrap()
-        .title
-        .ends_with("40%"));
+    // Before the first live record (the platform writes it from the first bytes on).
+    assert_eq!(
+        pages::page(&ui, &m, &m.library.tracks).hero.unwrap().title,
+        "Downloading Update…"
+    );
+    assert_eq!(pages::update_summary(&m), "Downloading…");
     assert_eq!(
         pages::short_version("1.0.0-platform-v1-power-final-candidate.35"),
         "1.0.0 (35)"

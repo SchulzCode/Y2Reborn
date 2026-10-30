@@ -16,6 +16,7 @@ use reborn_core::{
     },
     PlatformTask,
 };
+use serde::Deserialize;
 use serde_json::{json, Value};
 use std::{
     fs,
@@ -34,10 +35,11 @@ const LIMIT: u64 = 1024 * 1024;
 const PROGRAM: &str = "/usr/sbin/y2-platform";
 use y2p_contract::lenient;
 use y2p_contract::schema as schemas;
-use y2p_contract::sleep::{Product, ProductState, WakeSource};
 pub use y2p_contract::schema::{
     CAPABILITIES as CAPABILITIES_SCHEMA, HEALTH as HEALTH_SCHEMA, STATUS as STATUS_SCHEMA,
 };
+use y2p_contract::sleep::{Product, ProductState, WakeSource};
+use y2p_contract::update::{DownloadPhase, DownloadProgress, Status as UpdateStatus};
 
 /// A typed reply for one task.
 pub enum Reply {
@@ -726,25 +728,27 @@ pub fn parse_report_progress(record: &Value) -> Option<ReportLive> {
 }
 
 pub fn parse_download(record: &Value, check: Option<&str>) -> Option<DownloadLive> {
-    if record["schema"] != 1 {
+    let record = DownloadProgress::deserialize(record).ok()?;
+    if record.schema != 1 {
         return None;
     }
-    let verifying = match record["phase"].as_str()? {
-        "download" => false,
-        "verify" => true,
-        _ => return None,
+    let verifying = match record.phase {
+        DownloadPhase::Download => false,
+        DownloadPhase::Verify => true,
+        DownloadPhase::Done | DownloadPhase::Failed => return None,
     };
+    let unsigned = |n: Option<i64>| n.and_then(|n| u64::try_from(n).ok());
     Some(DownloadLive {
         verifying,
-        bytes_done: record["bytes_done"].as_u64()?,
-        bytes_total: record["bytes_total"].as_u64()?,
-        speed_bytes_per_s: record["speed_bytes_per_s"].as_u64().filter(|&s| s > 0),
+        bytes_done: unsigned(Some(record.bytes_done))?,
+        bytes_total: unsigned(Some(record.bytes_total))?,
+        speed_bytes_per_s: unsigned(record.speed_bytes_per_s).filter(|&s| s > 0),
         seconds_left: if verifying {
             check
                 .and_then(|line| line.split_whitespace().nth(2))
                 .and_then(|s| s.parse::<u64>().ok())
         } else {
-            record["seconds_left"].as_u64()
+            unsigned(record.seconds_left)
         },
         check_percent: if verifying {
             check
@@ -759,61 +763,50 @@ pub fn parse_download(record: &Value, check: Option<&str>) -> Option<DownloadLiv
 }
 
 pub fn update(status: &Value, ota_enabled: bool) -> UpdateState {
-    let u = &status["system"]["update"];
-    let state = u["state"].as_str().unwrap_or("");
-    let download = &u["download"];
+    let u = UpdateStatus::deserialize(&status["system"]["update"]).unwrap_or_default();
+    let state = u.journal.state.as_deref().unwrap_or("");
+    let download = u.download();
+    let downloading = |states: &[&str]| download.is_some_and(|d| states.iter().any(|s| d.is(s)));
     let current = status["system"]["versions"]["release_version"].as_str();
-    let terminal = matches!(state, "Idle" | "Acknowledged" | "RolledBack" | "Failed");
+    let terminal = u.journal.terminal();
     // A cancel is the owner's choice, not a failure, and a check made after a
     // failed update (download.json) supersedes it: otherwise the page kept
     // saying "didn't finish" and never offered the newer release.
-    let failure = u["failure"].as_str().unwrap_or("");
-    let superseded = failure.contains("cancelled")
-        || matches!(
-            download["state"].as_str(),
-            Some("Checking" | "Checked" | "Staging")
-        );
+    let failure = u.failure().unwrap_or("");
+    let superseded =
+        failure.contains("cancelled") || downloading(&["Checking", "Checked", "Staging"]);
     let phase = match state {
         "Queued" => UpdatePhase::ReadyToInstall,
         "PendingHealth" => UpdatePhase::Installing,
         "RollbackPending" => UpdatePhase::Restoring,
         "Failed" if !superseded => UpdatePhase::Failed(update_problem(failure)),
-        _ => match download["state"].as_str() {
-            Some("Checking") => UpdatePhase::Checking,
-            Some("Staging") => UpdatePhase::Downloading,
-            Some("Checked") => match download["release_version"].as_str() {
+        _ => match download {
+            Some(d) if d.is("Checking") => UpdatePhase::Checking,
+            Some(d) if d.is("Staging") => UpdatePhase::Downloading,
+            Some(d) if d.is("Checked") => match d.release() {
                 Some(v) if Some(v) != current => UpdatePhase::Available {
                     version: v.to_owned(),
                 },
                 Some(_) => UpdatePhase::UpToDate,
                 None => UpdatePhase::Unknown,
             },
-            Some("Failed") => {
-                UpdatePhase::Failed(update_problem(download["failure"].as_str().unwrap_or("")))
+            Some(d) if d.is("Failed") => {
+                UpdatePhase::Failed(update_problem(d.failure.as_deref().unwrap_or("")))
             }
             _ => UpdatePhase::Unknown,
         },
     };
+    let bytes = |n: Option<i64>| n.and_then(|n| u64::try_from(n).ok());
     UpdateState {
         can_check: ota_enabled && terminal,
         can_download: ota_enabled && terminal && matches!(phase, UpdatePhase::Available { .. }),
         can_install: ota_enabled && state == "Queued",
         can_cancel: ota_enabled && state == "Queued",
         can_rollback: ota_enabled
-            && u["rollback_allowed"] == true
+            && u.journal.rollback_allowed == Some(true)
             && matches!(state, "Acknowledged" | "PendingHealth"),
-        download_percent: match (
-            download["bytes_done"].as_u64(),
-            download["bytes_total"].as_u64(),
-        ) {
-            (Some(done), Some(total)) if total > 0 && download["state"] == "Staging" => {
-                Some((done.min(total) * 100 / total) as u8)
-            }
-            _ => None,
-        },
-        download_bytes: download["download_bytes"].as_u64(),
-        space_needed_mb: download["needed_bytes"]
-            .as_u64()
+        download_bytes: bytes(download.and_then(|d| d.download_bytes)),
+        space_needed_mb: bytes(download.and_then(|d| d.needed_bytes))
             .map(|b| b.div_ceil(1_000_000)),
         phase,
     }
@@ -1814,13 +1807,8 @@ mod tests {
             }
         );
         assert_eq!(u.download_bytes, Some(57_000_000));
-        v["system"]["update"] = json!({"state":"Idle","download":{"state":"Staging",
-            "bytes_done":25,"bytes_total":100}});
-        let u = update(&v, true);
-        assert_eq!(
-            (u.phase, u.download_percent),
-            (UpdatePhase::Downloading, Some(25))
-        );
+        v["system"]["update"] = json!({"state":"Idle","download":{"state":"Staging"}});
+        assert_eq!(update(&v, true).phase, UpdatePhase::Downloading);
         v["system"]["update"] = json!({"state":"RollbackPending"});
         assert_eq!(update(&v, true).phase, UpdatePhase::Restoring);
         v["system"]["update"] = json!({"state":"PendingHealth"});

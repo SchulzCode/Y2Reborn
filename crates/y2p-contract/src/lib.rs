@@ -12,6 +12,7 @@
 // SPDX-License-Identifier: MIT
 pub mod lenient;
 pub mod sleep;
+pub mod update;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};

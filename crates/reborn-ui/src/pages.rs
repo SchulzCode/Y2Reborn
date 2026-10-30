@@ -1506,7 +1506,10 @@ fn storage(ui: &Ui, m: &AppModel) -> Page {
 
 pub fn update_summary(m: &AppModel) -> String {
     let s = &m.platform.snapshot;
-    if m.platform.busy == Some(PlatformTask::UpdateStage) {
+    // The live record also covers a download Reborn found running after a restart.
+    if m.platform.busy == Some(PlatformTask::UpdateStage)
+        || s.update.phase == UpdatePhase::Downloading
+    {
         return match m.platform.download {
             Some(l) if l.verifying => format!("Checking · {}%", (l.fraction() * 100.) as u32),
             Some(l) => format!("Downloading · {}%", (l.fraction() * 100.) as u32),
@@ -1522,10 +1525,6 @@ pub fn update_summary(m: &AppModel) -> String {
         UpdatePhase::ReadyToInstall => "Ready to install".into(),
         UpdatePhase::Installing => "Finishing…".into(),
         UpdatePhase::Restoring => "Restore pending".into(),
-        UpdatePhase::Downloading => match m.platform.snapshot.update.download_percent {
-            Some(p) => format!("Downloading · {p}%"),
-            None => "Downloading…".into(),
-        },
         _ => String::new(),
     }
 }
@@ -1751,13 +1750,7 @@ fn update_status(m: &AppModel) -> Page {
                 format!("Downloading Update… {}%", (l.fraction() * 100.) as u32),
                 "Keep Wi-Fi on.",
             ),
-            None => Page::hero(
-                match u.download_percent {
-                    Some(p) => format!("Downloading Update… {p}%"),
-                    None => "Downloading Update…".into(),
-                },
-                "Keep Wi-Fi on.",
-            ),
+            None => Page::hero("Downloading Update…", "Keep Wi-Fi on."),
         };
     }
     if !s.observed {

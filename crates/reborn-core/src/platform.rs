@@ -444,8 +444,6 @@ pub struct UpdateState {
     pub can_cancel: bool,
     /// A verified previous system root can be restored (Diagnostics only).
     pub can_rollback: bool,
-    /// Download progress while the platform stages a release.
-    pub download_percent: Option<u8>,
     /// Size of the release the last check found, in bytes.
     pub download_bytes: Option<u64>,
     /// System space a refused download needed, after the platform's cleanup.
