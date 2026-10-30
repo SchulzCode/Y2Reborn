@@ -10,10 +10,8 @@ use std::{fs, path::Path};
 fn main_source() -> String {
     let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut files = vec![src.join("main_loop.rs"), src.join("main.rs")];
-    let mut runtime: Vec<_> = fs::read_dir(src.join("runtime"))
-        .unwrap()
-        .map(|entry| entry.unwrap().path())
-        .collect();
+    let mut runtime = vec![];
+    sources(&src.join("runtime"), &mut runtime);
     runtime.sort();
     files.extend(runtime);
     files
@@ -21,6 +19,18 @@ fn main_source() -> String {
         .map(|file| fs::read_to_string(file).unwrap())
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+/// The `.rs` files below `dir`.
+fn sources(dir: &Path, files: &mut Vec<std::path::PathBuf>) {
+    for entry in fs::read_dir(dir).unwrap() {
+        let path = entry.unwrap().path();
+        if path.is_dir() {
+            sources(&path, files);
+        } else if path.extension().is_some_and(|e| e == "rs") {
+            files.push(path);
+        }
+    }
 }
 
 fn at(source: &str, needle: &str) -> usize {

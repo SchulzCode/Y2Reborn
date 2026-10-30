@@ -1,6 +1,12 @@
 //! What the UI asks for (`Effect`) and the DSP reload.
 use crate::*;
 
+mod platform;
+mod queue;
+mod radios;
+mod sound;
+mod system;
+
 impl Runtime {
     pub(crate) fn effect(&mut self, e: Effect) -> Result<(), String> {
         // Holding Previous/Next seeks every 90 ms: steps are collected and
@@ -103,103 +109,7 @@ impl Runtime {
         }
         match e {
             Effect::None => {}
-            Effect::Platform(task) => {
-                if task == reborn_core::PlatformTask::SleepRequest
-                    && !matches!(
-                        self.model.playback,
-                        PlaybackState::Playing | PlaybackState::Buffering
-                    )
-                {
-                    // F48: Power turns the screen off at once, as on stock. It
-                    // stayed lit ≈1.7 s until the platform prepared, people
-                    // pressed again, and that press cancelled the sleep.
-                    self.effect_inner(Effect::ScreenSleep)?;
-                    self.sleep_requested_at = Some(Instant::now());
-                }
-                if self.model.platform.busy.is_some() {
-                    self.queue_platform(task);
-                    return Ok(());
-                }
-                if task == reborn_core::PlatformTask::InternalStorageSetup
-                    && matches!(
-                        self.model.platform.snapshot.usb,
-                        reborn_core::platform::UsbTransfer::Ready
-                            | reborn_core::platform::UsbTransfer::Copying
-                            | reborn_core::platform::UsbTransfer::Starting
-                    )
-                {
-                    return Err("Unplug from the computer first".into());
-                }
-                if task == reborn_core::PlatformTask::SdRepair {
-                    // The card is unmounted for the repair: nothing may hold a
-                    // song or its folder open on it.
-                    let on_card = self.model.current().is_some_and(|t| {
-                        self.model.sources.iter().any(|s| {
-                            s.id == t.source_id
-                                && matches!(s.kind, reborn_core::MediaSource::SdCard(_))
-                        })
-                    });
-                    if on_card {
-                        if self.model.playback == PlaybackState::Playing {
-                            self.pause();
-                        }
-                        self.release_hold_with(true);
-                        self.playback.stop(self.model.generation);
-                    }
-                }
-                if task == reborn_core::PlatformTask::SleepRequest {
-                    self.sleep_attempt = Some(Instant::now());
-                    use reborn_core::platform::{SleepPhase, SleepProblem, SleepState};
-                    if matches!(
-                        self.model.playback,
-                        PlaybackState::Playing | PlaybackState::Buffering
-                    ) {
-                        self.model.platform.snapshot.sleep = SleepState {
-                            phase: SleepPhase::SleepRefused,
-                            problem: Some(SleepProblem::PlaybackActive),
-                            ..Default::default()
-                        };
-                        return Ok(());
-                    }
-                    // A pause held in place keeps the sink, and its activity
-                    // lease, open: give it back first so the platform's lock
-                    // check passes (Play then restarts at the same place).
-                    self.release_hold_with(true);
-                    self.checkpoint();
-                }
-                let worker = self.platform.as_ref().ok_or("System service is starting")?;
-                if worker.commands.try_send(task).is_err() {
-                    // An observation runs and another waits: take the next turn.
-                    if task == reborn_core::PlatformTask::Refresh {
-                        return Err("busy: another operation is still running".into());
-                    }
-                    self.queue_platform(task);
-                    return Ok(());
-                }
-                if matches!(
-                    task,
-                    reborn_core::PlatformTask::UpdateStage | reborn_core::PlatformTask::UpdateApply
-                ) {
-                    self.log.emit(
-                        Level::Info,
-                        "update",
-                        "task_started",
-                        "Update task sent to the platform",
-                        None,
-                        json!({"task":format!("{task:?}")}),
-                    );
-                }
-                self.model.platform.busy = Some(task);
-                if task == reborn_core::PlatformTask::SleepRequest {
-                    self.model.platform.snapshot.sleep.phase =
-                        reborn_core::platform::SleepPhase::SleepRequested;
-                }
-                if task != reborn_core::PlatformTask::Refresh {
-                    self.model.platform.failure = None;
-                    self.model.platform.result = None;
-                }
-                self.dirty.mark_render();
-            }
+            Effect::Platform(task) => self.on_platform(task)?,
             Effect::StopPlayback => {
                 self.pause();
                 self.model.playback = PlaybackState::Stopped;
@@ -220,34 +130,7 @@ impl Runtime {
                 self.checkpoint();
             }
             Effect::Playlist(request) => self.playlist(*request)?,
-            Effect::SetCodecPreference(preference) => {
-                if !codec_change_allowed(
-                    self.model.playback,
-                    self.pending_reconfiguration.is_some(),
-                ) {
-                    return Err("Pause music before changing codec".into());
-                }
-                let address = self
-                    .bt_state
-                    .devices
-                    .iter()
-                    .find(|d| d.connected && d.audio)
-                    .map(|d| d.address.clone())
-                    .ok_or("Connect Bluetooth headphones first")?;
-                self.bluetooth
-                    .as_ref()
-                    .ok_or("Bluetooth unavailable")?
-                    .commands
-                    .try_send(bluetooth::Command::Codec {
-                        address,
-                        preference,
-                    })
-                    .map_err(|_| "Bluetooth busy")?;
-                self.model.settings.codec_preference = preference;
-                self.dirty.mark_both();
-                self.ui
-                    .flash("Codec preference saved. It applies when the device reconnects audio.");
-            }
+            Effect::SetCodecPreference(preference) => self.on_set_codec_preference(preference)?,
             Effect::WifiDisconnect => self
                 .wifi
                 .as_ref()
@@ -270,103 +153,18 @@ impl Runtime {
                 }
                 self.load()?;
             }
-            Effect::PlayNow(index) => {
-                let track = self
-                    .model
-                    .library
-                    .tracks
-                    .get(index)
-                    .cloned()
-                    .ok_or("invalid selection")?;
-                if !track.online {
-                    return Err("media source offline".into());
-                }
-                if !self.model.queue_next(vec![track])? {
-                    self.model.jump_to(self.model.queue_position + 1);
-                }
-                self.load()?;
-                self.checkpoint();
-            }
+            Effect::PlayNow(index) => self.on_play_now(index)?,
             Effect::PlayNext(index) => self.queue_songs(vec![index], true)?,
             Effect::PlayNextCollection(members) => self.queue_songs(members, true)?,
             Effect::AddToQueue(index) => self.queue_songs(vec![index], false)?,
             Effect::AddToQueueCollection(members) => self.queue_songs(members, false)?,
             Effect::TogglePlayback => self.toggle()?,
-            Effect::NextTrack | Effect::PreviousTrack => {
-                let delta = if matches!(e, Effect::NextTrack) {
-                    1
-                } else {
-                    -1
-                };
-                // A book moves by chapter.
-                if let Some(result) = self.book_step(delta) {
-                    result?;
-                // A station has no next track: the next station of its list.
-                } else if self.model.current().is_some_and(Track::is_radio) {
-                    self.zap(delta)?;
-                // Previous more than 3 s into a song starts it again; a
-                // second press goes back a song (Y2Reborn #21).
-                } else if delta < 0
-                    && self.model.current().is_some()
-                    && (self.model.position_ms > RESTART_SONG_AFTER_MS
-                        || self.model.queue_position == 0)
-                {
-                    // The first song has nothing before it: it starts over.
-                    self.seek_by(-(self.model.position_ms as i64));
-                // Next on the last song: Repeat All starts over.
-                } else if (delta > 0
-                    && self.model.queue_position + 1 >= self.model.queue.len()
-                    && self.model.settings.repeat == RepeatMode::All
-                    && self.model.wrap())
-                    || self.model.step(delta)
-                {
-                    self.load()?
-                } else {
-                    self.model.invalidate();
-                    self.playback.stop(self.model.generation);
-                }
-            }
+            Effect::NextTrack | Effect::PreviousTrack => self.on_next_or_previous_track(&e)?,
             // A live station has nothing to seek in.
             Effect::Seek(_) if self.model.current().is_some_and(Track::is_radio) => {}
             Effect::Seek(delta) => self.seek_by(delta),
-            Effect::AdjustVolume(delta) => {
-                let now = self.model.settings.volume;
-                let mut volume = (now as i16 + delta as i16).clamp(0, 100) as u8;
-                let limit = self.model.settings.wired_volume_limit();
-                if self.wired_sink() && delta > 0 && volume > limit {
-                    // Up to the safe level, then ask (never lower here).
-                    volume = now.max(limit);
-                    if self.model.navigation.modal.is_none() {
-                        self.model.navigation.modal = Some(reborn_core::Modal::Confirm(
-                            reborn_core::ConfirmAction::LoudVolume,
-                        ));
-                        self.model.navigation.modal_focus = 0;
-                        self.dirty.mark_both();
-                    }
-                }
-                self.model.settings.volume = volume;
-                self.playback.set_volume(self.sink_volume());
-                self.send_bt_volume();
-                self.ui.show_volume();
-                self.dirty.mark_render();
-                // A hold may adjust every 90 ms. Keep the atomic audio target
-                // immediate; persist on the existing bounded checkpoint and
-                // shutdown boundaries instead of fsyncing each step.
-                self.dirty.mark_persistence();
-            }
-            Effect::ScanLibrary => {
-                if self.model.library.scanning {
-                    return Ok(());
-                }
-                self.model.apply(Event::LibraryScanStarted);
-                // Asked for: every folder is read again (a tag edit made on a
-                // computer may leave the folder and the free space unchanged).
-                if let Err(error) = self.scanner.scan_all(self.model.sources.clone()) {
-                    self.model.apply(Event::LibraryScanFailed(error.clone()));
-                    return Err(error);
-                }
-                self.ui.flash("Scanning for music");
-            }
+            Effect::AdjustVolume(delta) => self.on_adjust_volume(delta)?,
+            Effect::ScanLibrary => self.on_scan_library()?,
             Effect::WifiPower => self
                 .wifi
                 .as_ref()
@@ -374,20 +172,7 @@ impl Runtime {
                 .commands
                 .try_send(wifi::Command::Power(!self.wifi_state.enabled))
                 .map_err(|_| "Wi-Fi busy")?,
-            Effect::WifiScan => {
-                if self.ui.wifi.scan.active() {
-                    return Ok(());
-                }
-                self.wifi
-                    .as_ref()
-                    .ok_or("Wi-Fi unavailable")?
-                    .commands
-                    .try_send(wifi::Command::Scan)
-                    .map_err(|_| "Wi-Fi busy")?;
-                self.ui.wifi.scan = reborn_core::RadioScan::Starting;
-                self.ui.wifi.problem = None;
-                self.wifi_state.scan = reborn_core::RadioScan::Starting;
-            }
+            Effect::WifiScan => self.on_wifi_scan()?,
             Effect::WifiConnect { ssid, password } => self
                 .wifi
                 .as_ref()
@@ -416,46 +201,9 @@ impl Runtime {
                 .commands
                 .try_send(bluetooth::Command::Power(!self.bt_state.powered))
                 .map_err(|_| "Bluetooth busy")?,
-            Effect::BluetoothScan => {
-                if self.ui.bluetooth.scan.active() {
-                    return Ok(());
-                }
-                self.bluetooth
-                    .as_ref()
-                    .ok_or("Bluetooth unavailable")?
-                    .commands
-                    .try_send(bluetooth::Command::Scan(true))
-                    .map_err(|_| "Bluetooth busy")?;
-                self.ui.bluetooth.scan = reborn_core::RadioScan::Starting;
-                self.ui.bluetooth.problem = None;
-                self.bt_state.scan = reborn_core::RadioScan::Starting;
-            }
+            Effect::BluetoothScan => self.on_bluetooth_scan()?,
             Effect::BluetoothDevice { path, operation } => {
-                if operation == "output" {
-                    let address = self
-                        .bt_state
-                        .devices
-                        .iter()
-                        .find(|d| d.path == path)
-                        .ok_or("device not found")?
-                        .address
-                        .clone();
-                    self.switch(AudioOutput::Bluetooth(address))?;
-                } else {
-                    let cmd = match operation.as_str() {
-                        "pair" => bluetooth::Command::Pair(path),
-                        "connect" => bluetooth::Command::Connect(path),
-                        "disconnect" => bluetooth::Command::Disconnect(path),
-                        "forget" => bluetooth::Command::Forget(path),
-                        _ => return Err("unsupported Bluetooth action".into()),
-                    };
-                    self.bluetooth
-                        .as_ref()
-                        .ok_or("Bluetooth unavailable")?
-                        .commands
-                        .try_send(cmd)
-                        .map_err(|_| "Bluetooth busy")?;
-                }
+                self.on_bluetooth_device(path, operation)?
             }
             Effect::Output(o) => self.switch(o)?,
             Effect::ConfirmPairing(ok) => self
@@ -465,77 +213,8 @@ impl Runtime {
                 .commands
                 .try_send(bluetooth::Command::Confirm(ok))
                 .map_err(|_| "Bluetooth busy")?,
-            Effect::ScreenSleep => {
-                self.interaction_hints.clear();
-                if self.model.screen_off {
-                    return Ok(());
-                }
-                let mut dac_hold = None;
-                if !self.headless {
-                    power::blank(true)?;
-                    if let Some(graphics) = self.graphics.as_mut() {
-                        if let Err(error) = graphics.sleep(true) {
-                            let _ = power::blank(false);
-                            return Err(error);
-                        }
-                    }
-                    dac_hold = hold_dac(&self.log, false);
-                }
-                self.model.apply(Event::ScreenSleep);
-                self.dark_since = Some(Instant::now());
-                self.wifi_idle_failed = false;
-                self.log.emit(
-                    Level::Info,
-                    "power",
-                    "screen_blank",
-                    "Display put to sleep",
-                    None,
-                    json!({"playback":self.model.playback,"dac_hold":dac_hold}),
-                );
-            }
-            Effect::ScreenWake => {
-                if !self.model.screen_off && (self.headless || self.graphics.is_some()) {
-                    return Ok(());
-                }
-                let mut dac_hold = None;
-                if !self.headless {
-                    self.graphics_recovery.wake();
-                    if self.graphics.is_none() {
-                        self.recreate_graphics()?;
-                    }
-                    if let Some(graphics) = self.graphics.as_mut() {
-                        graphics.sleep(false)?;
-                    }
-                    if let Err(error) = power::blank(false) {
-                        if let Some(graphics) = self.graphics.as_mut() {
-                            let _ = graphics.sleep(true);
-                        }
-                        return Err(error);
-                    }
-                    dac_hold = hold_dac(&self.log, true);
-                }
-                self.model.apply(Event::ScreenWake);
-                self.woke_at = Some(Instant::now());
-                // Sleep turned Bluetooth off; the headphones return after the wake.
-                if let Some(lost) = self.lost_peer.as_mut() {
-                    lost.since = Instant::now();
-                }
-                // Awake again: a sleep still waiting for its turn is dropped.
-                if self.queued_platform == Some(reborn_core::PlatformTask::SleepRequest) {
-                    self.queued_platform = None;
-                }
-                self.last_activity = Instant::now();
-                self.dark_since = None;
-                self.wifi_idle_restore();
-                self.log.emit(
-                    Level::Info,
-                    "power",
-                    "screen_wake",
-                    "Display woke",
-                    None,
-                    json!({"playback":self.model.playback,"dac_hold":dac_hold}),
-                );
-            }
+            Effect::ScreenSleep => self.on_screen_sleep()?,
+            Effect::ScreenWake => self.on_screen_wake()?,
             Effect::SetReplayGain(mode) => {
                 self.model.settings.replay_gain = mode;
                 self.reload_dsp()?;
@@ -548,36 +227,8 @@ impl Runtime {
                 self.model.settings.eq_profile_on = false;
                 self.reload_dsp()?;
             }
-            Effect::SetEqBandGain { index, gain_db } => {
-                if self.model.settings.eq_bands.is_empty() {
-                    self.model.settings.eq_bands = reborn_core::flat_eq_bands();
-                }
-                let band = self
-                    .model
-                    .settings
-                    .eq_bands
-                    .get_mut(index)
-                    .filter(|_| index < 8)
-                    .ok_or("That equalizer band has changed")?;
-                band.gain_db = f32::from(gain_db.clamp(-12, 12));
-                // Editing the bands means listening to them, not the profile.
-                if self.model.settings.eq_enabled || self.model.settings.eq_profile_on {
-                    self.model.settings.eq_profile_on = false;
-                    self.reload_dsp()?;
-                } else {
-                    self.checkpoint();
-                }
-            }
-            Effect::SetEqPreset(gains) => {
-                let mut bands = reborn_core::flat_eq_bands();
-                for (band, gain) in bands.iter_mut().zip(gains) {
-                    band.gain_db = f32::from(gain.clamp(-12, 12));
-                }
-                self.model.settings.eq_bands = bands;
-                self.model.settings.eq_enabled = gains.iter().any(|g| *g != 0);
-                self.model.settings.eq_profile_on = false;
-                self.reload_dsp()?;
-            }
+            Effect::SetEqBandGain { index, gain_db } => self.on_set_eq_band_gain(index, gain_db)?,
+            Effect::SetEqPreset(gains) => self.on_set_eq_preset(gains)?,
             Effect::ResetEq => {
                 self.model.settings.eq_bands = reborn_core::flat_eq_bands();
                 self.reload_dsp()?;
@@ -586,79 +237,11 @@ impl Runtime {
                 self.ui.eq_profiles = scan_eq_profiles(&shipped_eq_dirs(), &self.storage_roots());
                 self.dirty.mark_render();
             }
-            Effect::ImportEqProfile(path) => match import_eq_profile(&path) {
-                Ok(profile) => {
-                    let name = profile.name.clone();
-                    let preamp = profile.preamp_db;
-                    self.log.emit(
-                        Level::Info,
-                        "audio",
-                        "eq_profile_imported",
-                        "headphone profile imported",
-                        None,
-                        json!({"name":name,"filters":profile.bands.len(),"preamp_db":preamp}),
-                    );
-                    self.model.settings.eq_profile = Some(profile);
-                    self.model.settings.eq_profile_on = true;
-                    self.ui
-                        .flash(format!("Playing {name} · Preamp {preamp:+.1} dB"));
-                    self.reload_dsp()?;
-                }
-                Err(e) => self.ui.flash(e),
-            },
+            Effect::ImportEqProfile(path) => self.on_import_eq_profile(path)?,
             // The level in use again: nothing to restart.
             Effect::SetHpLevel(level) if level == self.model.settings.hp_level => {}
-            Effect::SetHpLevel(level) => {
-                let from = self.model.settings.hp_level;
-                let raised = level.index() > from.index();
-                self.model.settings.hp_level = level;
-                // The wired volume moves so the output stays as loud (a
-                // lower level may not reach it: then it plays quieter).
-                // Bluetooth without its own volume shares `volume`: left alone.
-                let wired_sink = self.wired_sink();
-                let s = &mut self.model.settings;
-                match s.wired_volume {
-                    Some(wired) => s.wired_volume = Some(s.volume_for_level(wired, from)),
-                    None if wired_sink => {
-                        let before = s.volume;
-                        s.volume = s.volume_for_level(before, from);
-                        // Quieter at once. A higher number waits for the new
-                        // stream at the lower level: the start sets it only
-                        // after the old one is released.
-                        if s.volume < before {
-                            self.playback.set_volume(self.sink_volume());
-                        }
-                    }
-                    None => {}
-                }
-                self.configure_wired();
-                // The amplifier takes a new level only when it powers up:
-                // restart wired playback (a higher level fades in); a held
-                // pause gives its stream back, so Play starts a new one.
-                if matches!(self.model.output, AudioOutput::Wired) {
-                    self.reload_dsp()?;
-                } else {
-                    self.checkpoint();
-                }
-                if raised {
-                    self.ui.flash("Higher level · Volume lowered to match");
-                }
-            }
-            Effect::AllowLoudVolume => {
-                self.model.settings.loud_ok = true;
-                self.model.settings.loud_seconds = 0;
-                self.log.emit(
-                    Level::Info,
-                    "audio",
-                    "loud_volume_allowed",
-                    "listener agreed to wired volumes above the safe level",
-                    None,
-                    json!({"hp_level":self.model.settings.hp_level,"volume":self.model.settings.volume}),
-                );
-                self.checkpoint();
-                // The step that was held back.
-                self.effect(Effect::AdjustVolume(2))?;
-            }
+            Effect::SetHpLevel(level) => self.on_set_hp_level(level)?,
+            Effect::AllowLoudVolume => self.on_allow_loud_volume()?,
             Effect::SetDacFilter(filter) => {
                 self.model.settings.dac_filter = filter;
                 self.configure_wired();
@@ -671,99 +254,10 @@ impl Runtime {
                 }
                 self.checkpoint();
             }
-            Effect::ResetSettings => {
-                // The Last.fm sign-in is a setting too: forget it and its plays.
-                self.lastfm_forget();
-                // Volume and the music location are part of the session, not
-                // preferences a reset should surprise the listener with.
-                let defaults = reborn_core::Settings {
-                    volume: self.model.settings.volume,
-                    wired_volume: self.model.settings.wired_volume,
-                    bluetooth_absolute_volume: self.model.settings.bluetooth_absolute_volume,
-                    loud_ok: self.model.settings.loud_ok,
-                    loud_seconds: self.model.settings.loud_seconds,
-                    music_directory: self.model.settings.music_directory.clone(),
-                    ..Default::default()
-                };
-                let reload = self.model.settings.gapless_enabled != defaults.gapless_enabled
-                    || self.model.settings.eq_enabled
-                    || self.model.settings.eq_profile_on
-                    || self.model.settings.hp_level != defaults.hp_level
-                    || self.model.settings.replay_gain != defaults.replay_gain
-                    || self.model.settings.crossfade_ms != defaults.crossfade_ms
-                    || self.model.settings.repeat != defaults.repeat;
-                self.model.settings = defaults;
-                self.configure_wired();
-                if self.ui.skin.is_some() {
-                    let _ = self.apply_theme("", false);
-                }
-                if !self.headless && self.model.platform.brightness_available {
-                    let _ = power::set_brightness(self.model.settings.brightness);
-                }
-                if reload {
-                    self.reload_dsp()?;
-                } else {
-                    self.checkpoint();
-                }
-                self.ui.flash("Settings reset");
-            }
-            Effect::ForgetAllWifi => {
-                let worker = self.wifi.as_ref().ok_or("Wi-Fi unavailable")?;
-                let ids: Vec<u32> = self
-                    .wifi_state
-                    .saved
-                    .iter()
-                    .filter_map(|n| n.saved_id)
-                    .collect();
-                let queued = ids
-                    .iter()
-                    .filter(|id| {
-                        worker
-                            .commands
-                            .try_send(wifi::Command::Forget(**id))
-                            .is_ok()
-                    })
-                    .count();
-                self.ui.flash(if queued == ids.len() {
-                    "Wi-Fi networks forgotten"
-                } else {
-                    "Some networks are still saved. Try again."
-                });
-            }
-            Effect::ForgetAllBluetooth => {
-                let worker = self.bluetooth.as_ref().ok_or("Bluetooth unavailable")?;
-                let paths: Vec<String> = self
-                    .bt_state
-                    .devices
-                    .iter()
-                    .filter(|d| d.paired)
-                    .map(|d| d.path.clone())
-                    .collect();
-                let queued = paths
-                    .iter()
-                    .filter(|path| {
-                        worker
-                            .commands
-                            .try_send(bluetooth::Command::Forget((*path).clone()))
-                            .is_ok()
-                    })
-                    .count();
-                self.ui.flash(if queued == paths.len() {
-                    "Bluetooth pairings removed"
-                } else {
-                    "Some pairings remain. Try again."
-                });
-            }
-            Effect::ClearCache => {
-                let removed = clear_cache(&self.root.join("cache"));
-                self.art = false;
-                self.dirty.mark_render();
-                self.ui.flash(if removed.is_ok() {
-                    "Cache cleared"
-                } else {
-                    "Couldn't clear everything. Try again."
-                });
-            }
+            Effect::ResetSettings => self.on_reset_settings()?,
+            Effect::ForgetAllWifi => self.on_forget_all_wifi()?,
+            Effect::ForgetAllBluetooth => self.on_forget_all_bluetooth()?,
+            Effect::ClearCache => self.on_clear_cache()?,
             Effect::SetBalance(balance) => {
                 self.model.settings.balance =
                     balance.clamp(-reborn_core::MAX_BALANCE, reborn_core::MAX_BALANCE);
@@ -771,26 +265,8 @@ impl Runtime {
                 self.dirty.mark_both();
                 self.checkpoint();
             }
-            Effect::SetCrossfade(milliseconds) => {
-                self.model.settings.crossfade_ms = milliseconds.min(30_000);
-                if matches!(
-                    self.model.playback,
-                    PlaybackState::Playing | PlaybackState::Buffering
-                ) {
-                    self.load()?;
-                }
-                self.checkpoint();
-            }
-            Effect::SetGapless(enabled) => {
-                self.model.settings.gapless_enabled = enabled;
-                if matches!(
-                    self.model.playback,
-                    PlaybackState::Playing | PlaybackState::Buffering
-                ) {
-                    self.load()?;
-                }
-                self.checkpoint();
-            }
+            Effect::SetCrossfade(milliseconds) => self.on_set_crossfade(milliseconds)?,
+            Effect::SetGapless(enabled) => self.on_set_gapless(enabled)?,
             Effect::ScanThemes => self.scan_themes(),
             Effect::SetTheme(id) => match self.apply_theme(&id, true) {
                 Ok(()) => {
@@ -821,22 +297,7 @@ impl Runtime {
             }
             Effect::PlayBook(key, start) => self.start_book(&key, start)?,
             Effect::SetSleepTimer(choice) => self.set_sleep_timer(choice),
-            Effect::SetBookSpeed(percent) => {
-                let speed = f32::from(percent.clamp(50, 200)) / 100.;
-                if let Some(book) = &mut self.model.book {
-                    book.speed = speed;
-                }
-                // Applied at once, from where it is (the place is kept).
-                if matches!(
-                    self.model.playback,
-                    PlaybackState::Playing | PlaybackState::Buffering
-                ) {
-                    self.load()?;
-                } else if self.playback.is_held() {
-                    self.release_hold();
-                }
-                self.checkpoint();
-            }
+            Effect::SetBookSpeed(percent) => self.on_set_book_speed(percent)?,
             Effect::SetAudiobooksOnHome(on) => {
                 self.model.settings.audiobooks_on_home = on;
                 self.checkpoint();
@@ -856,42 +317,8 @@ impl Runtime {
                 self.model.settings.haptics = strength;
                 self.checkpoint();
             }
-            Effect::SetSpeaker(on) => {
-                self.model.settings.speaker = on;
-                self.checkpoint();
-                // Playing on the jack output: follow the new route at once.
-                if matches!(
-                    self.model.playback,
-                    PlaybackState::Playing | PlaybackState::Buffering
-                ) && self.model.speaker_active != self.speaker_route()
-                {
-                    self.load()?;
-                } else if self.model.playback == PlaybackState::Stopped {
-                    self.model.speaker_active = self.speaker_route();
-                }
-                self.dirty.mark_both();
-            }
-            Effect::SetShuffle(mode) => {
-                let was = self.model.settings.shuffle_mode();
-                self.model.settings.set_shuffle_mode(mode);
-                // What plays now follows at once: its songs to come shuffle,
-                // as songs or albums, or go back to their own order (your
-                // queue stays as it is).
-                let music = self.model.book.is_none()
-                    && self.model.current().is_some_and(|t| !t.is_radio());
-                if music && mode != was {
-                    let mut changed = was != ShuffleMode::Off && self.model.unshuffle_source();
-                    changed |= match mode {
-                        ShuffleMode::Off => false,
-                        ShuffleMode::Songs => self.model.shuffle_source(shuffle_seed()),
-                        ShuffleMode::Albums => self.model.shuffle_source_albums(shuffle_seed()),
-                    };
-                    if changed {
-                        self.upcoming_changed();
-                    }
-                }
-                self.checkpoint();
-            }
+            Effect::SetSpeaker(on) => self.on_set_speaker(on)?,
+            Effect::SetShuffle(mode) => self.on_set_shuffle(mode)?,
             Effect::SetPlaylistSort(path, sort) => {
                 self.model.settings.set_playlist_sort(&path, sort);
                 self.checkpoint();
@@ -924,16 +351,7 @@ impl Runtime {
                 self.model.settings.show_on_home(&key, on);
                 self.checkpoint();
             }
-            Effect::QueueRemove(index) => {
-                if index == self.model.queue_position {
-                    self.ui.flash("The current track stays in the queue");
-                } else if let Some(&id) = self.model.queue_entry_ids.get(index) {
-                    if self.model.remove_entries(&[id]) > 0 {
-                        self.upcoming_changed();
-                        self.checkpoint();
-                    }
-                }
-            }
+            Effect::QueueRemove(index) => self.on_queue_remove(index)?,
             Effect::QueueMove { index, delta } => {
                 let Some(&id) = self.model.queue_entry_ids.get(index) else {
                     return Ok(());
@@ -943,42 +361,9 @@ impl Runtime {
                     self.checkpoint();
                 }
             }
-            Effect::QueueRemoveEntries(ids) => {
-                let removed = self.model.remove_entries(&ids);
-                if removed > 0 {
-                    self.upcoming_changed();
-                    self.checkpoint();
-                    self.ui.flash(if removed == 1 {
-                        "1 song removed".to_owned()
-                    } else {
-                        format!("{removed} songs removed")
-                    });
-                }
-            }
-            Effect::QueueEntriesNext(ids) => {
-                let moved = self.model.entries_next(&ids);
-                if moved > 0 {
-                    self.upcoming_changed();
-                    self.checkpoint();
-                    self.ui.flash(if moved == 1 {
-                        "Plays next".to_owned()
-                    } else {
-                        format!("{moved} songs play next")
-                    });
-                }
-            }
-            Effect::QueueEntriesLast(ids) => {
-                let moved = self.model.entries_last(&ids);
-                if moved > 0 {
-                    self.upcoming_changed();
-                    self.checkpoint();
-                    self.ui.flash(if moved == 1 {
-                        "Added to queue".to_owned()
-                    } else {
-                        format!("{moved} songs added to queue")
-                    });
-                }
-            }
+            Effect::QueueRemoveEntries(ids) => self.on_queue_remove_entries(ids)?,
+            Effect::QueueEntriesNext(ids) => self.on_queue_entries_next(ids)?,
+            Effect::QueueEntriesLast(ids) => self.on_queue_entries_last(ids)?,
             Effect::ClearQueued => {
                 if self.model.clear_queued() {
                     self.upcoming_changed();
