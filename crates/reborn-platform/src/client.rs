@@ -32,7 +32,9 @@ use std::{
 
 const LIMIT: u64 = 1024 * 1024;
 const PROGRAM: &str = "/usr/sbin/y2-platform";
+use y2p_contract::lenient;
 use y2p_contract::schema as schemas;
+use y2p_contract::sleep::{Product, ProductState, WakeSource};
 pub use y2p_contract::schema::{
     CAPABILITIES as CAPABILITIES_SCHEMA, HEALTH as HEALTH_SCHEMA, STATUS as STATUS_SCHEMA,
 };
@@ -992,27 +994,33 @@ pub fn bluetooth_quality(value: &Value) -> BluetoothQuality {
 /// A successful kernel exit is insufficient: only the service's complete
 /// restoration record and same-boot identity may present a restored player.
 pub fn sleep(value: &Value) -> SleepState {
-    if value["schema"] != schemas::SLEEP {
+    let product: Product = match value {
+        Value::Object(map) => lenient::read(map.clone()),
+        _ => return SleepState::default(),
+    };
+    sleep_state(&product)
+}
+
+/// The sleep state Reborn shows for the platform's product.
+fn sleep_state(product: &Product) -> SleepState {
+    if product.schema.as_deref() != Some(schemas::SLEEP) {
         return SleepState::default();
     }
-    let mut phase = match value["state"].as_str() {
-        Some("requested") => SleepPhase::SleepRequested,
-        Some("preparing") => SleepPhase::SleepPreparing,
-        Some("refused") => SleepPhase::SleepRefused,
-        Some("sleeping") => SleepPhase::Sleeping,
-        Some("restoring" | "waking") => SleepPhase::Waking,
-        Some("restored") => SleepPhase::Restored,
-        Some("restore_failed") => SleepPhase::RestoreFailed,
-        _ => SleepPhase::Awake,
+    let mut phase = match product.state {
+        Some(ProductState::Requested) => SleepPhase::SleepRequested,
+        Some(ProductState::Preparing) => SleepPhase::SleepPreparing,
+        Some(ProductState::Refused) => SleepPhase::SleepRefused,
+        Some(ProductState::Sleeping) => SleepPhase::Sleeping,
+        Some(ProductState::Restoring | ProductState::Waking) => SleepPhase::Waking,
+        Some(ProductState::Restored) => SleepPhase::Restored,
+        Some(ProductState::RestoreFailed) => SleepPhase::RestoreFailed,
+        Some(ProductState::Idle) | None => SleepPhase::Awake,
     };
-    let same_boot = value["same_boot"].as_bool();
+    let same_boot = product.same_boot;
+    let reason = product.reason.as_deref().filter(|s| !s.is_empty());
     // F48: Power (or the wake timer) during the preparation cancels the sleep
     // on purpose; that is a wake, not a task the player was busy with.
-    if phase == SleepPhase::SleepRefused
-        && value["reason"]
-            .as_str()
-            .is_some_and(|s| s.contains("wake_event"))
-    {
+    if phase == SleepPhase::SleepRefused && reason.is_some_and(|s| s.contains("wake_event")) {
         return SleepState {
             phase: SleepPhase::Restored,
             problem: None,
@@ -1021,12 +1029,12 @@ pub fn sleep(value: &Value) -> SleepState {
         };
     }
     let problem = if phase == SleepPhase::Restored
-        && (same_boot != Some(true) || value["kernel_completed"] != true)
+        && (same_boot != Some(true) || !product.kernel_completed)
     {
         phase = SleepPhase::RestoreFailed;
         Some(SleepProblem::DifferentBoot)
     } else {
-        value["reason"].as_str().filter(|s| !s.is_empty()).map(|s| {
+        reason.map(|s| {
             if s.contains("qualification") {
                 SleepProblem::QualificationPending
             } else if s.contains("charger") {
@@ -1054,9 +1062,9 @@ pub fn sleep(value: &Value) -> SleepState {
         phase,
         problem,
         same_boot,
-        wake: match value["wake_reason"].as_str() {
-            Some("power") => WakeReason::Power,
-            Some("rtc") => WakeReason::Rtc,
+        wake: match product.wake_reason {
+            Some(WakeSource::Power) => WakeReason::Power,
+            Some(WakeSource::Rtc) => WakeReason::Rtc,
             _ => WakeReason::Unknown,
         },
     }

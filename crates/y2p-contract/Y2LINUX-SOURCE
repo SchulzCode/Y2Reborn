@@ -1,3 +1,3 @@
 # Copy of Y2Linux platform/crates/y2p-contract made by tools/production/release.py sync-contract; edit it there.
-y2linux_commit 14defd335a701bbb166db7f863b156ee44ab8662
-tree_sha256 12b2f604b143269891506bcef28d7cc296c5f5e14d1310e67d657ac988271557
+y2linux_commit 692e0c1ce62ec6aacc0cf65d087c120c6615a46d
+tree_sha256 e5354fb3a15d6015f4eaedf90beb012321ff025728fb048bd0273c87b9616beb

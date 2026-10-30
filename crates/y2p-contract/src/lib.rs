@@ -10,6 +10,9 @@
 //! maps flattened into the struct), so reading and writing it back changes nothing; the golden files in
 //! `tests/golden` are the Python platform's own output.
 // SPDX-License-Identifier: MIT
+pub mod lenient;
+pub mod sleep;
+
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::collections::BTreeMap;
