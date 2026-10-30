@@ -5,14 +5,28 @@
 //! the rest of startup runs: that is what held the logo for seconds before.
 use std::{fs, path::Path};
 
+/// The startup and main loop (`run`, main_loop.rs) first, then the rest of the app's runtime
+/// (main.rs and the `Runtime` methods), so a needle is found in the main loop where it has one.
 fn main_source() -> String {
-    fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("src/main.rs")).unwrap()
+    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut files = vec![src.join("main_loop.rs"), src.join("main.rs")];
+    let mut runtime: Vec<_> = fs::read_dir(src.join("runtime"))
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .collect();
+    runtime.sort();
+    files.extend(runtime);
+    files
+        .iter()
+        .map(|file| fs::read_to_string(file).unwrap())
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn at(source: &str, needle: &str) -> usize {
     source
         .find(needle)
-        .unwrap_or_else(|| panic!("main.rs no longer contains {needle:?}"))
+        .unwrap_or_else(|| panic!("the main loop no longer contains {needle:?}"))
 }
 
 #[test]
@@ -67,7 +81,7 @@ fn first_presented_frame_is_the_real_ui_under_the_boot_cover() {
     for forbidden in ["boot_screen(", "boot_failure_screen(", "boot_mark_frame("] {
         assert!(
             !source.contains(forbidden),
-            "main.rs must not present a static boot screen itself ({forbidden})"
+            "Reborn must not present a static boot screen itself ({forbidden})"
         );
     }
     let start = at(&source, "let mut first_frame_presented = false;");

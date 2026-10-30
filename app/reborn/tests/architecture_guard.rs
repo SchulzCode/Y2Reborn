@@ -58,7 +58,7 @@ const ALLOWED: [(&str, &str, &str); 10] = [
         "test-only invalid decoder input",
     ),
     (
-        "app/reborn/src/main.rs",
+        "app/reborn/src/runtime/idle.rs",
         "\"/proc/",
         "own process status in the control-socket snapshot",
     ),
