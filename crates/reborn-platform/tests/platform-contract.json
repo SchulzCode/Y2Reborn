@@ -10780,222 +10780,14 @@
    "status",
    "cpu"
   ],
-  "exit": 0,
+  "exit": 1,
   "files": {},
   "name": "observation/status-cpu-sleep-int-key",
   "stdout": {
-   "cpu": {
-    "cirq": null,
-    "clock_blockers": {},
-    "counters": {
-     "ctxt": null,
-     "intr": null,
-     "processes": null,
-     "procs_blocked": null,
-     "procs_running": null,
-     "softirq": null
-    },
-    "dormant_preflight": "prerequisite_system_running=1\nprerequisite_boot_policy=1\nprerequisite_spm=1\nprerequisite_local_events=1\nprerequisite_cirq=1\nprerequisite_linux_context=1\nprerequisite_timer_context=1\nprerequisite_broken=1",
-    "dvfs_ceiling_khz": null,
-    "dvfs_diagnostics": {},
-    "dvfs_fault": null,
-    "idle": [
-     {
-      "cpu": "cpu0",
-      "disabled": 1,
-      "exit_latency_us": null,
-      "name": "DORMANT",
-      "rejected": null,
-      "state": "state2",
-      "target_residency_us": null,
-      "time_us": null,
-      "usage": null
-     }
-    ],
-    "idle_completion": {
-     "C1": {
-      "enabled": null,
-      "entries": null,
-      "failures": null,
-      "per_cpu": [],
-      "registered": false,
-      "residency_us": null
-     },
-     "C2": {
-      "attribution": {},
-      "blocker_owners": null,
-      "enabled": null,
-      "entries": null,
-      "failures": null,
-      "last_blocker": null,
-      "per_cpu": [],
-      "registered": false,
-      "residency_us": null,
-      "shared_dma_owners": [
-       {
-        "name": "18070000.connectivity",
-        "runtime_status": null
-       },
-       {
-        "name": "11007000.i2c",
-        "runtime_status": null
-       },
-       {
-        "name": "11008000.i2c",
-        "runtime_status": null
-       }
-      ]
-     },
-     "C3": {
-      "blocker_owners": [],
-      "boot_policy": {},
-      "context": null,
-      "display_idle": {},
-      "enabled": false,
-      "entries": null,
-      "entry_budget": 0,
-      "failures": null,
-      "per_cpu": [
-       {
-        "cpu": "cpu0",
-        "disabled": 1,
-        "exit_latency_us": null,
-        "name": "DORMANT",
-        "rejected": null,
-        "state": "state2",
-        "target_residency_us": null,
-        "time_us": null,
-        "usage": null
-       }
-      ],
-      "preflight": "prerequisite_system_running=1\nprerequisite_boot_policy=1\nprerequisite_spm=1\nprerequisite_local_events=1\nprerequisite_cirq=1\nprerequisite_linux_context=1\nprerequisite_timer_context=1\nprerequisite_broken=1",
-      "prerequisites": {
-       "boot_policy": true,
-       "broken": true,
-       "cirq": true,
-       "linux_context": true,
-       "local_events": true,
-       "spm": true,
-       "system_running": true,
-       "timer_context": true
-      },
-      "registered": true,
-      "residency_us": null,
-      "uart_clock_handoff": null,
-      "uart_sleep": {},
-      "unmet": [],
-      "unused_clock_handoff": null
-     }
-    },
-    "idle_diagnostics": {},
-    "load_average": null,
-    "mmc_runtime_pm": {},
-    "online": null,
-    "policies": [],
-    "pwrap_readiness": null,
-    "radio_boot_retries": null,
-    "recovery_options": {},
-    "slidle_attribution": {},
-    "slidle_clock_owners": null,
-    "spm": null,
-    "stock_bin": null,
-    "suspend_persistent": {
-     "backstop": null,
-     "current": null,
-     "device_callbacks": null,
-     "device_callbacks_previous_boot": null,
-     "durable": {
-      "product": [
-       [
-        1,
-        "x"
-       ],
-       [
-        "state",
-        "restored"
-       ],
-       [
-        "request_boot_id",
-        "boot-a"
-       ]
-      ]
-     },
-     "previous_boot": null,
-     "radio_restore": null,
-     "reset_status": "valid=1 cause=software_reset raw=0x00000004",
-     "retention": null,
-     "selftest": null,
-     "usb_restore": {}
-    },
-    "suspend_stage": null,
-    "system_idle": {},
-    "throttling_reason": null,
-    "ticks": {
-     "cpu": [
-      100,
-      0,
-      50,
-      1000,
-      5,
-      0,
-      1,
-      0
-     ],
-     "cpu0": [
-      100,
-      0,
-      50,
-      1000,
-      5,
-      0,
-      1,
-      0
-     ]
-    },
-    "ticks_unit": "USER_HZ_ticks",
-    "timer": {
-     "admission": {},
-     "broadcast_clockevent": null,
-     "clockevents": {},
-     "clocksource": null,
-     "highres_active": null,
-     "no_hz_active": null,
-     "per_cpu": [],
-     "reason": "runtime_timer_state_unavailable",
-     "source": "/proc/timer_list"
-    },
-    "utilization_percent": null,
-    "voltage_ownership": null,
-    "voltage_uv": null,
-    "wakeup_count": null,
-    "wakeup_count_reason": "fixture",
-    "workload_qos": {
-     "implemented": false,
-     "interactive_max_ms": 500,
-     "lease_max_ms": 30000,
-     "leases": null
-    }
-   },
-   "record": {
-    "boot_id": "boot-a",
-    "build_id": "fixture-build",
-    "collection_duration_ns": "<volatile>",
-    "evidence_level": "IMPLEMENTED",
-    "failure": null,
-    "kernel": "6.18.0-fixture",
-    "monotonic_ns": "<volatile>",
-    "parameters": {},
-    "reborn_commit": "reborn",
-    "result": "observed",
-    "rootfs_release": "v1.0",
-    "units": {
-     "collection_duration": "ns"
-    },
-    "wall_timestamp": "<volatile>",
-    "workload": "observation",
-    "y2linux_commit": "linux-commit"
-   },
-   "schema": "org.y2linux.status/v1"
+   "reason": "invalid_sleep_receipt",
+   "schema": "org.y2linux.error/v1",
+   "state": "Failed",
+   "type": "ValueError"
   }
  },
  {
@@ -17227,94 +17019,14 @@
    "status",
    "power"
   ],
-  "exit": 0,
+  "exit": 1,
   "files": {},
   "name": "observation/status-power-sleep-int-key-idle",
   "stdout": {
-   "power": {
-    "battery": null,
-    "low_battery": {
-     "reason": "policy_not_running",
-     "state": "Unavailable"
-    },
-    "measured_current_ua": null,
-    "normal_boot": null,
-    "pack_temperature": null,
-    "sleep": {
-     "boot_id": "boot-a",
-     "kernel_completed": false,
-     "reason": null,
-     "request_boot_id": null,
-     "same_boot": null,
-     "schema": "org.y2linux.sleep/v1",
-     "state": "idle",
-     "wake_reason": "unknown"
-    },
-    "soc_confidence": null,
-    "soc_percent": null,
-    "soc_source": null,
-    "supplies": [
-     {
-      "constant_charge_current": null,
-      "constant_charge_current_max": null,
-      "constant_charge_voltage": null,
-      "constant_charge_voltage_max": null,
-      "health": null,
-      "input_current_limit": null,
-      "name": "BAT0",
-      "online": null,
-      "present": null,
-      "status": "Charging",
-      "type": "Battery",
-      "usb_type": null,
-      "voltage_max_design": null,
-      "voltage_min_design": null,
-      "voltage_now": "4149316"
-     },
-     {
-      "constant_charge_current": null,
-      "constant_charge_current_max": null,
-      "constant_charge_voltage": null,
-      "constant_charge_voltage_max": null,
-      "health": null,
-      "input_current_limit": null,
-      "name": "y2-usb-presence",
-      "online": "1",
-      "present": null,
-      "status": null,
-      "type": "USB",
-      "usb_type": null,
-      "voltage_max_design": null,
-      "voltage_min_design": null,
-      "voltage_now": null
-     }
-    ],
-    "unavailable_reason": "not_exposed_by_qualified_y2_battery_driver",
-    "units": {
-     "configured_current": "uA",
-     "voltage": "uV"
-    }
-   },
-   "record": {
-    "boot_id": "boot-a",
-    "build_id": "fixture-build",
-    "collection_duration_ns": "<volatile>",
-    "evidence_level": "IMPLEMENTED",
-    "failure": null,
-    "kernel": "6.18.0-fixture",
-    "monotonic_ns": "<volatile>",
-    "parameters": {},
-    "reborn_commit": "reborn",
-    "result": "observed",
-    "rootfs_release": "v1.0",
-    "units": {
-     "collection_duration": "ns"
-    },
-    "wall_timestamp": "<volatile>",
-    "workload": "observation",
-    "y2linux_commit": "linux-commit"
-   },
-   "schema": "org.y2linux.status/v1"
+   "reason": "invalid_sleep_receipt",
+   "schema": "org.y2linux.error/v1",
+   "state": "Failed",
+   "type": "ValueError"
   }
  },
  {
@@ -17352,94 +17064,14 @@
    "status",
    "power"
   ],
-  "exit": 0,
+  "exit": 1,
   "files": {},
   "name": "observation/status-power-sleep-list",
   "stdout": {
-   "power": {
-    "battery": null,
-    "low_battery": {
-     "reason": "policy_not_running",
-     "state": "Unavailable"
-    },
-    "measured_current_ua": null,
-    "normal_boot": null,
-    "pack_temperature": null,
-    "sleep": {
-     "boot_id": "boot-a",
-     "kernel_completed": false,
-     "reason": null,
-     "request_boot_id": null,
-     "same_boot": null,
-     "schema": "org.y2linux.sleep/v1",
-     "state": "idle",
-     "wake_reason": "unknown"
-    },
-    "soc_confidence": null,
-    "soc_percent": null,
-    "soc_source": null,
-    "supplies": [
-     {
-      "constant_charge_current": null,
-      "constant_charge_current_max": null,
-      "constant_charge_voltage": null,
-      "constant_charge_voltage_max": null,
-      "health": null,
-      "input_current_limit": null,
-      "name": "BAT0",
-      "online": null,
-      "present": null,
-      "status": "Charging",
-      "type": "Battery",
-      "usb_type": null,
-      "voltage_max_design": null,
-      "voltage_min_design": null,
-      "voltage_now": "4149316"
-     },
-     {
-      "constant_charge_current": null,
-      "constant_charge_current_max": null,
-      "constant_charge_voltage": null,
-      "constant_charge_voltage_max": null,
-      "health": null,
-      "input_current_limit": null,
-      "name": "y2-usb-presence",
-      "online": "1",
-      "present": null,
-      "status": null,
-      "type": "USB",
-      "usb_type": null,
-      "voltage_max_design": null,
-      "voltage_min_design": null,
-      "voltage_now": null
-     }
-    ],
-    "unavailable_reason": "not_exposed_by_qualified_y2_battery_driver",
-    "units": {
-     "configured_current": "uA",
-     "voltage": "uV"
-    }
-   },
-   "record": {
-    "boot_id": "boot-a",
-    "build_id": "fixture-build",
-    "collection_duration_ns": "<volatile>",
-    "evidence_level": "IMPLEMENTED",
-    "failure": null,
-    "kernel": "6.18.0-fixture",
-    "monotonic_ns": "<volatile>",
-    "parameters": {},
-    "reborn_commit": "reborn",
-    "result": "observed",
-    "rootfs_release": "v1.0",
-    "units": {
-     "collection_duration": "ns"
-    },
-    "wall_timestamp": "<volatile>",
-    "workload": "observation",
-    "y2linux_commit": "linux-commit"
-   },
-   "schema": "org.y2linux.status/v1"
+   "reason": "invalid_sleep_receipt",
+   "schema": "org.y2linux.error/v1",
+   "state": "Failed",
+   "type": "ValueError"
   }
  },
  {
@@ -17451,7 +17083,7 @@
   "files": {},
   "name": "observation/status-power-sleep-long-pair",
   "stdout": {
-   "reason": "dictionary update sequence element #1 has length 3; 2 is required",
+   "reason": "invalid_sleep_receipt",
    "schema": "org.y2linux.error/v1",
    "state": "Failed",
    "type": "ValueError"
@@ -17492,92 +17124,14 @@
    "status",
    "power"
   ],
-  "exit": 0,
+  "exit": 1,
   "files": {},
   "name": "observation/status-power-sleep-pairs",
   "stdout": {
-   "power": {
-    "battery": null,
-    "low_battery": {
-     "reason": "policy_not_running",
-     "state": "Unavailable"
-    },
-    "measured_current_ua": null,
-    "normal_boot": null,
-    "pack_temperature": null,
-    "sleep": {
-     "boot_id": "boot-a",
-     "request_boot_id": "boot-a",
-     "s": "t",
-     "same_boot": true,
-     "schema": "org.y2linux.sleep/v1",
-     "state": "refused"
-    },
-    "soc_confidence": null,
-    "soc_percent": null,
-    "soc_source": null,
-    "supplies": [
-     {
-      "constant_charge_current": null,
-      "constant_charge_current_max": null,
-      "constant_charge_voltage": null,
-      "constant_charge_voltage_max": null,
-      "health": null,
-      "input_current_limit": null,
-      "name": "BAT0",
-      "online": null,
-      "present": null,
-      "status": "Charging",
-      "type": "Battery",
-      "usb_type": null,
-      "voltage_max_design": null,
-      "voltage_min_design": null,
-      "voltage_now": "4149316"
-     },
-     {
-      "constant_charge_current": null,
-      "constant_charge_current_max": null,
-      "constant_charge_voltage": null,
-      "constant_charge_voltage_max": null,
-      "health": null,
-      "input_current_limit": null,
-      "name": "y2-usb-presence",
-      "online": "1",
-      "present": null,
-      "status": null,
-      "type": "USB",
-      "usb_type": null,
-      "voltage_max_design": null,
-      "voltage_min_design": null,
-      "voltage_now": null
-     }
-    ],
-    "unavailable_reason": "not_exposed_by_qualified_y2_battery_driver",
-    "units": {
-     "configured_current": "uA",
-     "voltage": "uV"
-    }
-   },
-   "record": {
-    "boot_id": "boot-a",
-    "build_id": "fixture-build",
-    "collection_duration_ns": "<volatile>",
-    "evidence_level": "IMPLEMENTED",
-    "failure": null,
-    "kernel": "6.18.0-fixture",
-    "monotonic_ns": "<volatile>",
-    "parameters": {},
-    "reborn_commit": "reborn",
-    "result": "observed",
-    "rootfs_release": "v1.0",
-    "units": {
-     "collection_duration": "ns"
-    },
-    "wall_timestamp": "<volatile>",
-    "workload": "observation",
-    "y2linux_commit": "linux-commit"
-   },
-   "schema": "org.y2linux.status/v1"
+   "reason": "invalid_sleep_receipt",
+   "schema": "org.y2linux.error/v1",
+   "state": "Failed",
+   "type": "ValueError"
   }
  },
  {
@@ -17589,7 +17143,7 @@
   "files": {},
   "name": "observation/status-power-sleep-text",
   "stdout": {
-   "reason": "dictionary update sequence element #0 has length 1; 2 is required",
+   "reason": "invalid_sleep_receipt",
    "schema": "org.y2linux.error/v1",
    "state": "Failed",
    "type": "ValueError"
