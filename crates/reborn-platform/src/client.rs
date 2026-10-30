@@ -34,14 +34,17 @@ use std::{
 const LIMIT: u64 = 1024 * 1024;
 const PROGRAM: &str = "/usr/sbin/y2-platform";
 use y2p_contract::lenient;
+use y2p_contract::radio::FirmwareStatus;
 use y2p_contract::reports::{ReportPhase, ReportProgress};
 use y2p_contract::schema as schemas;
 pub use y2p_contract::schema::{
     CAPABILITIES as CAPABILITIES_SCHEMA, HEALTH as HEALTH_SCHEMA, STATUS as STATUS_SCHEMA,
 };
 use y2p_contract::sleep::{Product, ProductState, WakeSource};
+use y2p_contract::storage::SetupStatus;
 use y2p_contract::update::{DownloadPhase, DownloadProgress, Status as UpdateStatus};
 use y2p_contract::usb::Receipt;
+use y2p_contract::Versions;
 
 /// A typed reply for one task.
 pub enum Reply {
@@ -765,7 +768,8 @@ pub fn update(status: &Value, ota_enabled: bool) -> UpdateState {
     let state = u.journal.state.as_deref().unwrap_or("");
     let download = u.download();
     let downloading = |states: &[&str]| download.is_some_and(|d| states.iter().any(|s| d.is(s)));
-    let current = status["system"]["versions"]["release_version"].as_str();
+    let current = release_version(status);
+    let current = current.as_deref();
     let terminal = u.journal.terminal();
     // A cancel is the owner's choice, not a failure, and a check made after a
     // failed update (download.json) supersedes it: otherwise the page kept
@@ -851,11 +855,13 @@ pub fn snapshot(status: &Value, caps: &Value) -> PlatformSnapshot {
     PlatformSnapshot {
         observed: true,
         radio_firmware: radio_firmware(status),
-        firmware_in_internal: status["system"]["radio_firmware"]["location"] == "internal",
-        firmware_no_space: status["system"]["radio_firmware"]["reason"] == "no_space",
+        firmware_in_internal: firmware(status)
+            .is_some_and(|f| f.location.as_deref() == Some("internal")),
+        firmware_no_space: firmware(status)
+            .is_some_and(|f| f.reason.as_deref() == Some("no_space")),
         internal_setup: internal_setup(status),
         info: PlatformInfo {
-            release_version: text(&status["system"]["versions"]["release_version"]),
+            release_version: release_version(status),
             build_epoch: status["system"]["time"]["build_epoch"].as_i64(),
             clock_source: text(&status["system"]["time"]["source"]),
         },
@@ -873,29 +879,40 @@ pub fn snapshot(status: &Value, caps: &Value) -> PlatformSnapshot {
 }
 
 pub fn internal_setup(status: &Value) -> InternalSetup {
-    let v = &status["storage"]["internal_setup"];
-    let count = |key: &str| v[key].as_u64().unwrap_or(0);
-    match v["state"].as_str() {
+    let v = SetupStatus::deserialize(&status["storage"]["internal_setup"]).unwrap_or_default();
+    let count = |n: Option<u64>| n.unwrap_or(0);
+    match v.state.as_deref() {
         Some("NotNeeded") => InternalSetup::NotNeeded,
-        Some("Pending") => InternalSetup::Pending(match v["reason"].as_str() {
+        Some("Pending") => InternalSetup::Pending(match v.reason.as_deref() {
             Some("battery_low" | "battery_unknown") => SetupWait::Battery,
             _ => SetupWait::Restart,
         }),
         Some("Waiting") => InternalSetup::Waiting {
-            files: count("files").min(u32::MAX as u64) as u32,
-            bytes: count("bytes"),
+            files: count(v.files).min(u32::MAX as u64) as u32,
+            bytes: count(v.bytes),
         },
         Some("Running") => InternalSetup::Running,
         Some("Done") => InternalSetup::Done {
-            kept: count("kept").min(u32::MAX as u64) as u32,
+            kept: count(v.kept).min(u32::MAX as u64) as u32,
         },
         Some("Failed") => InternalSetup::Failed,
         _ => InternalSetup::Unknown,
     }
 }
 
+/// The radio firmware's state in a status snapshot.
+fn firmware(status: &Value) -> Option<FirmwareStatus> {
+    FirmwareStatus::deserialize(&status["system"]["radio_firmware"]).ok()
+}
+/// The installed release in a status snapshot (none when it is empty or not reported).
+fn release_version(status: &Value) -> Option<String> {
+    Versions::deserialize(&status["system"]["versions"])
+        .ok()?
+        .release_version
+        .filter(|v| !v.is_empty())
+}
 pub fn radio_firmware(status: &Value) -> RadioFirmware {
-    match status["system"]["radio_firmware"]["state"].as_str() {
+    match firmware(status).as_ref().map(|f| f.state.as_str()) {
         Some("Ready") => RadioFirmware::Ready,
         Some("Missing") => RadioFirmware::Missing,
         Some("Installing") => RadioFirmware::Installing,

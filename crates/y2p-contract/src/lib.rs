@@ -13,6 +13,7 @@
 pub mod lenient;
 pub mod network;
 pub mod power;
+pub mod radio;
 pub mod reports;
 pub mod sleep;
 pub mod storage;
