@@ -37078,12 +37078,18 @@
    "sleep",
    "request"
   ],
-  "exit": 1,
+  "exit": 0,
   "files": {},
   "name": "suspend/sleep-request-quarantine-text-product",
   "stdout": {
-   "failure": "'product' object has no attribute 'get'",
-   "state": "Failed"
+   "boot_id": "boot-a",
+   "kernel_completed": false,
+   "reason": "sleep_recovery_required",
+   "request_boot_id": "boot-a",
+   "same_boot": true,
+   "schema": "org.y2linux.sleep/v1",
+   "state": "refused",
+   "wake_reason": "unknown"
   }
  },
  {
@@ -37091,12 +37097,18 @@
    "sleep",
    "request"
   ],
-  "exit": 1,
+  "exit": 0,
   "files": {},
   "name": "suspend/sleep-request-quarantine-text-updated",
   "stdout": {
-   "failure": "'>' not supported between instances",
-   "state": "Failed"
+   "boot_id": "boot-a",
+   "kernel_completed": false,
+   "reason": "sleep_recovery_required",
+   "request_boot_id": "boot-a",
+   "same_boot": true,
+   "schema": "org.y2linux.sleep/v1",
+   "state": "refused",
+   "wake_reason": "unknown"
   }
  },
  {
