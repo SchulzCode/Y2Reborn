@@ -33485,7 +33485,7 @@
     "filesystem_owner": "linux",
     "functions": [],
     "mode": null,
-    "reason": "unsupported_usb_mode",
+    "reason": "functionfs_mount_failed",
     "refresh_generation": 0,
     "restarts": 1,
     "schema": "org.y2linux.usb-transfer/v1",
