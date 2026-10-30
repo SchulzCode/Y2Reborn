@@ -100,8 +100,10 @@ pub struct BootRecord {
     pub identity: Value,
 }
 
-/// The `record` block of observations (`Context.record` in common.py).
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+/// The `record` block of observations (`Context.record` in common.py). A field a record lacks reads
+/// as its default.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct ObservationRecord {
     pub wall_timestamp: String,
     pub monotonic_ns: u64,
