@@ -276,7 +276,7 @@
   "reports/report-disable stdout": "Some(ReportState { enabled: Some(false), install_id: Some(\"6f1c3b2a-9d4e-4f5a-8b7c-0d1e2f3a4b5c\"), queued: 0, last: None, upload: false, destinations: [] }) OperationResult { succeeded: true, facts: [] }",
   "reports/report-enable stdout": "Some(ReportState { enabled: Some(true), install_id: Some(\"<uuid>\"), queued: 3, last: None, upload: false, destinations: [] }) OperationResult { succeeded: true, facts: [] }",
   "reports/report-enable-again stdout": "Some(ReportState { enabled: Some(true), install_id: Some(\"6f1c3b2a-9d4e-4f5a-8b7c-0d1e2f3a4b5c\"), queued: 3, last: None, upload: false, destinations: [] }) OperationResult { succeeded: true, facts: [] }",
-  "reports/report-enable-bad-seen stdout": "None OperationResult { succeeded: true, facts: [] }",
+  "reports/report-enable-bad-seen stdout": "Some(ReportState { enabled: Some(true), install_id: Some(\"<uuid>\"), queued: 3, last: None, upload: false, destinations: [] }) OperationResult { succeeded: true, facts: [] }",
   "reports/report-enable-marks-seen stdout": "Some(ReportState { enabled: Some(true), install_id: Some(\"<uuid>\"), queued: 3, last: None, upload: false, destinations: [] }) OperationResult { succeeded: true, facts: [] }",
   "reports/report-new-id stdout": "Some(ReportState { enabled: Some(true), install_id: Some(\"<uuid>\"), queued: 3, last: None, upload: false, destinations: [] }) OperationResult { succeeded: true, facts: [] }",
   "reports/report-new-id-fresh stdout": "Some(ReportState { enabled: None, install_id: Some(\"<uuid>\"), queued: 3, last: None, upload: false, destinations: [] }) OperationResult { succeeded: true, facts: [] }",

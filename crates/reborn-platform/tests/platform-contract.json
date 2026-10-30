@@ -29202,12 +29202,31 @@
    "report",
    "check"
   ],
-  "exit": 1,
+  "exit": 0,
   "files": {},
   "name": "reports/report-check-fired-bad-daily",
   "stdout": {
-   "failure": "report_failed",
-   "reason": "report_state_unreadable"
+   "reports": [
+    {
+     "bytes": "<volatile>",
+     "name": "<stamp>-<uuid>.tar.gz",
+     "queued": true,
+     "report_id": "<uuid>",
+     "trigger": "kernel_crash",
+     "triggers": [
+      "kernel_crash",
+      "kernel_warning",
+      "unclean_restart",
+      "reborn_crash",
+      "reborn_failure",
+      "update_failure",
+      "sleep_failure",
+      "radio_failure",
+      "display_failure",
+      "storage_error"
+     ]
+    }
+   ]
   }
  },
  {
@@ -29215,12 +29234,31 @@
    "report",
    "check"
   ],
-  "exit": 1,
+  "exit": 0,
   "files": {},
   "name": "reports/report-check-fired-bad-seen",
   "stdout": {
-   "failure": "report_failed",
-   "reason": "report_state_unreadable"
+   "reports": [
+    {
+     "bytes": "<volatile>",
+     "name": "<stamp>-<uuid>.tar.gz",
+     "queued": true,
+     "report_id": "<uuid>",
+     "trigger": "kernel_crash",
+     "triggers": [
+      "kernel_crash",
+      "kernel_warning",
+      "unclean_restart",
+      "reborn_crash",
+      "reborn_failure",
+      "update_failure",
+      "sleep_failure",
+      "radio_failure",
+      "display_failure",
+      "storage_error"
+     ]
+    }
+   ]
   }
  },
  {
@@ -29228,12 +29266,22 @@
    "report",
    "check"
   ],
-  "exit": 1,
+  "exit": 0,
   "files": {},
   "name": "reports/report-check-fired-bad-triggers",
   "stdout": {
-   "failure": "report_failed",
-   "reason": "report_state_unreadable"
+   "reports": [
+    {
+     "bytes": "<volatile>",
+     "name": "<stamp>-<uuid>.tar.gz",
+     "queued": true,
+     "report_id": "<uuid>",
+     "trigger": "kernel_warning",
+     "triggers": [
+      "kernel_warning"
+     ]
+    }
+   ]
   }
  },
  {
@@ -29241,12 +29289,31 @@
    "report",
    "check"
   ],
-  "exit": 1,
+  "exit": 0,
   "files": {},
   "name": "reports/report-check-fired-odd-count",
   "stdout": {
-   "failure": "report_failed",
-   "reason": "report_state_unreadable"
+   "reports": [
+    {
+     "bytes": "<volatile>",
+     "name": "<stamp>-<uuid>.tar.gz",
+     "queued": true,
+     "report_id": "<uuid>",
+     "trigger": "kernel_crash",
+     "triggers": [
+      "kernel_crash",
+      "kernel_warning",
+      "unclean_restart",
+      "reborn_crash",
+      "reborn_failure",
+      "update_failure",
+      "sleep_failure",
+      "radio_failure",
+      "display_failure",
+      "storage_error"
+     ]
+    }
+   ]
   }
  },
  {
@@ -29267,12 +29334,22 @@
    "report",
    "check"
   ],
-  "exit": 1,
+  "exit": 0,
   "files": {},
   "name": "reports/report-check-fired-reported-number",
   "stdout": {
-   "failure": "report_failed",
-   "reason": "report_state_unreadable"
+   "reports": [
+    {
+     "bytes": "<volatile>",
+     "name": "<stamp>-<uuid>.tar.gz",
+     "queued": true,
+     "report_id": "<uuid>",
+     "trigger": "kernel_warning",
+     "triggers": [
+      "kernel_warning"
+     ]
+    }
+   ]
   }
  },
  {
@@ -29280,12 +29357,22 @@
    "report",
    "check"
   ],
-  "exit": 1,
+  "exit": 0,
   "files": {},
   "name": "reports/report-check-fired-reported-text",
   "stdout": {
-   "failure": "report_failed",
-   "reason": "report_state_unreadable"
+   "reports": [
+    {
+     "bytes": "<volatile>",
+     "name": "<stamp>-<uuid>.tar.gz",
+     "queued": true,
+     "report_id": "<uuid>",
+     "trigger": "kernel_warning",
+     "triggers": [
+      "kernel_warning"
+     ]
+    }
+   ]
   }
  },
  {
@@ -29443,12 +29530,22 @@
    "report",
    "check"
   ],
-  "exit": 1,
+  "exit": 0,
   "files": {},
   "name": "reports/report-check-seen-late",
   "stdout": {
-   "failure": "report_failed",
-   "reason": "report_state_unreadable"
+   "reports": [
+    {
+     "bytes": "<volatile>",
+     "name": "<stamp>-<uuid>.tar.gz",
+     "queued": true,
+     "report_id": "<uuid>",
+     "trigger": "storage_error",
+     "triggers": [
+      "storage_error"
+     ]
+    }
+   ]
   }
  },
  {
@@ -29531,12 +29628,21 @@
    "report",
    "enable"
   ],
-  "exit": 1,
+  "exit": 0,
   "files": {},
   "name": "reports/report-enable-bad-seen",
   "stdout": {
-   "failure": "report_failed",
-   "reason": "report_state_unreadable"
+   "destinations": [],
+   "enabled": true,
+   "install_id": "<uuid>",
+   "last": null,
+   "queued": [
+    "20261019T100000Z-<uuid>.tar.gz",
+    "20261020T100000Z-<uuid>.tar.gz",
+    "20261021T100000Z-<uuid>.tar.gz"
+   ],
+   "schema": 1,
+   "upload": false
   }
  },
  {
@@ -29717,12 +29823,24 @@
    "report",
    "send"
   ],
-  "exit": 1,
+  "exit": 0,
   "files": {},
   "name": "reports/report-send-bad-daily",
   "stdout": {
-   "failure": "report_failed",
-   "reason": "report_state_unreadable"
+   "bytes": "<volatile>",
+   "name": "<stamp>-<uuid>.tar.gz",
+   "queued": true,
+   "report_id": "<uuid>",
+   "upload": {
+    "uploaded": [
+     {
+      "name": "<stamp>-<uuid>.tar.gz",
+      "next": "<volatile>",
+      "outcome": "retry",
+      "reason": "OSError"
+     }
+    ]
+   }
   }
  },
  {
@@ -29745,12 +29863,18 @@
    "report",
    "send"
   ],
-  "exit": 1,
+  "exit": 0,
   "files": {},
   "name": "reports/report-send-odd-count",
   "stdout": {
-   "failure": "report_failed",
-   "reason": "report_state_unreadable"
+   "bytes": "<volatile>",
+   "name": "<stamp>-<uuid>.tar.gz",
+   "queued": true,
+   "report_id": "<uuid>",
+   "upload": {
+    "reason": "offline",
+    "uploaded": []
+   }
   }
  },
  {
@@ -29858,8 +29982,11 @@
    "enabled": true,
    "install_id": "6f1c3b2a-9d4e-4f5a-8b7c-0d1e2f3a4b5c",
    "last": {
+    "bytes": 0,
+    "created_utc": null,
     "report_id": "r",
-    "state": "queued"
+    "state": "queued",
+    "trigger": ""
    },
    "queued": [
     "20261019T100000Z-0c0c0c0c-0c0c-4c0c-8c0c-0c0c0c0c0c0c.tar.gz",
@@ -29919,12 +30046,23 @@
    "report",
    "upload"
   ],
-  "exit": 1,
+  "exit": 0,
   "files": {},
   "name": "reports/report-upload-bad-attempts",
   "stdout": {
-   "failure": "report_failed",
-   "reason": "report_state_unreadable"
+   "uploaded": [
+    {
+     "name": "<stamp>-<uuid>.tar.gz",
+     "outcome": "dropped",
+     "reason": "expired"
+    },
+    {
+     "name": "<stamp>-<uuid>.tar.gz",
+     "next": "<volatile>",
+     "outcome": "retry",
+     "reason": "HTTP_503"
+    }
+   ]
   }
  },
  {
@@ -29945,12 +30083,28 @@
    "report",
    "upload"
   ],
-  "exit": 1,
+  "exit": 0,
   "files": {},
   "name": "reports/report-upload-bad-last",
   "stdout": {
-   "failure": "report_failed",
-   "reason": "report_state_unreadable"
+   "uploaded": [
+    {
+     "name": "<stamp>-<uuid>.tar.gz",
+     "outcome": "dropped",
+     "reason": "expired"
+    },
+    {
+     "name": "<stamp>-<uuid>.tar.gz",
+     "outcome": "sent",
+     "report_id": null
+    },
+    {
+     "name": "<stamp>-<uuid>.tar.gz",
+     "next": "<volatile>",
+     "outcome": "retry",
+     "reason": "OSError"
+    }
+   ]
   }
  },
  {
@@ -29958,12 +30112,23 @@
    "report",
    "upload"
   ],
-  "exit": 1,
+  "exit": 0,
   "files": {},
   "name": "reports/report-upload-bad-next",
   "stdout": {
-   "failure": "report_failed",
-   "reason": "report_state_unreadable"
+   "uploaded": [
+    {
+     "name": "<stamp>-<uuid>.tar.gz",
+     "outcome": "dropped",
+     "reason": "expired"
+    },
+    {
+     "name": "<stamp>-<uuid>.tar.gz",
+     "next": "<volatile>",
+     "outcome": "retry",
+     "reason": "OSError"
+    }
+   ]
   }
  },
  {
