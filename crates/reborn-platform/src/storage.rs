@@ -10,6 +10,8 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
+use y2p_contract::lenient::Shaped;
+use y2p_contract::storage::{Identity, MediaRecord, Y2MediaClaim};
 
 pub struct PinnedTrack {
     _file: fs::File,
@@ -116,12 +118,12 @@ impl TrackClaim {
             if Path::new("/etc/y2linux/capabilities.json").exists() {
                 let claim = fs::read_to_string("/run/y2/media-mount.json")
                     .ok()
-                    .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok());
+                    .and_then(|s| serde_json::from_str::<MediaRecord>(&s).ok());
                 let boot =
                     fs::read_to_string("/proc/sys/kernel/random/boot_id").unwrap_or_default();
                 let identity = claim.as_ref().and_then(media_claim_identity);
                 let instance = claim.as_ref().and_then(|c| {
-                    let device = c["device_id"].as_str()?;
+                    let device = c.device_id.as_deref()?;
                     if device.len() > 24 || !device.bytes().all(|b| b.is_ascii_digit() || b == b':')
                     {
                         return None;
@@ -364,16 +366,16 @@ pub fn internal_mount(music: &Path) -> &'static str {
 /// Choose the internal music directory from what the platform has recorded. Pure so the
 /// decision is testable: Y2Media only while its Ready record names this boot and this very mount.
 fn choose_internal_music(marker: &str, boot_id: &str, mountinfo: &[(u64, PathBuf)]) -> PathBuf {
-    let claim = serde_json::from_str::<serde_json::Value>(marker).unwrap_or_default();
+    let claim = serde_json::from_str::<Y2MediaClaim>(marker).unwrap_or_default();
     let current = mountinfo
         .iter()
         .filter(|(_, path)| path == Path::new(INTERNAL_MEDIA))
         .collect::<Vec<_>>();
-    let ready = claim["state"] == "Ready"
+    let ready = claim.state.as_deref() == Some("Ready")
         && !boot_id.is_empty()
-        && claim["boot_id"] == boot_id
+        && claim.boot_id.is_some_and(|id| id.is(Some(boot_id)))
         && current.len() == 1
-        && claim["mount_id"].as_u64() == Some(current[0].0);
+        && claim.mount_id.and_then(|id| u64::try_from(id).ok()) == Some(current[0].0);
     PathBuf::from(if ready {
         INTERNAL_MEDIA_MUSIC
     } else {
@@ -412,7 +414,7 @@ pub fn sources(music: &Path) -> Vec<Source> {
             if !internal && Path::new("/etc/y2linux/capabilities.json").exists() {
                 let claim = fs::read_to_string("/run/y2/media-mount.json")
                     .ok()
-                    .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok());
+                    .and_then(|s| serde_json::from_str::<MediaRecord>(&s).ok());
                 let boot =
                     fs::read_to_string("/proc/sys/kernel/random/boot_id").unwrap_or_default();
                 if uuid.starts_with("device:") {
@@ -421,7 +423,7 @@ pub fn sources(music: &Path) -> Vec<Source> {
                     }
                 }
                 let instance = claim.as_ref().and_then(|v| {
-                    let device = v["device_id"].as_str()?;
+                    let device = v.device_id.as_deref()?;
                     if device.len() > 24 || !device.bytes().all(|b| b.is_ascii_digit() || b == b':')
                     {
                         return None;
@@ -493,30 +495,35 @@ fn block_instance(entry: &Path) -> Option<String> {
     Some(format!("block:{dev}:diskseq:{seq}"))
 }
 fn sd_claim_matches(
-    claim: Option<&serde_json::Value>,
+    claim: Option<&MediaRecord>,
     uuid: &str,
     mount: Option<u64>,
     boot: &str,
     instance: Option<&str>,
 ) -> bool {
     claim.is_some_and(|c| {
-        c["schema"].as_u64() == Some(1)
+        c.schema == Some(1)
             && !boot.is_empty()
-            && c["boot_id"].as_str() == Some(boot)
-            && (c["uuid"].as_str() == Some(uuid)
-                || (c["uuid"].is_null()
-                    && c["identity"]["id"]
-                        .as_str()
-                        .is_some_and(|id| uuid == format!("cid:{id}"))))
+            && c.of_boot(Some(boot))
+            && (c.uuid.as_deref() == Some(uuid)
+                || (c.uuid.is_none()
+                    && identity(c).is_some_and(|i| uuid == format!("cid:{}", i.id))))
             && mount.is_some()
-            && c["mount_id"].as_u64() == mount
-            && c["state"].as_str() == Some("Ready")
+            && c.mount_id.and_then(|id| u64::try_from(id).ok()) == mount
+            && c.state_is("Ready")
             && instance.is_some()
-            && c["source_instance"].as_str() == instance
+            && c.source_instance.as_deref() == instance
     })
 }
-fn media_claim_identity(claim: &serde_json::Value) -> Option<String> {
-    let device = claim["device_id"].as_str()?;
+/// The claim's card identity (none without one, or of another shape).
+fn identity(claim: &MediaRecord) -> Option<&Identity> {
+    match &claim.identity {
+        Some(Shaped::Is(identity)) => Some(identity),
+        _ => None,
+    }
+}
+fn media_claim_identity(claim: &MediaRecord) -> Option<String> {
+    let device = claim.device_id.as_deref()?;
     if !device.bytes().all(|b| b.is_ascii_digit() || b == b':') || device.len() > 24 {
         return None;
     }
@@ -526,14 +533,18 @@ fn media_claim_identity(claim: &serde_json::Value) -> Option<String> {
     }
     media_claim_identity_at(claim, &entry)
 }
-fn media_claim_identity_at(claim: &serde_json::Value, entry: &Path) -> Option<String> {
-    for field in ["start", "size"] {
+fn media_claim_identity_at(claim: &MediaRecord, entry: &Path) -> Option<String> {
+    let identity = identity(claim)?;
+    for (field, recorded) in [
+        ("start", &identity.geometry.start),
+        ("size", &identity.geometry.size),
+    ] {
         let current = if field == "start" && !entry.join("partition").exists() {
             "0".into()
         } else {
             fs::read_to_string(entry.join(field)).ok()?
         };
-        if claim["identity"]["geometry"][field].as_str() != Some(current.trim()) {
+        if recorded.as_deref() != Some(current.trim()) {
             return None;
         }
     }
@@ -543,10 +554,10 @@ fn media_claim_identity_at(claim: &serde_json::Value, entry: &Path) -> Option<St
         entry
     };
     let cid = fs::read_to_string(disk.join("device/cid")).ok()?;
-    if claim["identity"]["cid"].as_str() != Some(cid.trim()) {
+    if identity.cid.as_deref() != Some(cid.trim()) {
         return None;
     }
-    let id = claim["identity"]["id"].as_str()?;
+    let id = &identity.id;
     (id.len() == 64 && id.bytes().all(|c| c.is_ascii_hexdigit())).then(|| format!("cid:{id}"))
 }
 fn sd_source_id(uuid: &str, identity: Option<&str>) -> String {
@@ -900,9 +911,12 @@ mod tests {
         fs::write(root.join("device/cid"), "card-one\n").unwrap();
         fs::write(root.join("size"), "1000000\n").unwrap();
         let id = "a".repeat(64);
-        let claim = serde_json::json!({"schema":1,"state":"Ready","uuid":null,
-            "boot_id":"boot-one","mount_id":42,"source_instance":"block:179:8:diskseq:17",
-            "identity":{"id":id,"cid":"card-one","geometry":{"partition":null,"start":"0","size":"1000000"}}});
+        let claim: MediaRecord = serde_json::from_value(serde_json::json!({"schema":1,
+            "state":"Ready","uuid":null,"boot_id":"boot-one","mount_id":42,
+            "source_instance":"block:179:8:diskseq:17",
+            "identity":{"id":id,"cid":"card-one","filesystem":"exfat","uuid":null,
+                "geometry":{"partition":null,"start":"0","size":"1000000"}}}))
+        .unwrap();
         let identity = media_claim_identity_at(&claim, &root).unwrap();
         assert!(sd_claim_matches(
             Some(&claim),
@@ -932,7 +946,10 @@ mod tests {
     }
     #[test]
     fn new_platform_requires_matching_card_claim_and_boot() {
-        let claim = serde_json::json!({"schema":1,"state":"Ready","uuid":"card-one","boot_id":"boot-one","mount_id":42,"source_instance":"1:2"});
+        let claim: MediaRecord = serde_json::from_value(serde_json::json!({"schema":1,
+            "state":"Ready","uuid":"card-one","boot_id":"boot-one","mount_id":42,
+            "source_instance":"1:2"}))
+        .unwrap();
         assert!(!sd_claim_matches(
             Some(&claim),
             "card-one",

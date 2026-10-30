@@ -14,6 +14,7 @@ pub mod lenient;
 pub mod network;
 pub mod power;
 pub mod sleep;
+pub mod storage;
 pub mod update;
 
 use serde::{Deserialize, Serialize};
