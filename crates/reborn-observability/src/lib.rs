@@ -45,6 +45,7 @@ pub const SUBSYSTEMS: &[&str] = &[
     "platform",
     "lastfm",
     "scrobble",
+    "spotify",
     "books",
 ];
 pub const METRICS: &[&str] = &[

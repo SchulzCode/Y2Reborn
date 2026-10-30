@@ -281,6 +281,77 @@ pub struct LastFmView {
     pub busy: bool,
 }
 
+/// Spotify as the player knows it (sign-in, lists received, the song).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SpotifyView {
+    /// spotifyd and the library helper are installed.
+    pub available: bool,
+    /// A sign-in is stored.
+    pub signed_in: bool,
+    /// A sign-in in progress: the address its QR code holds, and the code
+    /// to type at spotify.com/pair instead.
+    pub approval: Option<String>,
+    pub user_code: String,
+    pub code: Option<qr::Code>,
+    /// A sign-in request is running.
+    pub busy: bool,
+    /// spotifyd isn't running, and why (shown on the Spotify page).
+    pub problem: Option<String>,
+    /// Lists by key (`SpotifyList::key`), kept so Back shows them at once.
+    pub lists: std::collections::HashMap<String, SpotifyList>,
+    /// The song spotifyd plays now: (title, artist).
+    pub song: Option<(String, String)>,
+}
+
+/// One Spotify list: a playlist, an album, Liked Songs, an artist's songs.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SpotifyList {
+    pub title: String,
+    pub rows: Vec<SpotifyRow>,
+    /// Cursor of the next page, when there is one.
+    pub next: Option<String>,
+    /// A context for the whole list (Liked Songs).
+    pub context: Option<String>,
+    pub loading: bool,
+    pub error: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SpotifyRow {
+    pub title: String,
+    /// The artist (songs, albums) or owner (playlists).
+    pub detail: String,
+    pub uri: String,
+    /// The playlist's, album's or artist's own id; a song's album.
+    pub id: String,
+}
+impl SpotifyRow {
+    /// From the helper's "Name - Artist" label.
+    pub fn from_label(label: &str, uri: &str, id: &str) -> Self {
+        let (title, detail) = match label.rsplit_once(" - ") {
+            Some((t, d)) if !t.trim().is_empty() && !d.trim().is_empty() => (t.trim(), d.trim()),
+            _ => (label.trim(), ""),
+        };
+        Self {
+            title: title.into(),
+            detail: detail.into(),
+            uri: uri.into(),
+            id: id.into(),
+        }
+    }
+}
+
+/// What a list key (the navigation filter of `Screen::SpotifyList`) shows:
+/// the helper's command and its argument; an artist is a menu of its own.
+pub fn spotify_list_kind(key: &str) -> (&str, &str) {
+    key.split_once(':').unwrap_or((key, ""))
+}
+
+/// `Screen::SpotifyList`'s navigation filter: (list key, title).
+pub fn spotify_filter(filter: &str) -> (&str, &str) {
+    filter.split_once('\u{1f}').unwrap_or((filter, "Spotify"))
+}
+
 /// Internet radio lists as the player last received them.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct RadioView {
@@ -380,6 +451,7 @@ pub struct Ui {
     pub bluetooth: BluetoothView,
     pub radio: RadioView,
     pub lastfm: LastFmView,
+    pub spotify: SpotifyView,
     pub pairing: Option<String>,
     pub pairing_focus: usize,
     /// The full-screen keyboard, while it is open.
@@ -1227,7 +1299,7 @@ impl Ui {
 
     /// A Home Menu switch changes Home's rows while Home waits in the
     /// history: Back returns to the place that was focused, not its index.
-    fn keep_home_focus(m: &mut AppModel, tracks: &[Track], effect: &Effect) {
+    fn keep_home_focus(m: &mut AppModel, tracks: &[Track], effect: &Effect, spotify: bool) {
         let mut after = m.settings.clone();
         match effect {
             Effect::SetHomePin(key, on) => after.pin_home(key, *on),
@@ -1243,8 +1315,8 @@ impl Ui {
         else {
             return;
         };
-        let before = pages::home_rows(&m.settings, tracks);
-        let after = pages::home_rows(&after, tracks);
+        let before = pages::home_rows(&m.settings, tracks, spotify);
+        let after = pages::home_rows(&after, tracks, spotify);
         let frame = &mut m.navigation.history[at];
         let key = before.get(frame.focus).map(|r| r.key.as_str());
         frame.focus = key
@@ -1487,6 +1559,14 @@ impl Ui {
                     rows.insert(1, Item::new("Station Info", "radio_info_current"));
                 }
                 return rows;
+            }
+            // Spotify keeps its own queue, shuffle and library.
+            if current.is_spotify() {
+                return vec![
+                    Item::new("Spotify", "spotify_page"),
+                    Item::new("Sleep Timer", "sleep_timer").with_secondary(sleep_label(m, false)),
+                    Item::new("Stop Spotify", "radio_stop"),
+                ];
             }
             // A book: its chapters; shuffle and repeat do not apply to it.
             if let Some((book, _)) = m.book_part() {
@@ -2508,7 +2588,7 @@ impl Ui {
             };
         }
         if let Some(effect) = self.setting(m, key) {
-            Self::keep_home_focus(m, tracks, &effect);
+            Self::keep_home_focus(m, tracks, &effect, self.spotify.available);
             return effect;
         }
         match m.screen {
@@ -2575,9 +2655,113 @@ impl Ui {
             Screen::Radio | Screen::RadioStations | Screen::RadioCategories | Screen::RadioInfo => {
                 return self.radio_select(m, key)
             }
+            Screen::Spotify | Screen::SpotifyList => return self.spotify_select(m, key),
             _ => {}
         }
         Effect::None
+    }
+
+    /// Open Spotify list `key` titled `title`; loaded unless it is an
+    /// artist's menu (nothing to fetch) or already here.
+    fn spotify_open(&mut self, m: &mut AppModel, key: String, title: &str) -> Effect {
+        let (kind, _) = spotify_list_kind(&key);
+        let list = self.spotify.lists.entry(key.clone()).or_default();
+        list.title = title.into();
+        Self::go(m, Screen::SpotifyList, format!("{key}\u{1f}{title}"));
+        if kind == "artist" || (!list.rows.is_empty() && list.error.is_none()) {
+            return Effect::None;
+        }
+        list.loading = true;
+        list.error = None;
+        Effect::Spotify(reborn_core::SpotifyRequest::Load(key))
+    }
+
+    fn spotify_select(&mut self, m: &mut AppModel, key: &str) -> Effect {
+        use reborn_core::SpotifyRequest as R;
+        match key {
+            "spotify_connect" => return Effect::Spotify(R::Connect),
+            "spotify_cancel" => return Effect::Spotify(R::Cancel),
+            "spotify_disconnect" => return Effect::Spotify(R::Disconnect),
+            "spotify_wifi" => {
+                Self::go(m, Screen::Wifi, "");
+                return Effect::None;
+            }
+            "spotify_now" => {
+                Self::go(m, Screen::NowPlaying, "");
+                return Effect::None;
+            }
+            "spotify_more" => {
+                let list = spotify_filter(&m.navigation.filter).0.to_owned();
+                if let Some(l) = self.spotify.lists.get_mut(&list) {
+                    l.loading = true;
+                }
+                return Effect::Spotify(R::More(list));
+            }
+            "spotify_retry" => {
+                let list = spotify_filter(&m.navigation.filter).0.to_owned();
+                if let Some(l) = self.spotify.lists.get_mut(&list) {
+                    l.loading = true;
+                    l.error = None;
+                }
+                return Effect::Spotify(R::Load(list));
+            }
+            "spotify_play_all" => {
+                let list = spotify_filter(&m.navigation.filter).0.to_owned();
+                Self::go(m, Screen::NowPlaying, "");
+                return Effect::Spotify(R::PlayAll(list));
+            }
+            _ => {}
+        }
+        if let Some(key) = key.strip_prefix("spotify_open:") {
+            let title = match key {
+                "playlists" => "Playlists",
+                "liked-songs" => "Liked Songs",
+                "saved-albums" => "Albums",
+                "followed-artists" => "Artists",
+                _ => "Spotify",
+            };
+            return self.spotify_open(m, key.to_owned(), title);
+        }
+        // An artist's own menu: (list prefix, title).
+        if let Some((what, id)) = key
+            .strip_prefix("spotify_artist:")
+            .and_then(|k| k.split_once(':'))
+        {
+            let artist = spotify_filter(&m.navigation.filter).1.to_owned();
+            let title = match what {
+                "artist-top-tracks" => format!("{artist}: Top Songs"),
+                "artist-albums" => format!("{artist}: Albums"),
+                _ => format!("{artist}: All Songs"),
+            };
+            return self.spotify_open(m, format!("{what}:{id}"), &title);
+        }
+        let Some(index) = key
+            .strip_prefix("spotify_row:")
+            .and_then(|i| i.parse::<usize>().ok())
+        else {
+            return Effect::None;
+        };
+        let list = spotify_filter(&m.navigation.filter).0.to_owned();
+        let Some(row) = self
+            .spotify
+            .lists
+            .get(&list)
+            .and_then(|l| l.rows.get(index))
+            .cloned()
+        else {
+            return Effect::None;
+        };
+        match spotify_list_kind(&list).0 {
+            "playlists" => self.spotify_open(m, format!("playlist-tracks:{}", row.id), &row.title),
+            "saved-albums" | "artist-albums" => {
+                self.spotify_open(m, format!("album-tracks:{}", row.id), &row.title)
+            }
+            "followed-artists" => self.spotify_open(m, format!("artist:{}", row.id), &row.title),
+            _ => {
+                Self::go(m, Screen::NowPlaying, "");
+                Effect::Spotify(R::Play { list, index })
+            }
+        }
     }
 
     fn radio_select(&mut self, m: &mut AppModel, key: &str) -> Effect {
@@ -3328,6 +3512,11 @@ impl Ui {
                 Self::close_modal(m);
                 return Effect::StopPlayback;
             }
+            "spotify_page" => {
+                Self::close_modal(m);
+                Self::go(m, Screen::Spotify, "");
+                return Effect::None;
+            }
             "bt_forget" => {
                 m.navigation.modal = Some(Modal::Confirm(ConfirmAction::ForgetBluetooth));
                 m.navigation.modal_focus = 0;
@@ -4042,6 +4231,7 @@ fn route(key: &str) -> Option<Screen> {
         "diagnostics" => Screen::Diagnostics,
         "radio" => Screen::Radio,
         "lastfm" => Screen::LastFm,
+        "spotify" => Screen::Spotify,
         "error_reports" => Screen::ErrorReports,
         _ => return None,
     })

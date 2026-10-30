@@ -1,6 +1,8 @@
 [workspace]
 resolver = "2"
 members = ["crates/*", "app/reborn"]
+# Its own workspace: its dependencies are not vendored here (README there).
+exclude = ["tools/spotify-metadata"]
 
 [workspace.package]
 version = "1.0.0-beta.8.43"

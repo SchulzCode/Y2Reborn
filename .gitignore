@@ -3,3 +3,4 @@
 /.cache/
 *.tmp
 __pycache__/
+/tools/spotify-metadata/target/

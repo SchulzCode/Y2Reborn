@@ -1,0 +1,17 @@
+[package]
+name = "reborn-spotify-metadata"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Y2Reborn: Spotify library browsing for crates/reborn-platform/src/spotify.rs, over the vendored housecat-core/housecat-metadata crates. Reuses the session spotifyd already holds (ported from PiPod-OS)."
+
+[dependencies]
+housecat-core = { workspace = true }
+housecat-metadata = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[[bin]]
+name = "reborn-spotify-metadata"
+path = "src/main.rs"

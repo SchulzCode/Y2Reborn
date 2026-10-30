@@ -1,0 +1,36 @@
+[package]
+name = "housecat-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Spotify client session for housecat: access point, auth, tokens, spclient"
+
+[dependencies]
+housecat-protocol = { workspace = true }
+prost = { workspace = true }
+prost-types = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+bytes = { workspace = true }
+futures = { workspace = true }
+reqwest = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+shannon = { workspace = true }
+rsa = { workspace = true }
+sha1 = { workspace = true }
+sha2 = { workspace = true }
+hmac = { workspace = true }
+num-bigint = { workspace = true }
+getrandom = { workspace = true }
+base64 = { workspace = true }
+hex = { workspace = true }
+url = { workspace = true }
+roxmltree = { workspace = true }
+
+[dev-dependencies]
+wiremock = { workspace = true }
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["test-util"] }

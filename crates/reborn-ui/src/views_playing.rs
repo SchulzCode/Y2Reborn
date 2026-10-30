@@ -100,7 +100,7 @@ pub fn now_playing(
         color::MUTED,
     );
     let info_cy = artist_baseline + 45.;
-    let source_offline = !radio
+    let source_offline = !t.is_live()
         && !m.sources.is_empty()
         && !m.sources.iter().any(|s| s.id == t.source_id && s.online);
     if source_offline
@@ -115,6 +115,10 @@ pub fn now_playing(
             "No audio output · check headphones"
         } else if radio {
             "Tuning in…"
+        } else if m.playback == PlaybackState::Error && t.is_spotify() {
+            "Spotify stopped · choose a song again"
+        } else if t.is_spotify() {
+            "Starting Spotify…"
         } else {
             "Starting…"
         };

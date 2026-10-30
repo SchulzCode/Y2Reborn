@@ -378,8 +378,7 @@ impl AppModel {
     /// that will have played by then. Nothing follows a station, and
     /// Repeat One repeats the song playing.
     pub fn upcoming(&self, n: usize) -> (Vec<Track>, Vec<QueueEntryId>) {
-        if self.settings.repeat == RepeatMode::Track || self.current().is_some_and(Track::is_radio)
-        {
+        if self.settings.repeat == RepeatMode::Track || self.current().is_some_and(Track::is_live) {
             return (vec![], vec![]);
         }
         let mut indices: Vec<usize> = (self.queue_position + 1..self.queue.len())
@@ -483,7 +482,7 @@ impl AppModel {
     /// `track` played: newest last, at most `MAX_HISTORY`; stations and
     /// audiobook parts have their own places.
     pub fn note_played(&mut self, track: &Track) {
-        if track.is_radio() || track.book || track.path.as_os_str().is_empty() {
+        if track.is_live() || track.book || track.path.as_os_str().is_empty() {
             return;
         }
         let entry = HistoryEntry {
@@ -547,7 +546,7 @@ impl AppModel {
 
 /// A queue entry restored from a reference, not yet matched to the library.
 fn is_stub(track: &Track) -> bool {
-    track.size == 0 && !track.is_radio() && !track.path.as_os_str().is_empty()
+    track.size == 0 && !track.is_live() && !track.path.as_os_str().is_empty()
 }
 
 /// The queue as the session stores it: library songs by reference (source
@@ -576,7 +575,7 @@ pub(crate) mod stored {
     pub fn serialize<S: Serializer>(queue: &[Track], s: S) -> Result<S::Ok, S::Error> {
         let mut seq = s.serialize_seq(Some(queue.len()))?;
         for track in queue {
-            if track.id > 0 && !track.is_radio() {
+            if track.id > 0 && !track.is_live() {
                 seq.serialize_element(&RefOut {
                     r#ref: (&track.source_id, &track.path, track.id),
                 })?;

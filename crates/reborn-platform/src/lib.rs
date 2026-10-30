@@ -15,6 +15,7 @@ pub mod playlists;
 pub mod power;
 pub mod radio;
 pub mod scrobble;
+pub mod spotify;
 pub mod storage;
 pub mod wifi;
 pub mod workload;

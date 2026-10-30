@@ -58,6 +58,8 @@ enum Source {
     File(Box<reborn_platform::storage::PinnedTrack>),
     /// Held only so dropping the decoder also stops the transfer.
     Radio(#[allow(dead_code)] reborn_platform::radio::Stream),
+    /// spotifyd's sound; dropping it detaches (spotifyd keeps running).
+    Spotify(#[allow(dead_code)] reborn_platform::spotify::Audio),
 }
 struct BoundDecoder {
     decoder: Decoder,
@@ -71,6 +73,16 @@ impl BoundDecoder {
         dsp: DspConfig,
         cancel: Cancel,
     ) -> Result<Self, String> {
+        if track.is_spotify() {
+            let audio = reborn_platform::spotify::Audio::attach()
+                .map_err(|e| format!("Spotify could not start: {e}"))?;
+            let decoder = Decoder::open_stream(audio.reader(), spec, dsp, cancel)
+                .map_err(|e| format!("Spotify could not be played: {e}"))?;
+            return Ok(Self {
+                decoder,
+                _source: Source::Spotify(audio),
+            });
+        }
         if track.is_radio() {
             let url = track.path.to_string_lossy();
             let stream = reborn_platform::radio::Stream::start(&url)
@@ -926,7 +938,7 @@ impl Playback {
                 );
                 // A station may wait up to 45 s for data while it reconnects
                 // (media.c RB_STREAM_STALL_MS); that is not a stuck worker.
-                let heartbeat_s = if job.track.is_radio() { 60 } else { 20 };
+                let heartbeat_s = if job.track.is_live() { 60 } else { 20 };
                 dl.heartbeat("playback", heartbeat_s);
                 let operation: Result<(), String> = (|| {
                     let mut tracks = Vec::with_capacity(1 + job.queue.len());
@@ -974,10 +986,10 @@ impl Playback {
                     }
                     dl.add("ffmpeg_corrupt_packets", decoder.metadata.corrupt_packets as f64);
                     // A live station has no position to return to.
-                    if job.position > 0 && !tracks[0].is_radio() {
+                    if job.position > 0 && !tracks[0].is_live() {
                         decoder.seek(job.position)?;
                     }
-                    let artwork = if tracks[0].is_radio() {
+                    let artwork = if tracks[0].is_live() {
                         None
                     } else {
                         publish_artwork(&cache, &tracks[0], &mut decoder)

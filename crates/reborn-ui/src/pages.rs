@@ -57,8 +57,9 @@ impl Page {
 /// Home (UI v4): the six places a listener starts from, Audiobooks once
 /// the library holds a book (Beta 8.19, can be switched off), and any Music
 /// lists the owner pinned after Music. Any but Now Playing and Settings can
-/// be taken off (Y2Reborn #52, #55).
-pub(crate) fn home_rows(s: &Settings, tracks: &[Track]) -> Vec<Item> {
+/// be taken off (Y2Reborn #52, #55). Spotify stands there only on a player
+/// that has it installed.
+pub(crate) fn home_rows(s: &Settings, tracks: &[Track], spotify: bool) -> Vec<Item> {
     let mut rows = vec![row("Now Playing", "now_playing", "")];
     if s.home_shows("music") {
         rows.push(row("Music", "music", ""));
@@ -75,7 +76,7 @@ pub(crate) fn home_rows(s: &Settings, tracks: &[Track]) -> Vec<Item> {
     rows.extend(
         HOME_HIDEABLE[1..]
             .iter()
-            .filter(|(key, _)| s.home_shows(key))
+            .filter(|(key, _)| s.home_shows(key) && (spotify || *key != "spotify"))
             .map(|(key, label)| row(label, key, "")),
     );
     rows.push(row("Settings", "settings", ""));
@@ -153,7 +154,7 @@ fn disabled(mut item: Item, enabled: bool) -> Item {
 
 pub fn page(ui: &Ui, m: &AppModel, tracks: &[Track]) -> Page {
     match m.screen {
-        Screen::Home => Page::rows(home_rows(&m.settings, tracks)),
+        Screen::Home => Page::rows(home_rows(&m.settings, tracks, ui.spotify.available)),
         Screen::Music => Page::rows(music(ui, m, tracks)),
         // Every place Home can show, in Home's order (#52, #55).
         Screen::HomeMenu => {
@@ -171,7 +172,12 @@ pub fn page(ui: &Ui, m: &AppModel, tracks: &[Track]) -> Page {
                         let on = m.settings.home_pins.iter().any(|p| p == key);
                         row(label, &format!("home_pin:{key}"), "").with_kind(RowKind::Toggle(on))
                     }))
-                    .chain(HOME_HIDEABLE[1..].iter().map(shown))
+                    .chain(
+                        HOME_HIDEABLE[1..]
+                            .iter()
+                            .filter(|(key, _)| ui.spotify.available || *key != "spotify")
+                            .map(shown),
+                    )
                     .collect(),
             )
         }
@@ -192,6 +198,8 @@ pub fn page(ui: &Ui, m: &AppModel, tracks: &[Track]) -> Page {
         Screen::PcTransfer => pc_transfer(m),
         Screen::SettingsAudio => sound(ui, m),
         Screen::LastFm => lastfm(ui, m),
+        Screen::Spotify => spotify(ui),
+        Screen::SpotifyList => spotify_list(ui, m),
         Screen::Equalizer => equalizer(ui, m),
         Screen::Crossfade => crossfade(m),
         Screen::Balance => balance(m),
@@ -411,6 +419,147 @@ fn lastfm(ui: &Ui, m: &AppModel) -> Page {
         log,
         row("Disconnect", "lastfm_disconnect", ""),
     ])
+}
+
+/// Spotify: sign-in (a QR code while it runs), then the library.
+fn spotify(ui: &Ui) -> Page {
+    let s = &ui.spotify;
+    if s.approval.is_some() {
+        return Page::hero(
+            "Scan to Connect Spotify",
+            format!(
+                "Open the code with your phone's camera, or go to spotify.com/pair and type {}. This page continues by itself.",
+                s.user_code
+            ),
+        )
+        .with_rows(vec![row("Cancel", "spotify_cancel", "")]);
+    }
+    if !s.available {
+        return Page::hero(
+            "Spotify Isn't Installed",
+            "This build of Y2Linux has no Spotify player (spotifyd).",
+        );
+    }
+    let online = ui.radio.online;
+    let wifi = || {
+        row(
+            "Connect to Wi-Fi",
+            "spotify_wifi",
+            "Spotify needs the internet",
+        )
+    };
+    if !s.signed_in {
+        let mut page = Page::hero(
+            "Listen to Spotify",
+            "Connect your Spotify Premium account with your phone: no password is typed on the player.",
+        );
+        let mut rows = vec![];
+        if !online {
+            rows.push(wifi());
+        }
+        rows.push(
+            row(
+                "Connect with Your Phone",
+                "spotify_connect",
+                if s.busy { "Starting…" } else { "Scan a code" },
+            )
+            .with_kind(RowKind::Chevron),
+        );
+        page.rows = rows;
+        return page;
+    }
+    let mut rows = vec![];
+    if let Some((title, artist)) = &s.song {
+        rows.push(row(title, "spotify_now", artist.clone()));
+    }
+    if !online {
+        rows.push(wifi());
+    }
+    rows.extend([
+        row("Playlists", "spotify_open:playlists", "").with_kind(RowKind::Chevron),
+        row("Liked Songs", "spotify_open:liked-songs", "").with_kind(RowKind::Chevron),
+        row("Albums", "spotify_open:saved-albums", "").with_kind(RowKind::Chevron),
+        row("Artists", "spotify_open:followed-artists", "").with_kind(RowKind::Chevron),
+        row("Disconnect", "spotify_disconnect", ""),
+    ]);
+    let mut page = Page::rows(rows);
+    page.status = s.problem.clone();
+    page
+}
+
+/// One Spotify list: loading, a problem, its rows and "More" while Spotify
+/// has another page. An artist is a menu of three lists.
+fn spotify_list(ui: &Ui, m: &AppModel) -> Page {
+    let key = crate::spotify_filter(&m.navigation.filter).0;
+    let (kind, id) = crate::spotify_list_kind(key);
+    if kind == "artist" {
+        return Page::rows(vec![
+            row(
+                "Top Songs",
+                &format!("spotify_artist:artist-top-tracks:{id}"),
+                "",
+            )
+            .with_kind(RowKind::Chevron),
+            row("Albums", &format!("spotify_artist:artist-albums:{id}"), "")
+                .with_kind(RowKind::Chevron),
+            row(
+                "All Songs",
+                &format!("spotify_artist:artist-all-tracks:{id}"),
+                "",
+            )
+            .with_kind(RowKind::Chevron),
+        ]);
+    }
+    let Some(list) = ui.spotify.lists.get(key) else {
+        return Page::hero("Loading…", "Asking Spotify.");
+    };
+    if list.loading && list.rows.is_empty() {
+        return Page::hero("Loading…", "Asking Spotify.");
+    }
+    if let Some(error) = &list.error {
+        if list.rows.is_empty() {
+            return Page::hero("Couldn't Load This List", error.clone()).with_rows(vec![row(
+                "Try Again",
+                "spotify_retry",
+                "",
+            )]);
+        }
+    }
+    if list.rows.is_empty() {
+        let body = match kind {
+            "playlists" => "Playlists you make or follow in Spotify appear here.",
+            "liked-songs" => "Songs you like in Spotify appear here.",
+            "saved-albums" => "Albums you save in Spotify appear here.",
+            "followed-artists" => "Artists you follow in Spotify appear here.",
+            _ => "Spotify has nothing to show here.",
+        };
+        return Page::hero("Nothing Here Yet", body);
+    }
+    let opens = matches!(
+        kind,
+        "playlists" | "saved-albums" | "artist-albums" | "followed-artists"
+    );
+    let mut rows = vec![];
+    // A playlist or an album plays from its start; any song plays from it on.
+    if matches!(kind, "playlist-tracks" | "album-tracks" | "liked-songs") {
+        rows.push(row("Play All", "spotify_play_all", ""));
+    }
+    rows.extend(list.rows.iter().enumerate().map(|(i, r)| {
+        let item = row(&r.title, &format!("spotify_row:{i}"), r.detail.clone());
+        if opens {
+            item.with_kind(RowKind::Chevron)
+        } else {
+            item
+        }
+    }));
+    if list.next.is_some() {
+        rows.push(row(
+            if list.loading { "Loading…" } else { "More" },
+            "spotify_more",
+            "",
+        ));
+    }
+    Page::rows(rows)
 }
 
 /// Names of the equalizer presets and their gains (dB) per band

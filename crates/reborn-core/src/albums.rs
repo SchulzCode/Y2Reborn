@@ -16,7 +16,7 @@ pub fn unify_album_artists(tracks: &mut [Track]) {
     let mut albums: HashMap<(&str, Option<&Path>, &str), Vec<usize>> = HashMap::new();
     for (i, t) in tracks.iter().enumerate() {
         // Songs without an album title are no album to keep together.
-        if t.album.trim().is_empty() || t.is_radio() {
+        if t.album.trim().is_empty() || t.is_live() {
             continue;
         }
         albums

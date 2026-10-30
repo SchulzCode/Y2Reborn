@@ -1063,9 +1063,15 @@ mod tests {
     /// Feed a fixture through a pipe in small, slow chunks, as a radio
     /// stream arrives, and decode it with the stream decoder.
     fn decode_streamed(name: &str, chunk: usize, pause_ms: u64) -> (u64, Result<(), String>) {
+        decode_streamed_bytes(std::fs::read(fixture(name)).unwrap(), chunk, pause_ms)
+    }
+    fn decode_streamed_bytes(
+        bytes: Vec<u8>,
+        chunk: usize,
+        pause_ms: u64,
+    ) -> (u64, Result<(), String>) {
         use std::io::Write;
         use std::os::fd::{AsFd, FromRawFd, OwnedFd};
-        let bytes = std::fs::read(fixture(name)).unwrap();
         let mut fds = [0; 2];
         // SAFETY: pipe2 fills two descriptors that we take ownership of.
         assert_eq!(unsafe { libc::pipe2(fds.as_mut_ptr(), libc::O_CLOEXEC) }, 0);
@@ -1107,6 +1113,25 @@ mod tests {
             assert!(result.is_ok(), "{name}: {result:?}");
             assert!(frames > 1000, "{name}: {frames} frames");
         }
+    }
+    /// Spotify's sound: 16-bit stereo PCM behind a WAV header whose sizes
+    /// are unknown (reborn-platform's `spotify::wav_header`), as a pipe.
+    #[test]
+    fn spotify_pcm_decodes_from_a_streamed_wav_pipe() {
+        let mut bytes = b"RIFF\xff\xff\xff\xffWAVEfmt ".to_vec();
+        for field in [16u32, 1 | 2 << 16, 44_100, 44_100 * 4, 4 | 16 << 16] {
+            bytes.extend_from_slice(&field.to_le_bytes());
+        }
+        bytes.extend_from_slice(b"data\xff\xff\xff\xff");
+        for i in 0..44_100u32 {
+            let s = ((i as f32 * 0.0627).sin() * 8000.) as i16;
+            bytes.extend_from_slice(&s.to_le_bytes());
+            bytes.extend_from_slice(&s.to_le_bytes());
+        }
+        let (frames, result) = decode_streamed_bytes(bytes, 16384, 1);
+        assert!(result.is_ok(), "{result:?}");
+        // One second at 44.1 kHz, resampled to the 48 kHz sink.
+        assert!((47_000..=49_000).contains(&frames), "{frames} frames");
     }
     #[test]
     fn stream_decoder_refuses_regular_files_and_odd_names() {

@@ -98,6 +98,9 @@ pub fn draw(ui: &Ui, m: &AppModel, tracks: &[Track], has_art: bool) -> Vec<Quad>
             Screen::Radio | Screen::RadioStations | Screen::RadioCategories | Screen::RadioInfo => {
                 crate::views_radio::screen(&mut c, ui, m, tracks, interactive)
             }
+            Screen::Spotify if ui.spotify.approval.is_some() => {
+                views_settings::spotify_sign_in(&mut c, ui, m, tracks, interactive)
+            }
             _ => views_system::page(&mut c, ui, m, tracks, interactive),
         }
     }
@@ -158,6 +161,9 @@ fn native_screen(
         Screen::Radio | Screen::RadioStations | Screen::RadioCategories | Screen::RadioInfo => {
             crate::views_radio::screen(c, ui, m, tracks, interactive)
         }
+        Screen::Spotify if ui.spotify.approval.is_some() => {
+            views_settings::spotify_sign_in(c, ui, m, tracks, interactive)
+        }
         _ => views_system::page(c, ui, m, tracks, interactive),
     }
 }
@@ -206,6 +212,8 @@ fn layout_keys(m: &AppModel, page: Option<&Page>, empty: bool) -> &'static [&'st
         Screen::PcTransfer => keys!("computer"),
         Screen::SettingsAudio => keys!("sound"),
         Screen::LastFm => keys!("lastfm"),
+        Screen::Spotify => keys!("spotify"),
+        Screen::SpotifyList => keys!("spotify_list"),
         Screen::SettingsPlayback => keys!("playback"),
         Screen::Crossfade => keys!("crossfade"),
         Screen::Balance => keys!("balance"),
@@ -284,6 +292,9 @@ pub(crate) fn skin_layout<'s>(
     // The Last.fm sign-in code is Reborn's own drawing in every skin: a
     // generic page layout would show its text without the code.
     if m.screen == Screen::LastFm && ui.lastfm.approval.is_some() {
+        return None;
+    }
+    if m.screen == Screen::Spotify && ui.spotify.approval.is_some() {
         return None;
     }
     let page = skin_page(ui, m, tracks);
@@ -747,6 +758,8 @@ pub fn screen_title(m: &AppModel) -> String {
         Screen::PcTransfer => "Computer".into(),
         Screen::SettingsAudio => "Sound".into(),
         Screen::LastFm => "Last.fm".into(),
+        Screen::Spotify => "Spotify".into(),
+        Screen::SpotifyList => crate::spotify_filter(&m.navigation.filter).1.into(),
         Screen::Equalizer => "Equalizer".into(),
         Screen::SettingsPlayback => "Playback".into(),
         Screen::Crossfade => "Crossfade".into(),

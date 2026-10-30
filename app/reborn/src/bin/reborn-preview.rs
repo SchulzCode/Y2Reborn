@@ -1654,6 +1654,74 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         };
         m.navigation.focus = 3;
     });
+    // Spotify (ported from PiPod-OS).
+    case!("97-spotify-connect", at(Screen::Spotify, ""), |ui, _| {
+        ui.spotify.available = true;
+        ui.radio.online = true;
+    });
+    case!("97b-spotify-code", at(Screen::Spotify, ""), |ui, _| {
+        ui.spotify.available = true;
+        ui.spotify.approval =
+            Some("https://www.spotify.com/pair?code=QKZD-TRMV&utm_source=device".into());
+        ui.spotify.user_code = "QKZD-TRMV".into();
+    });
+    case!("97c-spotify-library", at(Screen::Spotify, ""), |ui, _| {
+        ui.spotify.available = true;
+        ui.spotify.signed_in = true;
+        ui.radio.online = true;
+        ui.spotify.song = Some(("Blue in Green".into(), "Miles Davis".into()));
+    });
+    case!(
+        "97d-spotify-playlist",
+        at(
+            Screen::SpotifyList,
+            "playlist-tracks:37i9dQZF1DXbITWG1ZJKYt\u{1f}Jazz Classics"
+        ),
+        |ui, m| {
+            ui.spotify.available = true;
+            ui.spotify.signed_in = true;
+            let rows = [
+                ("So What", "Miles Davis"),
+                ("Take Five", "The Dave Brubeck Quartet"),
+                ("My Favorite Things", "John Coltrane"),
+                ("Round Midnight", "Thelonious Monk"),
+                ("Moanin'", "Art Blakey & The Jazz Messengers"),
+                ("Cantaloupe Island", "Herbie Hancock"),
+            ];
+            ui.spotify.lists.insert(
+                "playlist-tracks:37i9dQZF1DXbITWG1ZJKYt".into(),
+                reborn_ui::SpotifyList {
+                    title: "Jazz Classics".into(),
+                    rows: rows
+                        .iter()
+                        .map(|(t, a)| reborn_ui::SpotifyRow {
+                            title: (*t).into(),
+                            detail: (*a).into(),
+                            uri: "spotify:track:x".into(),
+                            id: "a".into(),
+                        })
+                        .collect(),
+                    next: Some("50".into()),
+                    ..Default::default()
+                },
+            );
+            m.navigation.focus = 2;
+        }
+    );
+    case!(
+        "97e-spotify-now-playing",
+        at(Screen::NowPlaying, ""),
+        |_, m| {
+            let mut t = reborn_core::Track::spotify("spotify:track:x", "So What");
+            t.artist = "Miles Davis".into();
+            t.album = "Kind of Blue".into();
+            t.duration_ms = 562_000;
+            m.replace_queue(vec![t], 0).unwrap();
+            m.set_source("Spotify: Jazz Classics", None);
+            m.position_ms = 131_000;
+            m.playback = reborn_core::PlaybackState::Playing;
+        }
+    );
     case!(
         "96d-settings-with-lastfm",
         at(Screen::Settings, ""),

@@ -1,0 +1,166 @@
+diff --git a/src/dbus_mpris.rs b/src/dbus_mpris.rs
+index e0f5619..2920578 100644
+--- a/src/dbus_mpris.rs
++++ b/src/dbus_mpris.rs
+@@ -566,7 +566,11 @@ async fn create_dbus_server(
+                     },
+                     ControlMessage::SetSession(new_spirc, new_session) => {
+                         let mut cr = crossroads.lock().await;
+-                        register_controls_interface(&mut cr, new_spirc.clone());
++                        register_controls_interface(
++                            &mut cr,
++                            new_spirc.clone(),
++                            current_state.clone(),
++                        );
+                         spirc = Some(new_spirc);
+                         session = Some(new_session);
+                     }
+@@ -745,19 +749,36 @@ fn register_player_interface(
+ 
+             let session = session.clone();
+ 
+-            let (playing_track_index, context_uri) = Handle::current()
++            // PiPod OS patch: pick the track within its context by URI, not
++            // by numeric position. Upstream always resolved a bare track
++            // URI to "this track's album, at its track-number index" --
++            // fragile against a different regional/reissue edition, a
++            // hidden/bonus track, or disc grouping, since none of those
++            // guarantee the same track lands at the same index every
++            // time. PlayingTrack::Uri (librespot_connect::model) already
++            // exists and is exactly what Spotify's own Connect protocol
++            // uses server-side (a SkipTo.track_uri command) to land on an
++            // exact track within a context -- this just uses it here too.
++            // Every other branch (a bare album/playlist/artist/episode/
++            // show URI, with no specific track requested) is unchanged.
++            let (playing_track, context_uri) = Handle::current()
+                 .block_on(async move {
+                     use librespot_metadata::*;
+                     Ok::<_, librespot_core::Error>(match uri {
+                         SpotifyUri::Track { .. } => {
+                             let track = Track::get(&session, &uri).await?;
+-                            (track.number as u32, track.album.id.to_uri()?)
++                            (
++                                librespot_connect::PlayingTrack::Uri(uri.to_uri()?),
++                                track.album.id.to_uri()?,
++                            )
+                         }
+                         SpotifyUri::Album { .. }
+                         | SpotifyUri::Artist { .. }
+                         | SpotifyUri::Playlist { .. }
+                         | SpotifyUri::Episode { .. }
+-                        | SpotifyUri::Show { .. } => (0, uri.to_uri()?),
++                        | SpotifyUri::Show { .. } => {
++                            (librespot_connect::PlayingTrack::Index(0), uri.to_uri()?)
++                        }
+                         SpotifyUri::Local { .. } | SpotifyUri::Unknown { .. } => {
+                             return Err(librespot_core::Error::unimplemented(
+                                 "this type of uri is not supported",
+@@ -767,9 +788,7 @@ fn register_player_interface(
+                 })
+                 .map_err(|e| MethodErr::failed(&e))?;
+ 
+-            warn!(
+-                "loading context_uri {context_uri} with playing_track_index {playing_track_index}"
+-            );
++            warn!("loading context_uri {context_uri} with playing_track {playing_track:?}");
+             local_spirc
+                 .load(LoadRequest::from_context_uri(
+                     context_uri,
+@@ -783,9 +802,7 @@ fn register_player_interface(
+                                 repeat_track: repeat.repeat_track(),
+                             },
+                         )),
+-                        playing_track: Some(librespot_connect::PlayingTrack::Index(
+-                            playing_track_index,
+-                        )),
++                        playing_track: Some(playing_track),
+                     },
+                 ))
+                 .map_err(|e| MethodErr::failed(&e))
+@@ -894,7 +911,14 @@ fn register_player_interface(
+     seeked_signal.expect("player interface has not been registered")
+ }
+ 
+-fn register_controls_interface(cr: &mut Crossroads, spirc: Arc<Spirc>) {
++fn register_controls_interface(
++    cr: &mut Crossroads,
++    spirc: Arc<Spirc>,
++    // PiPod OS patch: needed by the new PlayContextTrack method below,
++    // to read the session's current shuffle/repeat state the same way
++    // register_player_interface()'s own OpenUri already does.
++    current_state: Arc<CurrentState>,
++) {
+     let spotifyd_ctrls_interface: IfaceToken<()> = cr.register("rs.spotifyd.Controls", |b| {
+         let local_spirc = spirc.clone();
+         b.method("VolumeUp", (), (), move |_, _, (): ()| {
+@@ -909,6 +933,70 @@ fn register_controls_interface(cr: &mut Crossroads, spirc: Arc<Spirc>) {
+         b.method("TransferPlayback", (), (), move |_, _, (): ()| {
+             local_spirc.activate().map_err(|e| MethodErr::failed(&e))
+         });
++
++        // PiPod OS patch: loads `context_uri` (a playlist/album URI) as
++        // the Spirc context and lands on `track_uri` within it in one
++        // call, via PlayingTrack::Uri -- the exact-track equivalent of
++        // OpenUri's own Track-URI handling above, for a caller that
++        // already knows which container a track belongs to and doesn't
++        // want OpenUri's own "resolve to this track's album" behavior
++        // (irrelevant here: the caller is naming the container itself,
++        // which might be a playlist OpenUri could never infer from a
++        // bare track URI in the first place).
++        let local_spirc = spirc.clone();
++        let local_state = current_state.clone();
++        b.method(
++            "PlayContextTrack",
++            ("context_uri", "track_uri"),
++            (),
++            move |_, _, (context_uri, track_uri): (String, String)| {
++                let CurrentStateInner {
++                    shuffle, repeat, ..
++                } = *local_state.read()?;
++
++                // PiPod OS patch: unlike OpenUri (registered on the MPRIS
++                // Player interface, which only exists post-activation,
++                // giving a caller a clear "Unknown object path" signal to
++                // retry after TransferPlayback), this method's own
++                // rs.spotifyd.Controls interface is registered as soon as
++                // a session logs in (ControlMessage::SetSession, this
++                // file's own main loop) -- long before anything has ever
++                // transferred Spotify Connect playback to this device. A
++                // caller has no equivalent signal here, and spirc.rs's
++                // own SpircCommand::Load handling silently *drops* a load
++                // request outright while `!connect_state.is_active()`
++                // (confirmed directly from spirc.rs's handle_command()) --
++                // exactly the "PlayContextTrack succeeds at the D-Bus
++                // level but nothing plays" failure mode this fixes.
++                // Activating first is always correct to do here, not just
++                // on a first call: SpircCommand::Activate is itself a
++                // synchronous, in-process no-op when already active
++                // (spirc.rs's handle_activate() sets connect_state active
++                // immediately, before this even returns -- no network
++                // round trip or delay needed the way TransferPlayback's
++                // own async SessionConnected propagation does), so this
++                // never disrupts an already-active session.
++                local_spirc.activate().map_err(|e| MethodErr::failed(&e))?;
++
++                local_spirc
++                    .load(LoadRequest::from_context_uri(
++                        context_uri,
++                        LoadRequestOptions {
++                            start_playing: true,
++                            seek_to: 0,
++                            context_options: Some(LoadContextOptions::Options(
++                                librespot_connect::Options {
++                                    shuffle,
++                                    repeat: repeat.repeat_context(),
++                                    repeat_track: repeat.repeat_track(),
++                                },
++                            )),
++                            playing_track: Some(librespot_connect::PlayingTrack::Uri(track_uri)),
++                        },
++                    ))
++                    .map_err(|e| MethodErr::failed(&e))
++            },
++        );
+     });
+ 
+     cr.insert(CONTROLS_PATH, &[spotifyd_ctrls_interface], ());

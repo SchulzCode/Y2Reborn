@@ -75,7 +75,7 @@ impl Index {
         // candidate for a name.
         for online in [true, false] {
             for (i, t) in tracks.iter().enumerate() {
-                if t.is_radio() || t.online != online {
+                if t.is_live() || t.online != online {
                     continue;
                 }
                 let Entry::Vacant(slot) =

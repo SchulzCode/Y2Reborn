@@ -72,7 +72,7 @@ pub(crate) fn subdivision(name: &str) -> bool {
 
 /// Whether `track` is a book (computed once when the library loads).
 pub fn is_book(track: &Track) -> bool {
-    !track.is_radio()
+    !track.is_live()
         && (marker(&track.path).is_some()
             || is_m4b(&track.path)
             || GENRES.contains(&fold(&track.genre).as_str()))

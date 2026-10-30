@@ -11,6 +11,7 @@ mod playlists;
 mod scrobbling;
 mod skins;
 mod sleep_timer;
+mod spotify;
 mod volume;
 use reborn_control::{Command, PlaybackAction, Response};
 use reborn_core::platform::{Fact, LowBattery};
@@ -304,6 +305,10 @@ struct Runtime {
     clock_trusted: Option<(Instant, bool)>,
     /// Last.fm: the app's key, the listener's session, sign-in and sending.
     lastfm: scrobbling::LastFm,
+    /// Spotify: sign-in, spotifyd and its lists.
+    spotify: spotify::Spotify,
+    /// The cover of the Spotify song playing: (logo key, address).
+    spotify_cover: Option<(u64, String)>,
     /// Station logos: downloads (once per logo) and the logo shown as Now
     /// Playing's picture.
     radio_logos: Option<LogoFetcher>,
@@ -1190,7 +1195,7 @@ impl Runtime {
                 let entries = tracks
                     .iter()
                     .filter_map(|&i| self.model.library.tracks.get(i))
-                    .filter(|t| !t.is_radio())
+                    .filter(|t| !t.is_live())
                     .map(|t| reborn_core::playlist::PlaylistEntry {
                         location: reborn_ui::playlist_index::location_for(&t.path, &path, &roots),
                         info: Some(reborn_ui::playlist_index::info_for(t)),
@@ -1847,7 +1852,9 @@ impl Runtime {
             ));
         self.reconfiguration_attempted = true;
         let track = self.model.current().cloned().ok_or("queue is empty")?;
-        let radio = track.is_radio();
+        // Local music and Spotify never play at once.
+        self.spotify_yield();
+        let radio = track.is_live();
         if !radio && !track.path.is_file() {
             return Err("track source unavailable".into());
         }
@@ -2088,6 +2095,7 @@ impl Runtime {
     }
     fn pause(&mut self) {
         self.paused_at = Some(Instant::now());
+        self.spotify_pause();
         self.playback_hints.clear();
         // A file paused while it plays holds in place: resume is instant. A
         // station (live), a start in progress or a pending seek release.
@@ -2156,6 +2164,10 @@ impl Runtime {
         self.checkpoint();
     }
     fn toggle(&mut self) -> Result<(), String> {
+        // Spotify hears Play/Pause first (or starts over after a restart).
+        if let Some(result) = self.spotify_toggle() {
+            return result;
+        }
         if matches!(
             self.model.playback,
             PlaybackState::Playing | PlaybackState::Buffering
@@ -2365,7 +2377,7 @@ impl Runtime {
             if let Some(length) = self
                 .model
                 .current()
-                .filter(|t| !t.is_radio())
+                .filter(|t| !t.is_live())
                 .map(|t| t.duration_ms)
             {
                 let now = Instant::now();
@@ -2397,7 +2409,7 @@ impl Runtime {
                         -1
                     };
                     let target = self.model.queue_position as i64 + delta;
-                    let file = !self.model.current().is_some_and(Track::is_radio);
+                    let file = !self.model.current().is_some_and(Track::is_live);
                     if file && (0..self.model.queue.len() as i64).contains(&target) {
                         self.model.step(delta as i32);
                         self.playback.hold(true);
@@ -2563,6 +2575,7 @@ impl Runtime {
             Effect::CancelDownload => client::abort_download(),
             Effect::Radio(request) => self.radio(request)?,
             Effect::LastFm(request) => self.lastfm_request(request)?,
+            Effect::Spotify(request) => self.spotify_request(request)?,
             Effect::SetScrobbleLog(on) => {
                 self.model.settings.scrobble_log = on;
                 self.checkpoint();
@@ -2660,8 +2673,10 @@ impl Runtime {
                 // A station has no next track: the next station of its list.
                 } else if self.model.current().is_some_and(Track::is_radio) {
                     self.zap(delta)?;
-                // Previous more than 3 s into a song starts it again; a
-                // second press goes back a song (Y2Reborn #21).
+                // Spotify moves through its own queue.
+                } else if self.spotify_step(delta) {
+                    // Previous more than 3 s into a song starts it again; a
+                    // second press goes back a song (Y2Reborn #21).
                 } else if delta < 0
                     && self.model.current().is_some()
                     && (self.model.position_ms > RESTART_SONG_AFTER_MS
@@ -2684,7 +2699,11 @@ impl Runtime {
             }
             // A live station has nothing to seek in.
             Effect::Seek(_) if self.model.current().is_some_and(Track::is_radio) => {}
-            Effect::Seek(delta) => self.seek_by(delta),
+            Effect::Seek(delta) => {
+                if !self.spotify_seek(delta) {
+                    self.seek_by(delta)
+                }
+            }
             Effect::AdjustVolume(delta) => {
                 let now = self.model.settings.volume;
                 let mut volume = (now as i16 + delta as i16).clamp(0, 100) as u8;
@@ -3233,8 +3252,8 @@ impl Runtime {
                 // What plays now follows at once: its songs to come shuffle,
                 // as songs or albums, or go back to their own order (your
                 // queue stays as it is).
-                let music = self.model.book.is_none()
-                    && self.model.current().is_some_and(|t| !t.is_radio());
+                let music =
+                    self.model.book.is_none() && self.model.current().is_some_and(|t| !t.is_live());
                 if music && mode != was {
                     let mut changed = was != ShuffleMode::Off && self.model.unshuffle_source();
                     changed |= match mode {
@@ -4837,6 +4856,8 @@ fn run() -> Result<(), String> {
         scrobble_queue: reborn_platform::scrobble::Queue::new(root.join("state/scrobbles.jsonl")),
         clock_trusted: None,
         lastfm: scrobbling::LastFm::load(&root),
+        spotify: spotify::Spotify::load(&root),
+        spotify_cover: None,
         radio_logos: if headless {
             None
         } else {
@@ -4879,6 +4900,7 @@ fn run() -> Result<(), String> {
         .map(|s| s.key().to_owned())
         .collect();
     rt.lastfm_view();
+    rt.spotify_view();
     if !rt.model.settings.theme.is_empty() {
         let id = rt.model.settings.theme.clone();
         // A skin on a missing SD card or a refused skin falls back to Reborn's
@@ -5157,6 +5179,7 @@ fn run() -> Result<(), String> {
                         .now
                         .as_ref()
                         .and_then(|s| Some((s.logo_key()?, s.favicon.clone())))
+                        .or_else(|| rt.spotify_cover.clone())
                     {
                         let file = reborn_platform::radio::logo_file(&cache, key);
                         if file.exists() {
@@ -5737,6 +5760,7 @@ fn run() -> Result<(), String> {
             rt.radio_reply(reply);
         }
         rt.radio_tick();
+        rt.spotify_tick();
         rt.lost_peer_tick();
         rt.scrobble_tick();
         rt.note_history();

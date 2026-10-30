@@ -530,11 +530,24 @@ pub fn joined_names(tag: &str) -> std::borrow::Cow<'_, str> {
 
 /// `Track::source_id` of an internet radio station in the queue.
 pub const RADIO_SOURCE: &str = "radio";
+/// `Track::source_id` of Spotify in the queue: one entry stands for whatever
+/// spotifyd plays (its own queue follows the playlist or album chosen).
+pub const SPOTIFY_SOURCE: &str = "spotify";
 impl Track {
     /// An internet radio station: `path` holds the stream address, `filename`
     /// the directory id (if any), `album` a short description.
     pub fn is_radio(&self) -> bool {
         self.source_id == RADIO_SOURCE
+    }
+    /// Spotify: `path` holds the URI chosen, the tags follow the song
+    /// spotifyd plays.
+    pub fn is_spotify(&self) -> bool {
+        self.source_id == SPOTIFY_SOURCE
+    }
+    /// Played from a stream, not a file: never in the library, the history,
+    /// gapless pre-opening or scrobbling (Spotify scrobbles itself).
+    pub fn is_live(&self) -> bool {
+        self.is_radio() || self.is_spotify()
     }
     /// Shown in the music lists, counts and search: available and not part
     /// of an audiobook (books have their own place).
@@ -555,6 +568,22 @@ impl Track {
     /// The genres one by one, as the Genres list files the track.
     pub fn genres(&self) -> Vec<&str> {
         split_genres(&self.genre)
+    }
+    /// The Spotify queue entry for `uri`, titled until spotifyd says more.
+    pub fn spotify(uri: &str, title: &str) -> Self {
+        Self {
+            id: -2,
+            source_id: SPOTIFY_SOURCE.into(),
+            path: PathBuf::from(uri),
+            title: title.into(),
+            artist: "Spotify".into(),
+            codec: "Vorbis".into(),
+            sample_rate: 44_100,
+            channels: 2,
+            bitrate: 320_000,
+            online: true,
+            ..Default::default()
+        }
     }
     pub fn radio(station: &RadioStation) -> Self {
         Self {
@@ -780,6 +809,26 @@ impl std::fmt::Debug for LastFmRequest {
     }
 }
 
+/// What the Spotify screens ask the player for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SpotifyRequest {
+    /// Start a sign-in: the player shows a QR code to approve on a phone.
+    Connect,
+    Cancel,
+    Disconnect,
+    /// Load a list (`SpotifyList::key`) for the screen showing it.
+    Load(String),
+    /// The next page of a list.
+    More(String),
+    /// Play row `index` of list `list`.
+    Play {
+        list: String,
+        index: usize,
+    },
+    /// Play a whole list (a playlist, an album, Liked Songs) from its start.
+    PlayAll(String),
+}
+
 /* A queue occurrence is a playback identity, not a library identity. Two
  * occurrences may reference the same Track, so boundary and artwork updates
  * must be able to address the occurrence that was scheduled. */
@@ -927,6 +976,10 @@ pub enum Screen {
     Playlists,
     /// Settings > Last.fm: sign-in, scrobbling and the scrobbler log.
     LastFm,
+    /// Spotify: sign-in, then the account's library.
+    Spotify,
+    /// One Spotify list; the navigation filter holds its key.
+    SpotifyList,
     /// One playlist; the navigation filter holds its file's path.
     Playlist,
     /// About & Updates > Error Reports; filter "info": what is sent, "save":
@@ -1231,10 +1284,11 @@ pub const HOME_PINNABLE: [(&str, &str); 5] = [
 ];
 /// Home's own places that can be taken off Home, in Home's order: (key,
 /// label). Music stands first, the others after the pinned lists.
-pub const HOME_HIDEABLE: [(&str, &str); 4] = [
+pub const HOME_HIDEABLE: [(&str, &str); 5] = [
     ("music", "Music"),
     ("playlists", "Playlists"),
     ("radio", "Radio"),
+    ("spotify", "Spotify"),
     ("search", "Search"),
 ];
 /// How Albums and Audiobooks show their covers: Customize > Cover Flow.
@@ -1806,6 +1860,7 @@ pub enum Effect {
     Radio(RadioRequest),
     Playlist(Box<PlaylistRequest>),
     LastFm(LastFmRequest),
+    Spotify(SpotifyRequest),
     SetScrobbleLog(bool),
     SetLastFmScrobble(bool),
     SetLastFmNowPlaying(bool),
@@ -2160,7 +2215,7 @@ impl AppModel {
             Event::SourceChanged(sources) => {
                 self.sources = sources;
                 if self.current().is_some_and(|t| {
-                    !t.is_radio() && !self.sources.iter().any(|s| s.online && s.id == t.source_id)
+                    !t.is_live() && !self.sources.iter().any(|s| s.online && s.id == t.source_id)
                 }) {
                     self.playback = PlaybackState::Paused;
                     self.invalidate();

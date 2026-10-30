@@ -56,11 +56,65 @@ fn sign_in_code(c: &mut Canvas, ui: &Ui, page: &Page, focus: usize, interactive:
     let Some(url) = &ui.lastfm.approval else {
         return;
     };
-    let code = ui
-        .lastfm
-        .code
-        .clone()
-        .or_else(|| crate::qr::encode(url.as_bytes()));
+    qr_page(
+        c,
+        url,
+        ui.lastfm.code.as_ref(),
+        "Sign in to Last.fm",
+        &[
+            "1  Point your phone's",
+            "   camera at the code.",
+            "2  Allow Y2Reborn.",
+            "3  This page continues",
+            "   by itself.",
+        ],
+        page,
+        focus,
+        interactive,
+    );
+}
+
+/// The Spotify sign-in: as Last.fm's, with the code to type at
+/// spotify.com/pair for a phone that cannot scan.
+pub fn spotify_sign_in(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interactive: bool) {
+    let page = pages::page(ui, m, tracks);
+    components::status_bar(c, ui, m, &screen_title(m), true);
+    let Some(url) = &ui.spotify.approval else {
+        return;
+    };
+    let typed = format!("   {}", ui.spotify.user_code);
+    qr_page(
+        c,
+        url,
+        ui.spotify.code.as_ref(),
+        "Connect Spotify",
+        &[
+            "1  Point your phone's",
+            "   camera at the code,",
+            "   or at spotify.com/pair",
+            "   type:",
+            &typed,
+            "2  Allow, and this page",
+            "   continues by itself.",
+        ],
+        &page,
+        m.navigation.focus.min(page.rows.len().saturating_sub(1)),
+        interactive,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn qr_page(
+    c: &mut Canvas,
+    url: &str,
+    code: Option<&crate::qr::Code>,
+    heading: &str,
+    steps: &[&str],
+    page: &Page,
+    focus: usize,
+    interactive: bool,
+) {
+    let code = code.cloned().or_else(|| crate::qr::encode(url.as_bytes()));
     if let Some(code) = code {
         let module = (236. / (code.size as f32 + 8.)).floor().max(2.);
         let side = module * (code.size as f32 + 8.);
@@ -93,15 +147,9 @@ fn sign_in_code(c: &mut Canvas, ui: &Ui, page: &Page, focus: usize, interactive:
     }
     let tx = 240.;
     let mut y = 58.;
-    c.text(tx, y, "Sign in to Last.fm", Face::S17, color::TEXT);
+    c.text(tx, y, heading, Face::S17, color::TEXT);
     y += 30.;
-    for line in [
-        "1  Point your phone's",
-        "   camera at the code.",
-        "2  Allow Y2Reborn.",
-        "3  This page continues",
-        "   by itself.",
-    ] {
+    for line in steps {
         c.text(tx, y, line, Face::R13, color::MUTED);
         y += 20.;
     }

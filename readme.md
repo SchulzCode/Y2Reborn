@@ -41,6 +41,16 @@ through ALSA (wired) or BlueALSA (Bluetooth), and keeps its library in SQLite.
   Nothing is recorded until you opt in; Disconnect and Reset Settings forget the sign-in and its
   waiting plays. Full guide, privacy and security:
   [Last.fm scrobbling](https://github.com/SchulzCode/Y2Linux/blob/main/docs/LASTFM.md).
+- **Spotify** (Home → Spotify, Premium account; ported from
+  [PiPod-OS](https://github.com/daavid-codes/PiPod-OS)): connect by scanning a QR code with your
+  phone (Spotify's device sign-in; no password on the player), then Playlists (including ones you
+  only follow), Liked Songs, Albums and Artists (Top Songs, Albums, All Songs). A song plays within
+  the playlist or album it was chosen from, so Previous/Next stay in it. `spotifyd` streams and
+  Reborn plays its sound through its own output, so the equalizer, volume, Bluetooth and the jack
+  apply as to any song; Now Playing shows the song, its cover and position. The player is also a
+  Spotify Connect device of your account: the phone app can start, pause and skip it. Needs
+  `spotifyd` and `reborn-spotify-metadata` in the Y2Linux image ([how](tools/spotify/README.md));
+  without them Spotify isn't on Home. Not yet tried on a Y2.
 - Sound and playback: five-band equalizer with presets, headphone profiles (47 common
   headphones and IEMs from AutoEQ built in, more as `ParametricEQ.txt` files in an `EQ` folder; up to 10
   filters with a clip-safe preamp),
@@ -115,6 +125,17 @@ Code: `crates/reborn-core/src/scrobble.rs` (what counts), `crates/reborn-platfor
 (offline queue, log, clock), `crates/reborn-platform/src/lastfm.rs` (Last.fm API, signing),
 `app/reborn/src/scrobbling.rs` (the player's side) and `crates/reborn-ui/src/qr.rs` (QR codes).
 
+## Spotify
+
+- **Sign-in:** OAuth device authorization with the client id librespot uses; the player keeps only
+  the refresh token (`/data/reborn/state/spotify/account.json`, root-only) and spotifyd's own
+  reusable credentials. Disconnect removes both. No token is ever logged.
+- **Pieces:** `crates/reborn-platform/src/spotify.rs` (sign-in, spotifyd as a child process, its
+  sound through a FIFO, MPRIS control on the system bus, the library helper),
+  `app/reborn/src/spotify.rs` (the player's side), `crates/reborn-ui` (`SpotifyView`, the pages),
+  `tools/spotify` (spotifyd patch, D-Bus policy, build notes) and `tools/spotify-metadata` (the
+  library helper, its own workspace).
+
 ## Development
 
 Use Rust **1.99.0**. `rust-toolchain.toml` pins it together with the
@@ -156,5 +177,6 @@ set up) and `/media/sd`.
 ## Licence
 
 MIT (see [LICENSE](LICENSE)). The Open Sans glyph data is under the SIL Open Font
-Licence (`assets/fonts/OpenSans-OFL.txt`). No firmware, keys (including the Last.fm API key),
+Licence (`assets/fonts/OpenSans-OFL.txt`). The spotifyd patch in `tools/spotify` is under spotifyd's GPL-3.0;
+the vendored housecat crates in `tools/spotify-metadata` are MIT. No firmware, keys (including the Last.fm API key),
 Bluetooth bonds or private device data belong in this repository.
