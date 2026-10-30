@@ -30069,12 +30069,12 @@
    "report",
    "upload"
   ],
-  "exit": 1,
+  "exit": 0,
   "files": {},
   "name": "reports/report-upload-bad-battery",
   "stdout": {
-   "failure": "report_failed",
-   "reason": "power_record_unreadable"
+   "reason": "battery_low",
+   "uploaded": []
   }
  },
  {
@@ -30553,7 +30553,7 @@
   "stdout": {
    "reports": [],
    "upload": {
-    "reason": "power_record_unreadable",
+    "reason": "battery_low",
     "uploaded": []
    }
   }
