@@ -113,6 +113,7 @@ impl Scene<'_> {
             Flag::HasStatus => self.page.and_then(|p| p.status.as_ref()).is_some(),
             Flag::HasClock => self.ui.clock(m).is_some(),
             Flag::Live => m.current().is_some_and(Track::is_radio),
+            Flag::Spotify => m.current().is_some_and(Track::is_spotify),
             // The song playing is in Favorites (Reborn's own Now Playing heart).
             Flag::Favorite => m
                 .current()

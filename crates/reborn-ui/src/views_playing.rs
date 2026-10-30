@@ -57,6 +57,32 @@ pub fn now_playing(
         components::placeholder(c, 26., 46., 176., 15., 0);
     }
 
+    // Spotify says so above the title, with what it plays from, so it is
+    // never taken for the music on the player.
+    let spotify = t.is_spotify();
+    if spotify {
+        let w = components::source_pill(
+            c,
+            222.,
+            61.,
+            "SPOTIFY",
+            components::SPOTIFY_GREEN,
+            0x0B0D10FF,
+        );
+        let from = m
+            .queue_source
+            .strip_prefix("Spotify")
+            .map(|s| s.trim_start_matches([':', ' ']))
+            .unwrap_or("");
+        c.text_tracked(
+            222. + w + 8.,
+            61. + Face::S10.mid_offset(),
+            &text::fit(Face::S10, &from.to_uppercase(), 228. - w),
+            Face::S10,
+            accent,
+            1.4,
+        );
+    }
     if radio {
         let w = components::live_pill(c, 222., 61., "LIVE");
         c.text_tracked(
@@ -77,8 +103,8 @@ pub fn now_playing(
     };
     let lines = text::wrap(Face::S25, &title, 236., 2);
     // A song needs no label saying it plays: its title takes the label's place.
-    // A station keeps the LIVE line above its title.
-    let mut baseline = if radio { 107. } else { 84. };
+    // A station keeps the LIVE line above its title, Spotify its own.
+    let mut baseline = if radio || spotify { 107. } else { 84. };
     for line in &lines {
         c.text(222., baseline, line, Face::S25, color::TEXT);
         baseline += 28.;
@@ -292,6 +318,13 @@ pub(crate) fn sleep_note(m: &AppModel) -> Option<String> {
 
 /// `FLAC · 96 KHZ`: what the file is, in a sentence the listener understands.
 pub(crate) fn quality_label(t: &Track) -> Option<String> {
+    // Streamed, not a file: say from where (skins show this too).
+    if t.is_spotify() {
+        return Some(match t.bitrate {
+            0 => "SPOTIFY".into(),
+            b => format!("SPOTIFY · {} KBPS", b / 1000),
+        });
+    }
     if t.codec.is_empty() {
         return None;
     }

@@ -1022,15 +1022,23 @@ pub fn initials_tile(c: &mut Canvas, name: &str, x: f32, y: f32, size: f32) {
 
 /// A red LIVE badge with its dot; returns its width.
 pub fn live_pill(c: &mut Canvas, x: f32, cy: f32, label: &str) -> f32 {
+    source_pill(c, x, cy, label, LIVE_RED, color::TEXT)
+}
+
+/// Spotify's green, for the pill that says a song streams from Spotify.
+pub const SPOTIFY_GREEN: u32 = 0x1ED760FF;
+
+/// A rounded label with a dot: where the sound comes from (LIVE, SPOTIFY).
+pub fn source_pill(c: &mut Canvas, x: f32, cy: f32, label: &str, fill: u32, ink: u32) -> f32 {
     let w = text::width_tracked(Face::S10, label, 1.2) + 26.;
-    c.rrect(x, cy - 9., w, 18., 9., LIVE_RED);
-    c.disc(x + 9.5, cy, 3., color::TEXT);
+    c.rrect(x, cy - 9., w, 18., 9., fill);
+    c.disc(x + 9.5, cy, 3., ink);
     c.text_tracked(
         x + 17.,
         cy + Face::S10.mid_offset(),
         label,
         Face::S10,
-        color::TEXT,
+        ink,
         1.2,
     );
     w
