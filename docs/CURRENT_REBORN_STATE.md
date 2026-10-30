@@ -1,5 +1,17 @@
 # Current Reborn state on the Y2
 
+## Unreleased (after Beta 9.0, 2026-10-30): the platform's types, smaller files
+
+Not built for the player yet. Reborn reads the platform's records in the platform's own types from `y2p-contract`
+instead of looking up JSON fields: the update page (`update::Status`, the live `DownloadProgress`), the battery
+and shutdown intent (`power::PowerRecord`, `Intent`), Wi-Fi readiness (`network::Published`), the SD and Y2Media
+claims (`storage::MediaRecord`, `Y2MediaClaim`), the USB receipt (`usb::Receipt`), report progress
+(`reports::ReportProgress`), Internal Storage setup and the radio firmware (`f64d454`…`f1637ca`). The recorded
+contract is unchanged except for `download_percent`, which download.json never filled; the Settings row now
+shows the live download percentage instead. Split without a code change (the same tests run): `main.rs`
+8,268 → 947 lines (`runtime/`, `main_loop.rs`, `main_tests/`; `e6eb756`), `playback.rs` 3,725 → 1,565
+(`playback/`; `4c94818`), `reborn-ui/src/lib.rs` 4,493 → 1,069 (`80c76ce`).
+
 ## 1.0.0-beta.9.0 — Y2Linux 1.0 Beta 9.0 (Baseline 186), 2026-10-30 (latest): the platform in Rust
 
 Published as `baseline-186` (Reborn `2bc1e2c`; sequence 11400). The platform underneath is Rust now; Reborn reads it
