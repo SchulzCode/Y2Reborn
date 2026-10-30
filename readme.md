@@ -5,8 +5,8 @@ The native music player for the **Innioasis Y2** running
 with FFmpeg 9.0.2, draws with OpenGL ES on the Y2's GPU (DRM + Lima), plays
 through ALSA (wired) or BlueALSA (Bluetooth), and keeps its library in SQLite.
 
-> **Status: 1.0.0-beta.8.43, part of Y2Linux 1.0 Beta 8.43 (Baseline 164, 2026-10-28), public beta.**
-> Git tag `baseline-164` in both repositories. Reborn has no installer of its own: it is built
+> **Status: 1.0.0-beta.9.0, part of Y2Linux 1.0 Beta 9.0 (Baseline 186, 2026-10-30), public beta.**
+> Git tag `baseline-186` in both repositories. Reborn has no installer of its own: it is built
 > into the Y2Linux images. Install them from the
 > [Y2Linux releases](https://github.com/SchulzCode/Y2Linux/releases) with Y2Linux's
 > [INSTALL](https://github.com/SchulzCode/Y2Linux/blob/main/docs/INSTALL.md) guide; Reborn then
