@@ -408,10 +408,14 @@ impl Canvas {
     /// `track` is the opaque colour of the ring behind it; `phase` is 0..1.
     pub fn spinner(&mut self, cx: f32, cy: f32, r: f32, bright: u32, track: u32, phase: f32) {
         const LENGTH: f32 = 0.34;
-        let s = phase.rem_euclid(1.) * (1. + LENGTH);
+        // Head and tail move in whole arc frames together, so the segment
+        // keeps its length while it slides instead of flickering by a frame.
+        let frames = mask::ARC_FRAMES as f32;
+        let head = (phase.rem_euclid(1.) * (1. + LENGTH) * frames).round();
+        let tail = head - (LENGTH * frames).round();
         self.arc(cx, cy, r, 1., track);
-        self.arc(cx, cy, r, s.min(1.), bright);
-        self.arc(cx, cy, r, (s - LENGTH).max(0.), track);
+        self.arc(cx, cy, r, (head / frames).min(1.), bright);
+        self.arc(cx, cy, r, (tail / frames).max(0.), track);
     }
 
     /// A soft radial glow; alpha falls from `color` at the centre to 0 at the edge.
