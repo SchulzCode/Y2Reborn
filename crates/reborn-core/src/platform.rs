@@ -12,6 +12,9 @@ pub struct BatteryState {
     /// True for voltage-derived SOC; it is not a calibrated fuel gauge.
     pub estimated: bool,
     pub charging: ChargingState,
+    /// A charger or computer is connected: the battery charges, is full or is held ("Not
+    /// charging", which a full battery passes through on its cable and the UI shows as on battery).
+    pub cable: bool,
     pub level: LowBattery,
 }
 
@@ -103,12 +106,12 @@ pub fn sleep_retry_seconds(refusals: u32) -> u64 {
 
 /// After the platform refused a sleep because a charger or computer is
 /// connected, automatic sleep waits while the battery still shows a cable
-/// (charging or full): the platform would refuse each try the same way, and
-/// every try starts a platform process (once a minute for as long as the
-/// player lies on its cable). Unplugged (on battery) or unknown, the normal
-/// tries resume. Power still asks at once.
-pub fn charger_holds_sleep(refused_for_charger: bool, charging: ChargingState) -> bool {
-    refused_for_charger && matches!(charging, ChargingState::Charging | ChargingState::Full)
+/// (charging, full or held): the platform would refuse each try the same way,
+/// and every try starts a platform process (once a minute for as long as the
+/// player lies on its cable). Unplugged or unknown, the normal tries resume.
+/// Power still asks at once.
+pub fn charger_holds_sleep(refused_for_charger: bool, cable: bool) -> bool {
+    refused_for_charger && cable
 }
 
 /// With Bluetooth headphones connected, a pause keeps the player awake this
@@ -607,14 +610,10 @@ mod tests {
 
     #[test]
     fn a_charger_refusal_holds_automatic_sleep_only_while_a_cable_shows() {
-        use ChargingState::*;
-        assert!(charger_holds_sleep(true, Charging));
-        assert!(charger_holds_sleep(true, Full));
-        assert!(!charger_holds_sleep(true, OnBattery));
-        assert!(!charger_holds_sleep(true, Unknown));
-        for charging in [Unknown, OnBattery, Charging, Full] {
-            assert!(!charger_holds_sleep(false, charging));
-        }
+        assert!(charger_holds_sleep(true, true));
+        assert!(!charger_holds_sleep(true, false));
+        assert!(!charger_holds_sleep(false, true));
+        assert!(!charger_holds_sleep(false, false));
     }
     #[test]
     fn bytes_use_decimal_units_like_computers_show_for_cards() {

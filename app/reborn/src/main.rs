@@ -3938,7 +3938,7 @@ impl Runtime {
         }
         if reborn_core::platform::charger_holds_sleep(
             self.sleep_refused_for_charger,
-            self.model.platform.battery.charging,
+            self.model.platform.battery.cable,
         ) {
             return;
         }

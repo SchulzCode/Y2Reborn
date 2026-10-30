@@ -70,7 +70,9 @@ pub fn battery(status: &Value) -> BatteryState {
             .find(|s| s["type"].as_str() == Some("Battery"))
             .or_else(|| supplies.iter().find(|s| s["name"].as_str() == Some("BAT0")))
     });
-    let charging = match supply.and_then(|s| s["status"].as_str()) {
+    let status_text = supply.and_then(|s| s["status"].as_str());
+    let cable = matches!(status_text, Some("Charging" | "Full" | "Not charging"));
+    let charging = match status_text {
         Some("Charging") => ChargingState::Charging,
         Some("Full") => ChargingState::Full,
         Some("Discharging" | "Not charging") => ChargingState::OnBattery,
@@ -89,6 +91,7 @@ pub fn battery(status: &Value) -> BatteryState {
             Some("voltage_estimate" | "hybrid")
         ),
         charging,
+        cable,
         level,
     }
 }
@@ -303,6 +306,14 @@ mod tests {
         let unknown = battery(&json!({"platform":{"battery":{"source":"guess","percent":72}}}));
         assert_eq!(unknown.percent, None);
         assert_eq!(unknown.charging, ChargingState::Unknown);
+        assert!(b.cable && !unknown.cable);
+        // A full battery held on its cable reads "Not charging": shown as on battery, still a cable.
+        let held = |status: &str| {
+            battery(&json!({"supplies":[{"name":"BAT0","type":"Battery","status":status}]}))
+        };
+        assert_eq!(held("Not charging").charging, ChargingState::OnBattery);
+        assert!(held("Not charging").cable && held("Full").cable);
+        assert!(!held("Discharging").cable);
     }
 
     #[test]

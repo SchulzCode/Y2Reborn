@@ -183,6 +183,7 @@ fn model() -> AppModel {
         percent: Some(72),
         estimated: true,
         charging: ChargingState::OnBattery,
+        cable: false,
         level: LowBattery::Normal,
     };
     m.platform.brightness_available = true;
@@ -1317,6 +1318,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             percent: Some(8),
             estimated: true,
             charging: ChargingState::OnBattery,
+            cable: false,
             level: LowBattery::Critical,
         };
     });
@@ -1418,6 +1420,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 percent: Some(10),
                 estimated: true,
                 charging: ChargingState::OnBattery,
+                cable: false,
                 level: LowBattery::Low,
             };
             ui.observe(m);

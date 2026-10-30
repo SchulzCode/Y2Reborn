@@ -78,6 +78,7 @@ fn app(screen: Screen) -> AppModel {
         percent: Some(72),
         estimated: true,
         charging: ChargingState::Charging,
+        cable: true,
         level: LowBattery::Normal,
     };
     m.platform.brightness_available = true;
