@@ -1485,7 +1485,7 @@
   "files": {},
   "name": "base/capabilities-template-codec-null",
   "stdout": {
-   "reason": "invalid_codec_inventory",
+   "reason": "invalid_capabilities_template",
    "schema": "org.y2linux.error/v1",
    "state": "Failed",
    "type": "ValueError"
@@ -1499,7 +1499,7 @@
   "files": {},
   "name": "base/capabilities-template-codecs-list",
   "stdout": {
-   "reason": "invalid_codec_inventory",
+   "reason": "invalid_capabilities_template",
    "schema": "org.y2linux.error/v1",
    "state": "Failed",
    "type": "ValueError"
@@ -1527,7 +1527,7 @@
   "files": {},
   "name": "base/capabilities-template-list-bad-policy",
   "stdout": {
-   "reason": "invalid_codec_policy",
+   "reason": "invalid_capabilities_template",
    "schema": "org.y2linux.error/v1",
    "state": "Failed",
    "type": "ValueError"
