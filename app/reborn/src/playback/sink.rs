@@ -35,6 +35,8 @@ pub(crate) struct KeptSink {
     /// `reborn_audio::wired_epoch` when it opened.
     pub(crate) wired: u64,
     pub(crate) since: Instant,
+    /// When it closes unless a stream takes it.
+    pub(crate) until: Instant,
 }
 
 /// Keep a wired sink for the next stream, its queued audio dropped at once
@@ -61,11 +63,13 @@ pub(crate) fn keep_sink(
         );
         return None;
     }
+    let since = Instant::now();
     Some(KeptSink {
         sink,
         spec,
         wired,
-        since: Instant::now(),
+        since,
+        until: since + KEEP_SINK_FOR,
     })
 }
 

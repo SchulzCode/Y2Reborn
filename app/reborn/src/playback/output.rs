@@ -83,8 +83,8 @@ impl SinkWorker {
         // closes a kept sink on time).
         let idle_command = if st.sink.is_none() {
             let wait = st.kept.as_ref().map_or(Duration::from_secs(1), |k| {
-                KEEP_SINK_FOR
-                    .saturating_sub(k.since.elapsed())
+                k.until
+                    .saturating_duration_since(Instant::now())
                     .max(Duration::from_millis(10))
             });
             match self.sr.recv_timeout(wait) {
@@ -276,11 +276,7 @@ impl SinkWorker {
             st.eof = false;
             st.forget_clicks();
         }
-        if st
-            .kept
-            .as_ref()
-            .is_some_and(|k| k.since.elapsed() >= KEEP_SINK_FOR)
-        {
+        if st.kept.as_ref().is_some_and(|k| Instant::now() >= k.until) {
             st.kept = None;
         }
     }
