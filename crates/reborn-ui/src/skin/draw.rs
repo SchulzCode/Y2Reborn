@@ -170,27 +170,8 @@ impl Scene<'_> {
         let m = self.m;
         let t = m.current();
         let track = |f: fn(&Track) -> String| t.map(f).unwrap_or_default();
-        // A book: chapter, author and book, times within the chapter, the
-        // book's place for the quality line, chapter n of m for the queue.
-        if let Some(b) = crate::views_books::now(m) {
-            let shown = match v {
-                Var::Title => Some(b.chapter.clone()),
-                Var::Artist | Var::AlbumArtist => Some(b.author.clone()),
-                Var::Album => Some(b.book.clone()),
-                Var::Elapsed => Some(components::time(b.elapsed(m.position_ms))),
-                Var::Remaining => Some(format!(
-                    "-{}",
-                    components::time(b.chapter_ms.saturating_sub(b.elapsed(m.position_ms)))
-                )),
-                Var::Duration => Some(components::time(b.chapter_ms)),
-                Var::Quality => Some(b.left()),
-                Var::QueueIndex => Some((b.index + 1).to_string()),
-                Var::QueueLength => Some(b.count.to_string()),
-                _ => None,
-            };
-            if let Some(text) = shown {
-                return text;
-            }
+        if let Some(text) = self.book_text(v) {
+            return text;
         }
         match v {
             // A station: the song it announces, as Reborn's own Now Playing.
@@ -294,6 +275,28 @@ impl Scene<'_> {
             Var::Detail => row.map(|r| r.item.secondary.clone()).unwrap_or_default(),
             Var::Number => row.map(|r| (r.index + 1).to_string()).unwrap_or_default(),
             Var::Count => row.map(|r| r.count.to_string()).unwrap_or_default(),
+        }
+    }
+
+    /// A book: chapter, author and book, times within the chapter, the
+    /// book's place for the quality line, chapter n of m for the queue.
+    fn book_text(&self, v: Var) -> Option<String> {
+        let m = self.m;
+        let b = crate::views_books::now(m)?;
+        match v {
+            Var::Title => Some(b.chapter.clone()),
+            Var::Artist | Var::AlbumArtist => Some(b.author.clone()),
+            Var::Album => Some(b.book.clone()),
+            Var::Elapsed => Some(components::time(b.elapsed(m.position_ms))),
+            Var::Remaining => Some(format!(
+                "-{}",
+                components::time(b.chapter_ms.saturating_sub(b.elapsed(m.position_ms)))
+            )),
+            Var::Duration => Some(components::time(b.chapter_ms)),
+            Var::Quality => Some(b.left()),
+            Var::QueueIndex => Some((b.index + 1).to_string()),
+            Var::QueueLength => Some(b.count.to_string()),
+            _ => None,
         }
     }
 
