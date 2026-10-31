@@ -333,6 +333,14 @@ impl Runtime {
                 self.zone_lookup_again = on;
                 self.checkpoint();
             }
+            Effect::SetHomeOrder(order) => {
+                self.model.settings.home_order = order;
+                self.checkpoint();
+            }
+            Effect::SetPlaylistOrder(order) => {
+                self.model.settings.playlist_order = order;
+                self.checkpoint();
+            }
             Effect::SetHomePin(key, on) => {
                 self.model.settings.pin_home(&key, on);
                 self.checkpoint();

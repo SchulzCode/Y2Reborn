@@ -22,6 +22,7 @@ pub mod pages;
 pub mod playlist_index;
 mod playlists_ui;
 pub mod qr;
+mod reorder;
 pub use playlists_ui::{is_favorites as playlists_is_favorites, PlaylistsView};
 mod actions;
 mod context_menus;
@@ -408,6 +409,8 @@ pub struct Ui {
     pub pairing_focus: usize,
     /// The Brightness card follows the wheel until Select or Back.
     pub(crate) adjusting_brightness: bool,
+    /// A Home place carried in Customize > Home Menu (Y2Reborn #53).
+    pub(crate) home_moving: Option<reorder::Carry>,
     /// The full-screen keyboard, while it is open.
     pub keyboard: Option<keyboard::Keyboard>,
     /// The network and password of the join being checked, in memory only:

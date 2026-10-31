@@ -4,6 +4,7 @@ pub mod books;
 pub mod clock;
 mod countries;
 pub mod eq;
+pub mod home;
 pub mod platform;
 pub mod playlist;
 pub mod queue;
@@ -1187,6 +1188,12 @@ pub struct Settings {
     /// (`HOME_HIDEABLE`; Y2Reborn #52, #55). Now Playing and Settings stay.
     #[serde(default)]
     pub home_hidden: Vec<String>,
+    /// Home's places in the listener's order, by key (`home::HOME_PLACES`); empty: standard.
+    #[serde(default)]
+    pub home_order: Vec<String>,
+    /// The Playlists list in the listener's order, by file; empty: Favorites, then A to Z.
+    #[serde(default)]
+    pub playlist_order: Vec<String>,
     /// Also write every scrobble to `.scrobbler.log` on Internal Storage
     /// (Rockbox format, for upload tools); works without an account.
     #[serde(default)]
@@ -1541,6 +1548,8 @@ impl Default for Settings {
             time_zone_auto: None,
             home_pins: Vec::new(),
             home_hidden: Vec::new(),
+            home_order: Vec::new(),
+            playlist_order: Vec::new(),
             scrobble_log: false,
             lastfm_scrobble: true,
             lastfm_now_playing: true,
@@ -1919,6 +1928,9 @@ pub enum Effect {
     SetTimeZoneAuto(bool),
     /// Pin (true) or unpin a Music list (`HOME_PINNABLE` key) on Home.
     SetHomePin(String, bool),
+    /// Home's places (Y2Reborn #53) or the Playlists list (#33) in a new order.
+    SetHomeOrder(Vec<String>),
+    SetPlaylistOrder(Vec<String>),
     /// Show (true) or hide one of Home's own places (`HOME_HIDEABLE` key).
     SetHomeShown(String, bool),
     /// Stop the update download in progress (Cancel on the update screen).

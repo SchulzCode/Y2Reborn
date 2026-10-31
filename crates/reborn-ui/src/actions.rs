@@ -134,7 +134,7 @@ impl Ui {
         if self.keyboard.is_some() {
             return self.entry(m, tracks, action);
         }
-        if let Some(effect) = self.brightness_input(m, action) {
+        if let Some(effect) = self.mode_input(m, action) {
             return effect;
         }
         // Up Next's song moving with the wheel; Select Songs.
@@ -217,6 +217,10 @@ impl Ui {
 
     pub(crate) fn open_context(&mut self, m: &mut AppModel, tracks: &[Track]) {
         if m.navigation.modal.is_some() {
+            return;
+        }
+        if m.screen == Screen::HomeMenu {
+            self.start_home_move(m);
             return;
         }
         if m.screen == Screen::NowPlaying {

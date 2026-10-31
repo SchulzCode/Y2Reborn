@@ -29,6 +29,8 @@ pub struct PlaylistsView {
     pub recent: Vec<PathBuf>,
     /// A song being moved: its place in the file and where it is now.
     pub moving: Option<(usize, usize)>,
+    /// A playlist being moved in the Playlists list (#33).
+    pub(crate) carried: Option<crate::reorder::Carry>,
     /// The playlist a confirmation or a rename is about.
     pub target: Option<PathBuf>,
     /// Bumped whenever `lists` changes (the rows cache's key).
@@ -62,6 +64,9 @@ pub(crate) type RowsKey = (
     usize,
     Option<(usize, usize)>,
     PlaylistSort,
+    // The Playlists list's order and a playlist being moved in it (#33).
+    Vec<String>,
+    Option<crate::reorder::Carry>,
 );
 
 impl PlaylistsView {
@@ -368,6 +373,8 @@ impl Ui {
             tracks.len(),
             self.playlists.moving,
             m.settings.playlist_sort(Path::new(&m.navigation.filter)),
+            m.settings.playlist_order.clone(),
+            self.playlists.carried,
         );
         let fresh = matches!(&*self.playlist_rows_cache.borrow(), Some((k, _)) if *k == key);
         if !fresh {
@@ -387,10 +394,17 @@ impl Ui {
             Screen::Playlists => {
                 let mut rows = vec![Item::new("New Playlist", "pl_new")
                     .with_secondary("Name it, then add songs from anywhere")];
-                for (i, p) in self.playlists.lists.iter().enumerate() {
+                let carried = self.playlists.carried.map(|c| c.to);
+                for (place, i) in self.playlist_order(m).into_iter().enumerate() {
+                    let p = &self.playlists.lists[i];
                     let facts = self.facts(tracks, p);
-                    let mut item = Item::new(&p.name, format!("playlist:{i}"))
-                        .with_secondary(summary(p.entries.len(), facts.ms));
+                    let secondary = if carried == Some(place) {
+                        "Moving".to_owned()
+                    } else {
+                        summary(p.entries.len(), facts.ms)
+                    };
+                    let mut item =
+                        Item::new(&p.name, format!("playlist:{i}")).with_secondary(secondary);
                     item.art = facts.mosaic.first().copied();
                     rows.push(item);
                 }
@@ -534,6 +548,10 @@ impl Ui {
             if !is_favorites(&p.path) {
                 rows.push(Item::new("Delete Playlist", "pl_delete"));
             }
+            // On the Playlists list: carry it to another place (#33).
+            if m.screen == Screen::Playlists {
+                rows.push(Item::new("Move", "pl_move"));
+            }
             return rows;
         }
         if key.starts_with("pl_entry:") {
@@ -612,6 +630,14 @@ impl Ui {
                 "pl_duplicate" => {
                     Self::close_modal(m);
                     Effect::Playlist(Box::new(PlaylistRequest::Duplicate(p.path)))
+                }
+                "pl_move" => {
+                    Self::close_modal(m);
+                    if let Some(index) = self.playlists.lists.iter().position(|l| l.path == p.path)
+                    {
+                        self.start_playlist_move(m, index);
+                    }
+                    Effect::None
                 }
                 "pl_delete" => {
                     self.playlists.target = Some(p.path);

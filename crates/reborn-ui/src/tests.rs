@@ -4064,7 +4064,8 @@ fn deleting_a_playlist_asks_first_and_favorites_cannot_be_deleted() {
             "Play Next",
             "Add to Queue",
             "Sort",
-            "Duplicate"
+            "Duplicate",
+            "Move"
         ]
     );
     ui.model_action(&mut m, Action::Back);
@@ -6721,4 +6722,95 @@ fn profile_albums_150k() {
         "album line {line:?} (counts all albums once) in {:?}",
         t.elapsed()
     );
+}
+
+#[test]
+fn home_menu_moves_a_place_and_home_follows_its_order() {
+    // Y2Reborn #53: hold Select on a place in Customize > Home Menu, turn, press.
+    let mut ui = radios();
+    let mut m = app(Screen::HomeMenu);
+    let keys = |ui: &Ui, m: &AppModel| -> Vec<String> {
+        ui.rows(m, &[]).into_iter().map(|r| r.key).collect()
+    };
+    assert_eq!(keys(&ui, &m)[0], "home_show:music");
+    m.navigation.focus = 0;
+    ui.model_action(&mut m, Action::ContextMenu);
+    assert!(
+        m.navigation.modal.is_none(),
+        "no menu: the place is carried"
+    );
+    for _ in 0..9 {
+        ui.model_action(&mut m, Action::WheelClockwise(1));
+    }
+    assert_eq!(
+        keys(&ui, &m)[9],
+        "home_show:music",
+        "drawn at its new place"
+    );
+    assert_eq!(m.navigation.focus, 9);
+    let Effect::SetHomeOrder(order) = ui.model_action(&mut m, Action::Select) else {
+        panic!("Select places it");
+    };
+    assert_eq!(order.last().map(String::as_str), Some("music"));
+    m.settings.home_order = order;
+    let home: Vec<_> = crate::pages::home_rows(&m.settings, &[])
+        .into_iter()
+        .map(|r| r.key)
+        .collect();
+    assert_eq!(
+        home,
+        [
+            "now_playing",
+            "playlists",
+            "radio",
+            "search",
+            "music",
+            "settings"
+        ]
+    );
+    // Back leaves a carried place where it was.
+    m.navigation.focus = 0;
+    ui.model_action(&mut m, Action::ContextMenu);
+    ui.model_action(&mut m, Action::WheelClockwise(1));
+    assert_eq!(ui.model_action(&mut m, Action::Back), Effect::None);
+    assert_eq!(m.screen, Screen::HomeMenu);
+    assert_eq!(keys(&ui, &m)[0], "home_audiobooks");
+}
+
+#[test]
+fn a_playlist_moves_to_another_place_in_the_playlists_list() {
+    // Y2Reborn #33: playlists were Favorites first, then A to Z, always.
+    let (mut ui, mut m) = playlists_app();
+    let names = |ui: &Ui, m: &AppModel| -> Vec<String> {
+        ui.rows(m, &[])
+            .into_iter()
+            .skip(1)
+            .map(|r| r.label)
+            .collect()
+    };
+    assert_eq!(names(&ui, &m), ["Favorites", "another", "Road Trip"]);
+    m.navigation.focus = 3;
+    ui.model_action(&mut m, Action::ContextMenu);
+    let options: Vec<_> = ui
+        .modal_rows_public(&m, &[])
+        .into_iter()
+        .map(|r| r.key)
+        .collect();
+    m.navigation.modal_focus = options.iter().position(|k| k == "pl_move").unwrap();
+    ui.model_action(&mut m, Action::Select);
+    ui.model_action(&mut m, Action::WheelCounterClockwise(1));
+    assert_eq!(names(&ui, &m), ["Favorites", "Road Trip", "another"]);
+    let Effect::SetPlaylistOrder(order) = ui.model_action(&mut m, Action::Select) else {
+        panic!("Select places it");
+    };
+    assert_eq!(
+        order,
+        [
+            "/data/music/Playlists/Favorites.m3u8",
+            "/data/music/Playlists/Road Trip.m3u8",
+            "/data/music/Mixes/another.m3u"
+        ]
+    );
+    m.settings.playlist_order = order;
+    assert_eq!(names(&ui, &m), ["Favorites", "Road Trip", "another"]);
 }
