@@ -1,6 +1,16 @@
 # Current Reborn state on the Y2
 
-## 1.0.0-beta.9.2 — Y2Linux 1.0 Beta 9.2 (Baseline 191), 2026-10-31 (latest): sleep and wake fix in the platform
+## 1.0.0-beta.9.2.2 — Y2Linux 1.0 Beta 9.2.2 (Baseline 193), 2026-10-31 (latest): status icons in skins, GitHub requests
+
+Published as `baseline-193` (Reborn `29aa1cc`; sequence 11800). Skins: element `indicators` (charging, computer,
+Bluetooth, Wi-Fi; right to left, closing up) in every shipped skin (`build_skins.py add_status`), variable `{date}`
+(Y2Linux #70 #73). A 12-hour clock says AM/PM: one `clock::clock_text` and `date_text`, made once a minute (#72).
+Brightness: Select on the card, then the wheel in 5 % steps from 5 % (`BRIGHTNESS_MIN`, `Ui::brightness_input`, #74).
+Fast scroll's letter mode from 4 suggested steps (#64). Equalizer files up to 20 filters (`MAX_BANDS`, `RbDspConfig`
+680 bytes, #76). The status bar lives in `components/status.rs`. Details:
+[Y2Linux Beta 9.2.2 report](https://github.com/SchulzCode/Y2Linux/blob/main/docs/validation/Y2-LINUX-1.0-BETA-9.2.2.md).
+
+## 1.0.0-beta.9.2 — Y2Linux 1.0 Beta 9.2 (Baseline 191), 2026-10-31: sleep and wake fix in the platform
 
 Published as `baseline-191` (Reborn `f445483`; sequence 11600). The fix is in the platform (the sleep helper's radio
 quiesce, `bluetooth-power`); Reborn carries the work since Beta 9.1 below and the version. Details:
