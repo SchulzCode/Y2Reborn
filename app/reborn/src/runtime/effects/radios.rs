@@ -2,17 +2,22 @@
 use crate::*;
 
 impl Runtime {
+    /// One command to the Wi-Fi worker.
+    pub(crate) fn send_wifi(&self, command: wifi::Command) -> Result<(), String> {
+        self.wifi
+            .as_ref()
+            .ok_or("Wi-Fi unavailable")?
+            .commands
+            .try_send(command)
+            .map_err(|_| "Wi-Fi busy".into())
+    }
+
     /// `Effect::WifiScan`.
     pub(crate) fn on_wifi_scan(&mut self) -> Result<(), String> {
         if self.ui.wifi.scan.active() {
             return Ok(());
         }
-        self.wifi
-            .as_ref()
-            .ok_or("Wi-Fi unavailable")?
-            .commands
-            .try_send(wifi::Command::Scan)
-            .map_err(|_| "Wi-Fi busy")?;
+        self.send_wifi(wifi::Command::Scan)?;
         self.ui.wifi.scan = reborn_core::RadioScan::Starting;
         self.ui.wifi.problem = None;
         self.wifi_state.scan = reborn_core::RadioScan::Starting;

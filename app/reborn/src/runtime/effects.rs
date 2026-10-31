@@ -173,27 +173,11 @@ impl Runtime {
                 .try_send(wifi::Command::Power(!self.wifi_state.enabled))
                 .map_err(|_| "Wi-Fi busy")?,
             Effect::WifiScan => self.on_wifi_scan()?,
-            Effect::WifiConnect { ssid, password } => self
-                .wifi
-                .as_ref()
-                .ok_or("Wi-Fi unavailable")?
-                .commands
-                .try_send(wifi::Command::Connect { ssid, password })
-                .map_err(|_| "Wi-Fi busy")?,
-            Effect::WifiSaved(id) => self
-                .wifi
-                .as_ref()
-                .ok_or("Wi-Fi unavailable")?
-                .commands
-                .try_send(wifi::Command::Saved(id))
-                .map_err(|_| "Wi-Fi busy")?,
-            Effect::WifiForget(id) => self
-                .wifi
-                .as_ref()
-                .ok_or("Wi-Fi unavailable")?
-                .commands
-                .try_send(wifi::Command::Forget(id))
-                .map_err(|_| "Wi-Fi busy")?,
+            Effect::WifiConnect { ssid, password } => {
+                self.send_wifi(wifi::Command::Connect { ssid, password })?
+            }
+            Effect::WifiSaved(id) => self.send_wifi(wifi::Command::Saved(id))?,
+            Effect::WifiForget(id) => self.send_wifi(wifi::Command::Forget(id))?,
             Effect::BluetoothPower => self
                 .bluetooth
                 .as_ref()
