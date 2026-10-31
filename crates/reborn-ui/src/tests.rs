@@ -6452,9 +6452,15 @@ fn fast_scrolling_steps_by_letter_and_lingers() {
     assert_eq!(m.navigation.focus, 1, "a slow detent is one row");
     assert!(ui.fast_scroll_until.is_none());
     ui.model_action(&mut m, Action::WheelClockwise(3));
-    assert_eq!(m.navigation.focus, 4, "fast: rows, and the letter shows");
+    assert_eq!(
+        m.navigation.focus, 4,
+        "quick: rows, no letter (Y2Linux #64)"
+    );
+    assert!(ui.fast_scroll_until.is_none());
+    ui.model_action(&mut m, Action::WheelClockwise(4));
+    assert_eq!(m.navigation.focus, 8, "fastest: rows, and the letter shows");
     assert!(ui.fast_scroll_until.is_some());
-    assert_eq!(ui.row_letter(&m, &tracks, 4), Some('A'));
+    assert_eq!(ui.row_letter(&m, &tracks, 8), Some('A'));
     // Letter mode: one letter per detent, slow or fast.
     ui.model_action(&mut m, Action::WheelClockwise(1));
     assert_eq!(m.navigation.focus, 10, "B");
@@ -6493,12 +6499,12 @@ fn lists_without_letters_keep_their_row_steps() {
     m.navigation.filter = "genre:Rock".into();
     ui.invalidate_catalog();
     let tracks = m.library.tracks.clone();
-    ui.model_action(&mut m, Action::WheelClockwise(3));
-    assert_eq!(m.navigation.focus, 3);
+    ui.model_action(&mut m, Action::WheelClockwise(4));
+    assert_eq!(m.navigation.focus, 4);
     assert!(ui.fast_scroll_until.is_some());
-    assert_eq!(ui.row_letter(&m, &tracks, 3), None);
+    assert_eq!(ui.row_letter(&m, &tracks, 4), None);
     ui.model_action(&mut m, Action::WheelClockwise(1));
-    assert_eq!(m.navigation.focus, 4, "a row, not a letter");
+    assert_eq!(m.navigation.focus, 5, "a row, not a letter");
     // Settings never accelerate nor jump.
     let mut m = app(Screen::Settings);
     ui.fast_scroll_until = Some(Instant::now() + Duration::from_secs(1));

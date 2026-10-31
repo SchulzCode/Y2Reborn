@@ -1,6 +1,12 @@
 //! Input: an action, the wheel and focus, selecting a row.
 use crate::*;
 
+/// Only the wheel's fastest cadence (4 steps: ten detents under 45 ms apart)
+/// shows the fast-scroll letter; a quick but steady turn moves rows. At 2 steps
+/// the letter came after four quick detents, so rows could not be read through
+/// at speed (Y2Linux #64).
+const LETTER_SCROLL_STEPS: i32 = 4;
+
 impl Ui {
     pub fn action(&mut self, m: &mut AppModel, tracks: &[Track], action: Action) -> Effect {
         let before = (m.screen, m.navigation.filter.clone());
@@ -272,7 +278,7 @@ impl Ui {
             self.move_focus(m, tracks, delta);
             return Effect::None;
         }
-        if accelerate && suggested.abs() > 1 {
+        if accelerate && suggested.abs() >= LETTER_SCROLL_STEPS {
             self.fast_scroll_until = Some(now + FAST_SCROLL_LINGER);
         }
         self.move_focus(m, tracks, if accelerate { suggested } else { direction });
