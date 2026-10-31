@@ -194,6 +194,8 @@ enum SinkCommand {
     Stop(Option<SyncSender<()>>),
     /// Stop for the next stream: a wired sink is kept (the reply names it).
     Switch(SyncSender<Option<SinkSpec>>),
+    /// A wheel click is waiting (it wakes a thread with no sink).
+    Click,
 }
 enum Stream {
     Pcm {
@@ -229,8 +231,9 @@ pub struct Playback {
     /// Paused in place: the audio thread stops writing and pauses the open
     /// device; the decoder waits on the full queue. Resume is instant.
     hold: Arc<AtomicBool>,
-    /// A wheel click for the sink thread (#67).
+    /// A wheel click for the sink thread (#67), and the wired sink it may open (#77).
     click: Arc<AtomicBool>,
+    click_spec: Arc<Mutex<Option<SinkSpec>>>,
     upcoming: Arc<Mutex<Option<Upcoming>>>,
     cancel: Option<Cancel>,
     pending_start: Option<PendingStart>,
@@ -303,6 +306,8 @@ impl Playback {
         let sink_hold = hold.clone();
         let click = Arc::new(AtomicBool::new(false));
         let sink_click = click.clone();
+        let click_spec = Arc::new(Mutex::new(None));
+        let sink_click_spec = click_spec.clone();
         let upcoming = Arc::new(Mutex::new(None::<Upcoming>));
         let decode_upcoming = upcoming.clone();
         let state = Arc::new(Mutex::new(json!({
@@ -356,6 +361,7 @@ impl Playback {
             sink_balance,
             sink_hold,
             sink_click,
+            sink_click_spec,
             audio_state,
             meter,
             factory,
@@ -375,6 +381,7 @@ impl Playback {
             balance,
             hold,
             click,
+            click_spec,
             upcoming,
             cancel: None,
             pending_start: None,
@@ -524,9 +531,15 @@ impl Playback {
     pub fn is_held(&self) -> bool {
         self.hold.load(Ordering::Acquire)
     }
-    /// One wheel click (#67): heard on the headphones or the speaker while a song is loaded.
-    pub(crate) fn click(&self) {
-        self.click.store(true, Ordering::Release);
+    /// One wheel click (#67, #77): in the paused stream, or with `spec` in a wired sink the sink
+    /// thread keeps or opens for it. The first click of a run wakes the idle thread.
+    pub(crate) fn click(&self, spec: Option<SinkSpec>) {
+        if let Ok(mut wanted) = self.click_spec.lock() {
+            *wanted = spec;
+        }
+        if !self.click.swap(true, Ordering::AcqRel) {
+            let _ = self.sink.try_send(SinkCommand::Click);
+        }
     }
     /// Left/right balance in dB (negative: the left is louder), live like
     /// the volume.

@@ -1,5 +1,6 @@
-//! The wheel click (#67, #77): a few milliseconds of tick on the wired output while the music is
-//! paused: the stream plays the click over silence and stops again.
+//! The wheel click (#67, #77): a few milliseconds of tick on the wired output while no music plays,
+//! in the paused stream or a sink kept (or opened) for it: the click plays over silence, and the
+//! stream stops again.
 use crate::volume::{decode, encode};
 use reborn_core::PcmFormat;
 use std::{f64::consts::PI, time::Duration};
@@ -13,6 +14,8 @@ const PITCH_HZ: f64 = 3000.0;
 const DECAY_S: f64 = 0.0008;
 /// A paused stream that clicked plays silence this long after the last click, then pauses again.
 pub(super) const LINGER: Duration = Duration::from_secs(1);
+/// A sink opened (or kept) for clicks stays open this long after the last one (#77).
+pub(super) const CLICK_KEEP: Duration = Duration::from_secs(10);
 
 /// The click's samples at `rate`, from -1 to 1.
 fn wave(rate: u32) -> Vec<f64> {

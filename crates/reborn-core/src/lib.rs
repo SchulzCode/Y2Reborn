@@ -1156,7 +1156,7 @@ pub struct Settings {
     /// A tick of the vibration motor on each button press (#28).
     #[serde(default)]
     pub haptics: Haptics,
-    /// A click on each wheel step while paused, through the headphones or the speaker (#67, #77).
+    /// A click on each wheel step while no music plays, through the headphones or the speaker (#67, #77).
     #[serde(default)]
     pub wheel_click: WheelClick,
     /// Play on the internal speaker while no headphones are plugged in, as
@@ -1495,9 +1495,9 @@ impl Haptics {
         }
     }
 }
-/// The click on each wheel step (#67) while the music is paused (#77: never over the music), on
-/// the headphone or speaker output a paused song keeps open; never on Bluetooth (its delay would
-/// part the click from the step). Off until chosen. On keeps 9.2.4's name `when_paused`, so 9.2.4
+/// The click on each wheel step (#67) while no music plays (#77: never over it), on the
+/// headphones or the speaker, opened for the clicks when no song holds them; never on Bluetooth
+/// (its delay would part the click from the step). Off until chosen. On keeps 9.2.4's name `when_paused`, so 9.2.4
 /// reads it after Restore Previous System; its `always` reads as On.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum WheelClick {

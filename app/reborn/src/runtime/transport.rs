@@ -466,6 +466,51 @@ impl Runtime {
             self.lost_peer = None;
         }
     }
+    /// A wheel click while no music plays (#67, #77): in the paused stream when it is on the
+    /// output the jack calls for, else in a headphone or speaker sink the sink thread keeps (or
+    /// opens) for clicks. Bluetooth never clicks; neither does an empty jack with the speaker off.
+    pub(crate) fn wheel_click(&mut self) {
+        let speaker = self.speaker_route();
+        if !matches!(self.model.output, AudioOutput::Wired)
+            || !(speaker || self.headphones == Some(true))
+        {
+            return;
+        }
+        if self.playback.is_held() && self.model.speaker_active != speaker {
+            // Paused on the other output: Play opens anew anyway.
+            self.release_hold();
+        }
+        self.playback.set_volume(self.sink_volume());
+        if self.playback.is_held() {
+            self.playback.click(None);
+        } else if let Some(spec) = self.click_spec(speaker) {
+            self.playback.click(Some(spec));
+        }
+    }
+    /// The wired sink a click opens: planned once (a probe of the headphone output, as a start
+    /// makes), on the speaker or not.
+    fn click_spec(&mut self, speaker: bool) -> Option<reborn_audio::SinkSpec> {
+        if self.click_spec.is_none() {
+            let id = self.log.correlation();
+            match reborn_audio::AlsaSink::plan(&AudioOutput::Wired, self.log.clone(), id) {
+                Ok((spec, _)) => self.click_spec = Some(spec),
+                Err(e) => {
+                    self.log.emit(
+                        Level::Warn,
+                        "audio",
+                        "click_plan_failed",
+                        &e,
+                        Some(id),
+                        json!({}),
+                    );
+                    return None;
+                }
+            }
+        }
+        self.click_spec
+            .clone()
+            .map(|spec| reborn_audio::SinkSpec { speaker, ..spec })
+    }
     /// The jack output plays on the internal speaker: wired, Speaker on and
     /// the kernel has seen the jack empty (unknown counts as headphones; the
     /// kernel also refuses the speaker while it reads a plug).

@@ -237,6 +237,8 @@ struct Runtime {
     /// Headphones in the jack, as the kernel last reported (#28 speaker);
     /// None until it has read the detector.
     headphones: Option<bool>,
+    /// The wired output's plan for wheel clicks (#77), made at the first click.
+    click_spec: Option<reborn_audio::SinkSpec>,
     /// A jack change still to act on: it waits while an output start is
     /// pending (a reconfiguration takes one change at a time).
     jack_pending: Option<bool>,

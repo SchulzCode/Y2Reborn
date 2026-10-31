@@ -714,6 +714,7 @@ fn stop_send_deadline_covers_a_full_command_queue() {
         balance: Arc::new(AtomicI8::new(0)),
         hold: Arc::new(AtomicBool::new(false)),
         click: Arc::new(AtomicBool::new(false)),
+        click_spec: Arc::new(Mutex::new(None)),
         upcoming: Arc::new(Mutex::new(None)),
         cancel: None,
         pending_start: None,
@@ -751,6 +752,7 @@ fn stop_with_unavailable_worker_fails_without_blocking() {
         balance: Arc::new(AtomicI8::new(0)),
         hold: Arc::new(AtomicBool::new(false)),
         click: Arc::new(AtomicBool::new(false)),
+        click_spec: Arc::new(Mutex::new(None)),
         upcoming: Arc::new(Mutex::new(None)),
         cancel: None,
         pending_start: None,
@@ -1563,7 +1565,8 @@ fn live_radio_station_decodes() {
 }
 
 /// The wired device as the wheel click meets it (#67, #77): what it will play (the left channel),
-/// how far it played (128 frames per write, as real time would), and its pauses. Like the Y2's
+/// how far it played (128 frames per write or look at its queue, as real time would), and its
+/// pauses. Like the Y2's
 /// codec it has no pause of its own: a pause plays out what is queued and stops the stream, which
 /// refuses writes ("File descriptor in bad state") until it is started again.
 #[derive(Clone, Default)]
@@ -1599,10 +1602,19 @@ impl AudioSink for ClickDevice {
         Ok(n)
     }
     fn discard(&mut self) -> Result<(), String> {
+        // Dropped: what was queued never plays.
+        let played = self.played.load(Ordering::Relaxed) as usize;
+        self.out.lock().unwrap().truncate(played);
         Ok(())
     }
     fn delay(&self) -> u64 {
-        self.out.lock().unwrap().len() as u64 - self.played.load(Ordering::Relaxed)
+        // Looking takes time too: 128 frames play (none while stopped).
+        let out = self.out.lock().unwrap().len() as u64;
+        if !self.stopped.load(Ordering::Relaxed) {
+            let played = (self.played.load(Ordering::Relaxed) + 128).min(out);
+            self.played.store(played, Ordering::Relaxed);
+        }
+        out - self.played.load(Ordering::Relaxed)
     }
     fn pause(&mut self, on: bool) -> Result<(), String> {
         if on {
@@ -1638,11 +1650,13 @@ fn played_with(name: &str, during: impl FnOnce(&mut Playback, &ClickDevice)) -> 
         thread::sleep(Duration::from_millis(2));
     }
     during(&mut p, &device);
-    // Until the device got all of it.
+    // Until the device got all of it (taking the events, whose full channel would hold the
+    // sink thread).
     let mut last = 0;
     while length() != last && Instant::now() < deadline + Duration::from_secs(5) {
         last = length();
         thread::sleep(Duration::from_millis(200));
+        while p.events.try_recv().is_ok() {}
     }
     p.shutdown(2).unwrap();
     let out = device.out.lock().unwrap().clone();
@@ -1657,7 +1671,7 @@ fn wheel_clicks_sound_while_paused_and_never_over_the_music() {
     assert!(plain.len() > 40_000, "{}", plain.len());
     let playing = played_with("playing", |p, _| {
         for _ in 0..3 {
-            p.click();
+            p.click(None);
             thread::sleep(Duration::from_millis(40));
         }
     });
@@ -1667,9 +1681,9 @@ fn wheel_clicks_sound_while_paused_and_never_over_the_music() {
         while device.pauses.lock().unwrap().is_empty() {
             thread::sleep(Duration::from_millis(2));
         }
-        p.click();
+        p.click(None);
         thread::sleep(Duration::from_millis(100));
-        p.click();
+        p.click(None);
         // LINGER after the last click the stream stops again.
         thread::sleep(LINGER + Duration::from_millis(300));
         p.hold(false);
@@ -1680,6 +1694,72 @@ fn wheel_clicks_sound_while_paused_and_never_over_the_music() {
     });
     let silence = inserted_stretch(&paused, &plain);
     assert!(silence >= 176, "the clicks played over silence: {silence}");
+}
+
+/// #77: with no song, a click opens the wired output asked for, the next clicks find it open, and
+/// a song started meanwhile plays in it (no second open).
+#[test]
+fn wheel_clicks_without_a_song_open_the_output_once_and_a_song_plays_in_it() {
+    let device = ClickDevice::default();
+    let opened = Arc::new(AtomicU64::new(0));
+    let (sink, opens) = (device.clone(), opened.clone());
+    let root = std::env::temp_dir().join(format!("reborn-click-idle-{}", std::process::id()));
+    let log = Observer::new(&root).unwrap();
+    let mut p = Playback::with_sink(
+        log,
+        root,
+        Box::new(move |_, _, _| {
+            opens.fetch_add(1, Ordering::Relaxed);
+            Ok(Box::new(sink.clone()))
+        }),
+    )
+    .unwrap();
+    let wired = spec(AudioOutput::Wired, 44100);
+    let clicks = || {
+        let out = device.out.lock().unwrap();
+        out.iter().filter(|v| **v != 0).count()
+    };
+    let wait_for = |what: &dyn Fn() -> bool| {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !what() && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(5));
+        }
+        what()
+    };
+    p.click(Some(wired.clone()));
+    assert!(wait_for(&|| clicks() > 0), "the first click sounds");
+    let first = clicks();
+    thread::sleep(Duration::from_millis(50));
+    p.click(Some(wired.clone()));
+    assert!(wait_for(&|| clicks() > first), "the next one too");
+    assert_eq!(opened.load(Ordering::Relaxed), 1, "in the same output");
+    // A song now starts in that output, as the runtime starts one: the sink is switched (the
+    // kept one named) and the start asks for it again.
+    let kept = p.switch_and_wait(1).unwrap();
+    assert_eq!(kept.as_ref(), Some(&wired));
+    p.start_with_gapless(LoadRequest {
+        music_root: track().path.parent().unwrap().into(),
+        track: track(),
+        entry_id: QueueEntryId(1),
+        queue: vec![],
+        queue_entry_ids: vec![],
+        position: 0,
+        spec: wired,
+        generation: 1,
+        dsp: DspConfig::with_volume(100),
+        gapless_enabled: true,
+        id: 1,
+        fade_in: false,
+    })
+    .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while device.out.lock().unwrap().len() < 20_000 && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(5));
+        while p.events.try_recv().is_ok() {}
+    }
+    assert!(device.out.lock().unwrap().len() >= 20_000, "the song plays");
+    assert_eq!(opened.load(Ordering::Relaxed), 1, "without opening again");
+    p.shutdown(2).unwrap();
 }
 
 /// `with` is `plain` with one stretch put in (the paused stream's clicks over silence): its length,

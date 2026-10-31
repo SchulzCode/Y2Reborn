@@ -1,5 +1,5 @@
 //! The sink thread ("audio"): opens, keeps and switches the sink and writes the PCM it is sent, with volume, balance, hold and the level meter.
-use super::click::{Click, LINGER};
+use super::click::{Click, CLICK_KEEP, LINGER};
 use super::*;
 use std::ops::ControlFlow;
 
@@ -15,8 +15,9 @@ pub(super) struct SinkWorker {
     pub(super) sink_volume: Arc<AtomicU8>,
     pub(super) sink_balance: Arc<AtomicI8>,
     pub(super) sink_hold: Arc<AtomicBool>,
-    /// A wheel click was asked for (#67).
+    /// A wheel click was asked for (#67), and the wired sink it may open (#77).
     pub(super) sink_click: Arc<AtomicBool>,
+    pub(super) sink_click_spec: Arc<Mutex<Option<SinkSpec>>>,
     pub(super) audio_state: Arc<Mutex<serde_json::Value>>,
     pub(super) meter: crate::meter::Meter,
     pub(super) factory: SinkFactory,
@@ -82,12 +83,7 @@ impl SinkWorker {
         // the timeout only maintains the worker heartbeat (and
         // closes a kept sink on time).
         let idle_command = if st.sink.is_none() {
-            let wait = st.kept.as_ref().map_or(Duration::from_secs(1), |k| {
-                k.until
-                    .saturating_duration_since(Instant::now())
-                    .max(Duration::from_millis(10))
-            });
-            match self.sr.recv_timeout(wait) {
+            match self.sr.recv_timeout(st.idle_wait()) {
                 Ok(command) => Some(command),
                 Err(RecvTimeoutError::Timeout) => None,
                 Err(RecvTimeoutError::Disconnected) => return ControlFlow::Break(Pass::Exit),
@@ -239,6 +235,7 @@ impl SinkWorker {
                         let _ = reply.try_send(());
                     }
                 }
+                SinkCommand::Click => {}
                 SinkCommand::Switch(reply) => {
                     if let Some(k) = keep_sink(
                         st.sink.take(),
@@ -311,8 +308,12 @@ impl SinkWorker {
             thread::sleep(Duration::from_millis(pace));
             return ControlFlow::Break(Pass::Again);
         }
-        // The wheel clicks only while the music is paused (#77).
-        self.sink_click.store(false, Ordering::Relaxed);
+        if st.sink.is_none() {
+            self.click_while_idle(st);
+        } else {
+            // The wheel clicks only while no music plays (#77).
+            self.sink_click.store(false, Ordering::Relaxed);
+        }
         ControlFlow::Continue(())
     }
 
@@ -521,15 +522,83 @@ impl SinkWorker {
             st.clicking = Some(Instant::now());
         }
         let Some(since) = st.clicking else { return };
+        let gain = self.click_gain();
         let result = if since.elapsed() < LINGER {
             let resumed = if was_stopped { s.pause(false) } else { Ok(()) };
-            resumed.and_then(|()| {
-                click_over_silence(s.as_mut(), &mut st.click, st.sink_format, st.gain.level())
-            })
+            resumed
+                .and_then(|()| click_over_silence(s.as_mut(), &mut st.click, st.sink_format, gain))
         } else {
             st.clicking = None;
             s.pause(true)
         };
+        self.click_result(st, result);
+    }
+
+    /// No stream: a wheel click plays in the wired sink kept after a song, or opens one for the
+    /// output asked for (headphones or speaker) and keeps it `CLICK_KEEP` after the last click, so
+    /// the next clicks (and a song started meanwhile) find it open. `LINGER` after the last click
+    /// its queued silence is dropped, as a kept sink's is.
+    fn click_while_idle(&mut self, st: &mut Playing) {
+        let wanted = self
+            .sink_click_spec
+            .lock()
+            .ok()
+            .and_then(|mut spec| spec.take());
+        if self.sink_click.swap(false, Ordering::AcqRel) {
+            if let Some(spec) = wanted {
+                self.keep_for_clicks(st, spec);
+            }
+            let Some(k) = &mut st.kept else { return };
+            let now = Instant::now();
+            k.until = k.until.max(now + CLICK_KEEP);
+            st.click.start(k.spec.rate);
+            st.clicking = Some(now);
+        }
+        let Some(since) = st.clicking else { return };
+        let gain = self.click_gain();
+        let Some(k) = &mut st.kept else {
+            st.clicking = None;
+            return;
+        };
+        let result = if since.elapsed() < LINGER {
+            click_over_silence(k.sink.as_mut(), &mut st.click, k.spec.format, gain)
+        } else {
+            st.clicking = None;
+            k.sink.discard()
+        };
+        self.click_result(st, result);
+    }
+
+    /// The kept sink when it is the one `spec` asks for, else one opened for it.
+    fn keep_for_clicks(&mut self, st: &mut Playing, spec: SinkSpec) {
+        let wired = reborn_audio::wired_epoch();
+        if (st.kept.as_ref()).is_some_and(|k| sink_change(&k.spec, k.wired, &spec, wired).is_none())
+        {
+            return;
+        }
+        drop(st.kept.take());
+        st.clicking = None;
+        match (self.factory)(&spec, self.al.clone(), st.correlation) {
+            Ok(sink) => {
+                let since = Instant::now();
+                st.kept = Some(KeptSink {
+                    sink,
+                    spec,
+                    wired,
+                    since,
+                    until: since + CLICK_KEEP,
+                });
+            }
+            Err(e) => self.click_result(st, Err(e)),
+        }
+    }
+
+    /// A click's volume: the live one (the sink's ramp is not kept up while no music plays).
+    fn click_gain(&self) -> f64 {
+        reborn_core::volume_gain(self.sink_volume.load(Ordering::Relaxed))
+    }
+
+    fn click_result(&self, st: &mut Playing, result: Result<(), String>) {
         if let Err(e) = result {
             st.clicking = None;
             self.al.emit(
@@ -647,6 +716,20 @@ pub(super) struct Playing {
 }
 
 impl Playing {
+    /// How long the thread without a sink may wait for a command: until a kept sink closes (at
+    /// most a second, for the heartbeat), 10 ms while clicks play in it.
+    fn idle_wait(&self) -> Duration {
+        let wait = self.kept.as_ref().map_or(Duration::from_secs(1), |k| {
+            k.until
+                .saturating_duration_since(Instant::now())
+                .max(Duration::from_millis(10))
+        });
+        if self.clicking.is_some() {
+            wait.min(Duration::from_millis(10))
+        } else {
+            wait
+        }
+    }
     fn wired(&self) -> bool {
         (self.open_spec.as_ref()).is_some_and(|(spec, _)| matches!(spec.output, AudioOutput::Wired))
     }

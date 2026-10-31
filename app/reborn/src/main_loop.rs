@@ -255,6 +255,7 @@ pub(crate) fn run() -> Result<(), String> {
         sleep_fading: false,
         sleep_minutes_shown: None,
         headphones: None,
+        click_spec: None,
         jack_pending: None,
         lost_peer: None,
         playback_hints: reborn_platform::workload::Hints::default(),
@@ -1317,9 +1318,12 @@ impl MainLoop {
                     }
                     haptic_tick(&mut self.motor, rt.model.settings.haptics, &self.log);
                 }
-                let playing = rt.model.playback == PlaybackState::Playing;
+                let playing = matches!(
+                    rt.model.playback,
+                    PlaybackState::Playing | PlaybackState::Buffering
+                );
                 if wheel_clicks(lit, event.input, rt.model.settings.wheel_click, playing) {
-                    rt.playback.click();
+                    rt.wheel_click();
                 }
                 if let Some((_, _, _, events)) = &mut self.monitor {
                     if events.len() < 512 {

@@ -136,10 +136,6 @@ impl VolumeRamp {
             self.gain + self.step * frames as f64
         }
     }
-    /// The gain the volume asks for (a wheel click follows it).
-    pub(crate) fn level(&self) -> f64 {
-        self.target
-    }
     pub(crate) fn advance(&mut self, frames: usize) {
         self.gain = self.at(frames);
         self.remaining = self.remaining.saturating_sub(frames);

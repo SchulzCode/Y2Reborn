@@ -64,6 +64,17 @@ impl Runtime {
             // lease, open: give it back first so the platform's lock
             // check passes (Play then restarts at the same place).
             self.release_hold_with(true);
+            // So does a sink kept after a song or for wheel clicks (#77).
+            if let Err(error) = self.playback.stop_and_wait(self.model.generation) {
+                self.log.emit(
+                    Level::Warn,
+                    "playback",
+                    "sleep_sink_release_slow",
+                    "Kept sink did not close in time",
+                    None,
+                    json!({"error":error}),
+                );
+            }
             self.checkpoint();
         }
         let worker = self.platform.as_ref().ok_or("System service is starting")?;
