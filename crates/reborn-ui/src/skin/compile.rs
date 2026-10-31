@@ -1,9 +1,9 @@
 //! `skin.json` to a checked, drawable `Skin`. Pure: every file is fetched
 //! through `Files`, so the caller owns reading, path containment and decoding.
 use super::{
-    atlas, Align, ArtSource, Bx, Case, Cond, El, Files, FontRef, IconRef, Level, ListSource,
-    NativePart, Node, Paint, Palette, Scroll, Seg, Skin, Sliced, FLAGS, FONT_FILE_MAX, FORMAT,
-    LAYOUTS, MANIFEST, MAX_ELEMENTS, MAX_FONTS, MAX_PICTURES, PICTURE_MAX, TOKENS, VARS,
+    atlas, Align, ArtSource, Bx, Case, Cond, El, Files, FontRef, IconRef, IndicatorLook, Level,
+    ListSource, NativePart, Node, Paint, Palette, Scroll, Seg, Skin, Sliced, FLAGS, FONT_FILE_MAX,
+    FORMAT, LAYOUTS, MANIFEST, MAX_ELEMENTS, MAX_FONTS, MAX_PICTURES, PICTURE_MAX, TOKENS, VARS,
 };
 use crate::{canvas::Icon, text::Face};
 use serde::Deserialize;
@@ -81,9 +81,12 @@ struct Spec {
     line_height: Option<f32>,
     tracking: Option<f32>,
     knob_radius: Option<f32>,
+    gap: Option<f32>,
     rows: Option<f32>,
     row_height: Option<f32>,
     color: Option<String>,
+    dim: Option<String>,
+    charge: Option<String>,
     top: Option<String>,
     bottom: Option<String>,
     image: Option<String>,
@@ -219,6 +222,7 @@ fn fields(kind: &str) -> Option<&'static [&'static str]> {
         "group" => &["x", "y", "elements"],
         "part" => &["name", "x", "y"],
         "native" => &["part", "x", "y", "recolor"],
+        "indicators" => &["x", "y", "size", "gap", "color", "dim", "charge"],
         _ => return None,
     })
 }
@@ -743,6 +747,17 @@ impl Compiler<'_> {
                     children,
                 }
             }
+            "indicators" => El::Indicators {
+                x: num(e.x, "x", Some(0.))?,
+                y: num(e.y, "y", Some(0.))?,
+                look: IndicatorLook {
+                    size: num(e.size, "size", Some(16.))?.clamp(1., 64.),
+                    gap: num(e.gap, "gap", Some(4.))?.clamp(0., 64.),
+                    on: self.paint(e.color.as_deref().unwrap_or("text"), &at)?,
+                    dim: self.paint(e.dim.as_deref().unwrap_or("dim"), &at)?,
+                    charge: self.paint(e.charge.as_deref().unwrap_or("success"), &at)?,
+                },
+            },
             "native" => {
                 if row {
                     return Err(format!("{at}: native parts cannot be inside a list row"));

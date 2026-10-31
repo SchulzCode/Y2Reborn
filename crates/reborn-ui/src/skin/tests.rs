@@ -611,3 +611,49 @@ fn skins_say_when_the_sleep_timer_runs() {
         );
     }
 }
+
+#[test]
+fn indicators_show_charging_and_the_radios_right_to_left_and_close_up() {
+    // Y2Linux #70, #73: skins showed only the battery and the clock.
+    let screens = r##"{"now_playing": [
+  {"type": "indicators", "x": 440, "y": 7, "size": 16, "gap": 4,
+   "color": "#101010", "dim": "#888888", "charge": "#00AA00"}
+]}"##;
+    let mut ui = skinned(compile_test(screens).unwrap());
+    let mut m = model(Screen::NowPlaying);
+    // The centre of the icon drawn in one colour, if any.
+    let centre = |ui: &Ui, m: &AppModel, colour: u32| {
+        let quads: Vec<_> = ui
+            .draw(m, &[], false)
+            .into_iter()
+            .filter(|q| q.color == colour)
+            .collect();
+        (!quads.is_empty())
+            .then(|| quads.iter().map(|q| q.x + q.w / 2.).sum::<f32>() / quads.len() as f32)
+    };
+    let (on, dim, charge) = (0x1010_10FF, 0x8888_88FF, 0x00AA_00FF);
+    assert_eq!(
+        centre(&ui, &m, on),
+        None,
+        "radios off, not charging: nothing"
+    );
+    m.platform.battery.charging = reborn_core::platform::ChargingState::Charging;
+    ui.bluetooth.powered = true;
+    ui.bluetooth.devices = vec![crate::BluetoothDeviceView {
+        connected: true,
+        ..Default::default()
+    }];
+    ui.wifi.powered = true;
+    ui.wifi.status = crate::WifiStatus::Disconnected;
+    let (bolt, bluetooth, wifi) = (
+        centre(&ui, &m, charge).unwrap(),
+        centre(&ui, &m, on).unwrap(),
+        centre(&ui, &m, dim).unwrap(),
+    );
+    assert!((bolt - 432.).abs() < 2., "{bolt}");
+    assert!((bluetooth - 412.).abs() < 2., "{bluetooth}");
+    assert!((wifi - 392.).abs() < 2., "{wifi}");
+    // Not charging: Bluetooth moves into the bolt's place.
+    m.platform.battery.charging = reborn_core::platform::ChargingState::OnBattery;
+    assert!((centre(&ui, &m, on).unwrap() - 432.).abs() < 2.);
+}

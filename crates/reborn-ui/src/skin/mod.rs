@@ -525,6 +525,14 @@ pub(crate) enum El {
         dy: f32,
         children: Vec<Node>,
     },
+    /// What the status bar shows left of the battery, right to left from `x`
+    /// and closing up like Reborn's own bar: charging, a computer (the accent
+    /// while copying), Bluetooth and Wi-Fi (`on` once connected, else `dim`).
+    Indicators {
+        x: f32,
+        y: f32,
+        look: IndicatorLook,
+    },
     Native {
         part: NativePart,
         dx: f32,
@@ -532,6 +540,16 @@ pub(crate) enum El {
         /// Draw in the skin's palette (default) or exactly as Reborn does.
         recolor: bool,
     },
+}
+
+/// An `indicators` element's icon size, spacing and colours.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct IndicatorLook {
+    pub size: f32,
+    pub gap: f32,
+    pub on: Paint,
+    pub dim: Paint,
+    pub charge: Paint,
 }
 
 #[derive(Clone, Debug, PartialEq)]

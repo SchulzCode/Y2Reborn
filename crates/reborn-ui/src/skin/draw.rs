@@ -1,8 +1,8 @@
 //! The skin interpreter: draws a compiled layout from the player's state, and
 //! recolours Reborn's own drawing for the screens a skin leaves to Reborn.
 use super::{
-    atlas::Font, Align, ArtSource, Bx, Case, El, Flag, FontRef, IconRef, Level, ListSource,
-    NativePart, Node, Paint, Palette, Seg, Skin, Var,
+    atlas::Font, Align, ArtSource, Bx, Case, El, Flag, FontRef, IconRef, IndicatorLook, Level,
+    ListSource, NativePart, Node, Paint, Palette, Seg, Skin, Var,
 };
 use crate::{
     canvas::{Canvas, Icon},
@@ -13,7 +13,7 @@ use crate::{
     Item, RowKind, Ui,
 };
 use reborn_core::{
-    platform::{ChargingState, LowBattery},
+    platform::{ChargingState, LowBattery, UsbTransfer},
     AppModel, PlaybackState, RepeatMode, Screen, Track,
 };
 use reborn_graphics::{Quad, Tex};
@@ -884,6 +884,7 @@ fn element(c: &mut Canvas, s: &Scene, el: &El, ox: f32, oy: f32, row: Option<&Ro
             }
         }
         El::Group { dx, dy, children } => nodes(c, s, children, ox + dx, oy + dy, row),
+        El::Indicators { x, y, look } => indicators(c, s, x + ox, y + oy, *look),
         El::Native {
             part,
             dx,
@@ -922,6 +923,46 @@ fn element(c: &mut Canvas, s: &Scene, el: &El, ox: f32, oy: f32, row: Option<&Ro
 }
 
 /// Draw a layout. Exactly one focus target is kept (the first marked).
+/// The status icons right to left from `right` (Y2Linux #70, #73: skins
+/// showed only the battery and the clock).
+fn indicators(c: &mut Canvas, s: &Scene, right: f32, top: f32, look: IndicatorLook) {
+    let radio = |connected: bool| if connected { look.on } else { look.dim };
+    let usb = s.m.platform.snapshot.usb;
+    let shown = [
+        (s.flag(Flag::Charging, None), Icon::Bolt, look.charge),
+        (
+            matches!(usb, UsbTransfer::Ready | UsbTransfer::Copying),
+            Icon::Usb,
+            if usb == UsbTransfer::Copying {
+                Paint::Accent(0xFF)
+            } else {
+                look.on
+            },
+        ),
+        (
+            s.flag(Flag::Bluetooth, None),
+            Icon::Bluetooth,
+            radio(s.flag(Flag::BluetoothConnected, None)),
+        ),
+        (
+            s.flag(Flag::Wifi, None),
+            Icon::Wifi,
+            radio(s.flag(Flag::WifiConnected, None)),
+        ),
+    ];
+    let mut x = right;
+    for (_, icon, paint) in shown.into_iter().filter(|(on, _, _)| *on) {
+        c.icon(
+            icon,
+            x - look.size / 2.,
+            top + look.size / 2.,
+            look.size,
+            s.paint(paint),
+        );
+        x -= look.size + look.gap;
+    }
+}
+
 pub(crate) fn draw_layout(c: &mut Canvas, s: &Scene, layout: &[Node]) {
     let start = c.draw.len();
     nodes(c, s, layout, 0., 0., None);

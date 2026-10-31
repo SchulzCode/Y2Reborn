@@ -152,6 +152,7 @@ relative to the row or group.
 | `group` | `elements` · `x y` offset |
 | `part` | `name` (from `parts`) · `x y` offset |
 | `native` | `part` `screen` (Reborn's drawing of this screen) or `status` (Reborn's battery and radio icons) · `x y` · `recolor` (default true) |
+| `indicators` | the status icons Reborn's bar shows left of the battery, right to left from `x` and closing up when one is off: charging, a computer (`accent` while copying), Bluetooth and Wi-Fi (`color` once connected, `dim` while only on) · `x y` (right edge, top) · `size` (default 16) · `gap` (default 4) · `color` (default `text`) · `dim` (default `dim`) · `charge` (default `success`) |
 
 Text is cut with “…” to `w`. One line is centred vertically in `h`; several
 lines are centred as a block in `h`, or start at `y` when `h` is 0.
