@@ -6590,3 +6590,104 @@ fn the_wheel_adjusts_brightness_in_five_percent_steps_after_select() {
     ui.model_action(&mut m, Action::WheelClockwise(1));
     assert_eq!(m.navigation.focus, 1);
 }
+
+#[test]
+fn an_artists_albums_go_oldest_first_and_name_their_year() {
+    // Y2Reborn #66 (Y2Linux #68): albums under an artist were A to Z without a year.
+    let song = |album: &str, artist: &str, year: u16, n: i64| Track {
+        id: n,
+        source_id: "internal".into(),
+        path: format!("/data/music/{album}/{n}.flac").into(),
+        title: format!("Song {n}"),
+        artist: artist.into(),
+        album: album.into(),
+        album_artist: artist.into(),
+        duration_ms: 180_000,
+        online: true,
+        year,
+        ..Default::default()
+    };
+    let tracks = vec![
+        song("Zenith", "Band", 1979, 1),
+        song("Zenith", "Band", 1981, 2),
+        song("Alpha", "Band", 2001, 3),
+        song("Middle", "Band", 0, 4),
+        song("Other", "Act", 1990, 5),
+    ];
+    let ui = radios();
+    let mut m = app(Screen::Artist);
+    m.navigation.filter = "artist:Band".into();
+    let rows = ui.rows(&m, &tracks);
+    let albums: Vec<_> = rows
+        .iter()
+        .skip(1)
+        .map(|r| (r.label.as_str(), r.secondary.as_str()))
+        .collect();
+    assert_eq!(
+        albums,
+        [
+            ("Zenith", "Band · 1979"),
+            ("Alpha", "Band · 2001"),
+            ("Middle", "Band")
+        ],
+        "oldest first (an album's earliest song), unknown last"
+    );
+    let zenith = crate::album_filter(&tracks[0]);
+    assert_eq!(
+        ui.album_detail(&m, &tracks, &zenith),
+        "1979 · 2 songs · 6 min"
+    );
+    // Album Order by artist: each artist's albums by year too.
+    let mut m = app(Screen::Albums);
+    m.settings.album_order = reborn_core::AlbumOrder::Artist;
+    let order: Vec<_> = ui
+        .rows(&m, &tracks)
+        .iter()
+        .map(|r| r.label.clone())
+        .collect();
+    assert_eq!(order, ["Other", "Zenith", "Alpha", "Middle"]);
+}
+
+#[test]
+#[ignore]
+fn profile_albums_150k() {
+    // Y2Reborn #66: the album lists with years on a 150 000-song library (host timing).
+    let mut tracks = vec![];
+    for a in 0..1500 {
+        for al in 0..10 {
+            for n in 0..10 {
+                tracks.push(Track {
+                    id: tracks.len() as i64,
+                    source_id: "internal".into(),
+                    title: format!("t{n}"),
+                    artist: format!("Artist {a}"),
+                    album: format!("Album {al}"),
+                    album_artist: format!("Artist {a}"),
+                    track: n,
+                    path: format!("/data/music/{a}/{al}/{n}.mp3").into(),
+                    online: true,
+                    year: 1960 + ((a * 7 + al * 3) % 60) as u16,
+                    ..Default::default()
+                });
+            }
+        }
+    }
+    let ui = Ui::default();
+    let mut m = app(Screen::Albums);
+    m.settings.album_order = reborn_core::AlbumOrder::Artist;
+    let t = std::time::Instant::now();
+    let n = ui.rows(&m, &tracks).len();
+    eprintln!("albums by artist {n} rows in {:?}", t.elapsed());
+    let mut m = app(Screen::Artist);
+    m.navigation.filter = "artist:Artist 700".into();
+    let t = std::time::Instant::now();
+    let n = ui.rows(&m, &tracks).len();
+    eprintln!("artist page {n} rows in {:?}", t.elapsed());
+    let key = crate::album_filter(&tracks[70_000]);
+    let t = std::time::Instant::now();
+    let line = ui.album_detail(&m, &tracks, &key);
+    eprintln!(
+        "album line {line:?} (counts all albums once) in {:?}",
+        t.elapsed()
+    );
+}

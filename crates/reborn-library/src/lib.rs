@@ -24,8 +24,9 @@ use std::{
 const SQLITE_CANTOPEN_PERM_EXTENDED: i32 = rusqlite::ffi::SQLITE_CANTOPEN | (3 << 8);
 pub const SCHEMA_VERSION: i64 = 1;
 /// 3: genre is read and stored; 4: Vorbis/APE "ALBUM ARTIST" (with a space) is
-/// read as the album artist. Every older row re-reads its tags once.
-const METADATA_REVISION: i64 = 4;
+/// read as the album artist; 5: the year (Y2Reborn #66). Every older row re-reads
+/// its tags once, in the background at the scanner's usual speed.
+const METADATA_REVISION: i64 = 5;
 pub const MAX_LIBRARY_TRACKS: usize = 250_000;
 pub const CATALOG_PAGE_SIZE: usize = 512;
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -210,6 +211,11 @@ fn open(path: &Path) -> Result<Connection, OpenFailure> {
     }
     // Additive like metadata_revision: older rows keep '' until their tags are
     // re-read (METADATA_REVISION 3), schema-1 readers ignore the column.
+    // Additive like genre: the year of each song's date tag (METADATA_REVISION 5, Y2Reborn #66).
+    if !has_column(&c, "year")? {
+        c.execute_batch("ALTER TABLE tracks ADD COLUMN year INTEGER NOT NULL DEFAULT 0;")
+            .map_err(|e| classify_open_error(e, OpenStage::Migration))?;
+    }
     if !has_column(&c, "genre")? {
         c.execute_batch("ALTER TABLE tracks ADD COLUMN genre TEXT NOT NULL DEFAULT '';")
             .map_err(|e| classify_open_error(e, OpenStage::Migration))?;
@@ -238,6 +244,16 @@ fn open(path: &Path) -> Result<Connection, OpenFailure> {
         .map_err(|error| classify_open_error(error, OpenStage::Setup))?;
     Ok(c)
 }
+/// The year a date tag starts with ("2024", "2024-02-29", "2024-02-29T10:00"); 0 for none.
+fn year_of(date: &str) -> u16 {
+    date.trim()
+        .get(..4)
+        .filter(|y| y.bytes().all(|b| b.is_ascii_digit()))
+        .and_then(|y| y.parse().ok())
+        .filter(|y| (1000..=2999).contains(y))
+        .unwrap_or(0)
+}
+
 /// Whether `tracks` has the column `name` (the additive migrations).
 fn has_column(c: &Connection, name: &str) -> Result<bool, OpenFailure> {
     let migration = |e| classify_open_error(e, OpenStage::Migration);
@@ -272,13 +288,14 @@ fn from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Track> {
         artwork: r.get(17)?,
         online: r.get(18)?,
         genre: r.get(19)?,
+        year: r.get(20)?,
         book: false,
         own_album_artist: None,
     };
     track.book = reborn_core::books::is_book(&track);
     Ok(track)
 }
-const SELECT:&str="SELECT t.id,t.source_id,t.path,t.filename,t.size,t.mtime,t.title,t.artist,t.album,t.album_artist,t.track,t.disc,t.duration_ms,t.codec,t.sample_rate,t.channels,t.bitrate,t.artwork,s.online,t.genre FROM tracks t JOIN sources s ON s.id=t.source_id";
+const SELECT:&str="SELECT t.id,t.source_id,t.path,t.filename,t.size,t.mtime,t.title,t.artist,t.album,t.album_artist,t.track,t.disc,t.duration_ms,t.codec,t.sample_rate,t.channels,t.bitrate,t.artwork,s.online,t.genre,t.year FROM tracks t JOIN sources s ON s.id=t.source_id";
 fn list(c: &Connection, f: &Filter) -> Result<Vec<Track>, String> {
     let mut sql = format!("{SELECT} WHERE t.deleted=0");
     // Keep values bound, but expose actual predicates to SQLite so it can seek
@@ -603,12 +620,12 @@ fn batch_tracked(
 ) -> Result<(), String> {
     let tx = c.transaction().map_err(err)?;
     {
-        let mut q=tx.prepare_cached("INSERT INTO tracks(source_id,path,filename,size,mtime,title,artist,album,album_artist,track,disc,duration_ms,codec,sample_rate,channels,bitrate,artwork,seen,metadata_revision,genre) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20) ON CONFLICT(source_id,path) DO UPDATE SET filename=excluded.filename,size=excluded.size,mtime=excluded.mtime,title=excluded.title,artist=excluded.artist,album=excluded.album,album_artist=excluded.album_artist,track=excluded.track,disc=excluded.disc,duration_ms=excluded.duration_ms,codec=excluded.codec,sample_rate=excluded.sample_rate,channels=excluded.channels,bitrate=excluded.bitrate,artwork=excluded.artwork,seen=excluded.seen,metadata_revision=excluded.metadata_revision,genre=excluded.genre,deleted=0 WHERE tracks.deleted<>0 OR tracks.metadata_revision IS NOT excluded.metadata_revision OR
+        let mut q=tx.prepare_cached("INSERT INTO tracks(source_id,path,filename,size,mtime,title,artist,album,album_artist,track,disc,duration_ms,codec,sample_rate,channels,bitrate,artwork,seen,metadata_revision,genre,year) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21) ON CONFLICT(source_id,path) DO UPDATE SET filename=excluded.filename,size=excluded.size,mtime=excluded.mtime,title=excluded.title,artist=excluded.artist,album=excluded.album,album_artist=excluded.album_artist,track=excluded.track,disc=excluded.disc,duration_ms=excluded.duration_ms,codec=excluded.codec,sample_rate=excluded.sample_rate,channels=excluded.channels,bitrate=excluded.bitrate,artwork=excluded.artwork,seen=excluded.seen,metadata_revision=excluded.metadata_revision,genre=excluded.genre,year=excluded.year,deleted=0 WHERE tracks.deleted<>0 OR tracks.metadata_revision IS NOT excluded.metadata_revision OR
  tracks.filename IS NOT excluded.filename OR tracks.size IS NOT excluded.size OR tracks.mtime IS NOT excluded.mtime OR
  tracks.title IS NOT excluded.title OR tracks.artist IS NOT excluded.artist OR tracks.album IS NOT excluded.album OR
  tracks.album_artist IS NOT excluded.album_artist OR tracks.track IS NOT excluded.track OR tracks.disc IS NOT excluded.disc OR
  tracks.duration_ms IS NOT excluded.duration_ms OR tracks.codec IS NOT excluded.codec OR tracks.sample_rate IS NOT excluded.sample_rate OR
- tracks.channels IS NOT excluded.channels OR tracks.bitrate IS NOT excluded.bitrate OR tracks.artwork IS NOT excluded.artwork OR tracks.genre IS NOT excluded.genre").map_err(err)?;
+ tracks.channels IS NOT excluded.channels OR tracks.bitrate IS NOT excluded.bitrate OR tracks.artwork IS NOT excluded.artwork OR tracks.genre IS NOT excluded.genre OR tracks.year IS NOT excluded.year").map_err(err)?;
         let mut presence = tx.prepare_cached("INSERT OR IGNORE INTO scan_seen SELECT id FROM tracks WHERE source_id=?1 AND path=?2").map_err(err)?;
         for t in tracks {
             q.execute(params![
@@ -631,7 +648,8 @@ fn batch_tracked(
                 t.artwork,
                 seen,
                 METADATA_REVISION,
-                t.genre
+                t.genre,
+                t.year
             ])
             .map_err(err)?;
             if mark_seen {
@@ -1692,6 +1710,7 @@ impl ScanBatch<'_> {
                     artwork: m.artwork,
                     online: true,
                     genre: m.genre.trim().to_owned(),
+                    year: year_of(&m.date),
                     // Not stored: `from_row` derives it when the catalog loads.
                     book: false,
                     own_album_artist: None,
@@ -3465,6 +3484,70 @@ mod ingest_regression_tests {
         assert_eq!(scan(&db).rescanned, 1);
         assert_eq!(scan(&db).reused, 1);
         assert_eq!(genres(&db), ["Ambient"]);
+        db.shutdown(Duration::from_secs(5)).unwrap();
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn the_year_is_read_from_the_date_tag_and_a_pre_year_library_reads_it_once() {
+        // Y2Reborn #66: albums by year need each song's year.
+        assert_eq!(year_of("2024-02-29"), 2024);
+        assert_eq!(year_of(" 1979"), 1979);
+        assert_eq!(year_of("2024-02-29T10:00:00Z"), 2024);
+        for none in ["", "79", "Mar 2024", "0000", "20x4"] {
+            assert_eq!(year_of(none), 0, "{none}");
+        }
+        let root = std::env::temp_dir().join(format!("reborn-year-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir(&root).unwrap();
+        let log = Observer::new(&root.join("logs")).unwrap();
+        let source = Source {
+            id: "internal".into(),
+            kind: MediaSource::Internal,
+            root: root.clone(),
+            online: true,
+            mount: "fixture".into(),
+            mount_id: None,
+        };
+        fs::copy(fixture("metadata/tags.flac"), root.join("song.flac")).unwrap();
+        let years = |db: &Database| -> Vec<u16> {
+            db.list(Filter {
+                limit: 10,
+                ..Filter::default()
+            })
+            .unwrap()
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap()
+            .unwrap()
+            .into_iter()
+            .map(|t| t.year)
+            .collect()
+        };
+        let scan = |db: &Database| {
+            scan_sources_with_identity(
+                db,
+                std::slice::from_ref(&source),
+                &log,
+                &AtomicBool::new(false),
+                |_| true,
+            )
+            .unwrap()
+        };
+        let db = Database::spawn(root.join("library.sqlite"), log.clone()).unwrap();
+        db.sources(vec![source.clone()]).unwrap();
+        assert_eq!(scan(&db).rescanned, 1);
+        assert_eq!(years(&db), [2024]);
+        // A revision-4 library: no year column yet.
+        db.execute_test_sql(
+            "UPDATE tracks SET metadata_revision=4; ALTER TABLE tracks DROP COLUMN year;".into(),
+        )
+        .unwrap();
+        db.shutdown(Duration::from_secs(5)).unwrap();
+        let db = Database::spawn(root.join("library.sqlite"), log.clone()).unwrap();
+        db.sources(vec![source.clone()]).unwrap();
+        assert_eq!(years(&db), [0]);
+        assert_eq!(scan(&db).rescanned, 1, "re-read once");
+        assert_eq!(scan(&db).reused, 1);
+        assert_eq!(years(&db), [2024]);
         db.shutdown(Duration::from_secs(5)).unwrap();
         fs::remove_dir_all(root).unwrap();
     }

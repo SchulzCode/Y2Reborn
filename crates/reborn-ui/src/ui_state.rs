@@ -177,13 +177,14 @@ impl Ui {
         if totals.as_ref().is_some_and(|(l, _)| *l == library) {
             return;
         }
-        let mut map: HashMap<(String, String), (usize, u64)> = HashMap::new();
+        let mut map: HashMap<(String, String), crate::AlbumTotal> = HashMap::new();
         for t in tracks.iter().filter(|t| t.is_music()) {
             let entry = map
                 .entry((t.album_artist.clone(), t.album.clone()))
                 .or_default();
-            entry.0 += 1;
-            entry.1 += t.duration_ms;
+            entry.songs += 1;
+            entry.ms += t.duration_ms;
+            entry.year = crate::earliest_year(entry.year, t.year);
         }
         *totals = Some((library, map));
     }
@@ -247,12 +248,12 @@ impl Ui {
             Some((artist, album, None)) => {
                 self.count_albums(tracks);
                 let totals = self.album_totals.borrow();
-                let (songs, ms) = totals
+                let total = totals
                     .as_ref()
                     .and_then(|(_, map)| map.get(&(artist.to_owned(), album.to_owned())))
                     .copied()
                     .unwrap_or_default();
-                views_library::album_line(songs, ms)
+                views_library::album_line(total)
             }
             _ => views_library::album_detail(m, tracks, key),
         };

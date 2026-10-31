@@ -85,7 +85,23 @@ type DetailCache = Option<((usize, usize), String, String)>;
 /// A group menu's song count: (library, group key, songs).
 type GroupCount = Option<((usize, usize), String, usize)>;
 /// Songs and milliseconds per (album artist, album), for a library.
-type AlbumTotals = Option<((usize, usize), HashMap<(String, String), (usize, u64)>)>;
+type AlbumTotals = Option<((usize, usize), HashMap<(String, String), AlbumTotal>)>;
+
+/// One album's songs, length and year (the earliest of its songs'; 0 unknown), counted once.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct AlbumTotal {
+    pub songs: usize,
+    pub ms: u64,
+    pub year: u16,
+}
+
+/// The earlier of two years, 0 meaning unknown.
+pub(crate) fn earliest_year(a: u16, b: u16) -> u16 {
+    match (a, b) {
+        (0, y) | (y, 0) => y,
+        (a, b) => a.min(b),
+    }
+}
 
 /// How a settings-style row presents its value.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

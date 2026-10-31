@@ -110,7 +110,7 @@ impl Row {
             }
             Self::SearchAlbum(i) => {
                 let t = &tracks[*i];
-                album_item(&t.album, &t.album_artist, *i, t)
+                album_item(&t.album, &t.album_artist, *i, t, t.year)
             }
             Self::FolderTrack(i) => file_item(*i, &tracks[*i]),
             Self::Item(i) => i.clone(),
@@ -406,13 +406,14 @@ impl Catalog {
                         && (m.navigation.filter.is_empty()
                             || track_matches(t, &m.navigation.filter))
                 }) {
-                    albums
+                    let entry = albums
                         .entry((t.album.as_str(), t.album_artist.as_str()))
-                        .or_insert((i, t));
+                        .or_insert((i, t, 0));
+                    entry.2 = crate::earliest_year(entry.2, t.year);
                 }
                 // A to Z by title, then album artist, articles skipped; or
-                // by the artist shown, then title (Customize > Album Order,
-                // #56).
+                // by the artist shown, then oldest first (Customize > Album
+                // Order, #56; Y2Reborn #66).
                 let mut albums: Vec<_> = albums.into_iter().collect();
                 match m.settings.album_order {
                     reborn_core::AlbumOrder::Title => {
@@ -421,8 +422,9 @@ impl Catalog {
                         })
                     }
                     reborn_core::AlbumOrder::Artist => {
-                        albums.sort_by_cached_key(|((album, artist), (_, t))| {
-                            (artist_key(shown_artist(artist, t)), title_key(album))
+                        albums.sort_by_cached_key(|((album, artist), (_, t, year))| {
+                            let artist = artist_key(shown_artist(artist, t));
+                            (artist, year_key(*year), title_key(album))
                         })
                     }
                 }
@@ -441,8 +443,8 @@ impl Catalog {
                 }
                 // A genre's album opens on that genre's songs (#50).
                 let genre = m.navigation.filter.strip_prefix("genre:");
-                for ((album, artist), (i, t)) in albums {
-                    let mut item = album_item(album, artist, i, t);
+                for ((album, artist), (i, t, year)) in albums {
+                    let mut item = album_item(album, artist, i, t, year);
                     if let Some(genre) = genre {
                         item.key = format!("{}\u{1f}genre:{genre}", item.key);
                     }
@@ -608,18 +610,20 @@ impl Catalog {
                 }
                 if m.screen == Screen::Artist {
                     // An artist page lists the artist's albums, not their songs.
+                    // Oldest first, unknown years last (Y2Reborn #66).
                     let mut albums = BTreeMap::new();
                     for (i, t) in &ids {
-                        albums
+                        let entry = albums
                             .entry((t.album.as_str(), t.album_artist.as_str()))
-                            .or_insert((*i, *t));
+                            .or_insert((*i, *t, 0));
+                        entry.2 = crate::earliest_year(entry.2, t.year);
                     }
                     let mut albums: Vec<_> = albums.into_iter().collect();
-                    albums.sort_by_cached_key(|((album, artist), _)| {
-                        (title_key(album), artist_key(artist))
+                    albums.sort_by_cached_key(|((album, artist), (_, _, year))| {
+                        (year_key(*year), title_key(album), artist_key(artist))
                     });
-                    for ((album, artist), (i, t)) in albums {
-                        self.push(album_item(album, artist, i, t));
+                    for ((album, artist), (i, t, year)) in albums {
+                        self.push(album_item(album, artist, i, t, year));
                     }
                     return;
                 }
@@ -784,11 +788,24 @@ fn shown_artist<'a>(album_artist: &'a str, t: &'a Track) -> &'a str {
         album_artist
     }
 }
-fn album_item(album: &str, artist: &str, index: usize, t: &Track) -> Item {
-    let mut item = Item::new(display_or_unknown(album), album_filter(t))
-        .with_secondary(crate::names_or_unknown(shown_artist(artist, t)));
+/// An album row: its artist, and its year when known (Y2Reborn #66).
+fn album_item(album: &str, artist: &str, index: usize, t: &Track, year: u16) -> Item {
+    let artist = crate::names_or_unknown(shown_artist(artist, t));
+    let secondary = match year {
+        0 => artist.into_owned(),
+        year => format!("{artist} · {year}"),
+    };
+    let mut item = Item::new(display_or_unknown(album), album_filter(t)).with_secondary(secondary);
     item.art = Some(index);
     item
+}
+/// Sorts years oldest first and unknown ones last.
+fn year_key(year: u16) -> u16 {
+    if year == 0 {
+        u16::MAX
+    } else {
+        year
+    }
 }
 fn track_item(i: usize, t: &Track) -> Item {
     let mut item = Item::new(

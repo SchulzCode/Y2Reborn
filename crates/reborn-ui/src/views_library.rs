@@ -391,23 +391,31 @@ fn albums_grid(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interact
 /// a minute shows its length as "0:42" rather than "0 min".
 pub(crate) fn album_detail(m: &AppModel, tracks: &[Track], key: &str) -> String {
     let _ = m;
-    let (songs, ms) = tracks
-        .iter()
-        .filter(|t| crate::track_matches(t, key))
-        .fold((0, 0u64), |(n, ms), t| (n + 1, ms + t.duration_ms));
-    album_line(songs, ms)
+    let total = tracks.iter().filter(|t| crate::track_matches(t, key)).fold(
+        crate::AlbumTotal::default(),
+        |a, t| crate::AlbumTotal {
+            songs: a.songs + 1,
+            ms: a.ms + t.duration_ms,
+            year: crate::earliest_year(a.year, t.year),
+        },
+    );
+    album_line(total)
 }
 
-/// "12 songs · 48 min" (a short album in seconds).
-pub(crate) fn album_line(songs: usize, ms: u64) -> String {
-    let length = if ms < 60_000 {
-        components::time(ms)
+/// "2019 · 12 songs · 48 min" (a short album in seconds; no year when unknown, Y2Reborn #66).
+pub(crate) fn album_line(total: crate::AlbumTotal) -> String {
+    let length = if total.ms < 60_000 {
+        components::time(total.ms)
     } else {
-        format!("{} min", ms / 60_000)
+        format!("{} min", total.ms / 60_000)
     };
-    match songs {
+    let songs = match total.songs {
         1 => format!("1 song · {length}"),
         n => format!("{n} songs · {length}"),
+    };
+    match total.year {
+        0 => songs,
+        year => format!("{year} · {songs}"),
     }
 }
 

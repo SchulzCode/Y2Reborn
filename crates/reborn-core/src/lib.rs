@@ -446,6 +446,9 @@ pub struct Track {
     /// Genre tag as read from the file; empty when the file has none.
     #[serde(default)]
     pub genre: String,
+    /// Release year from the date tag; 0 when the file has none (Y2Reborn #66).
+    #[serde(default)]
+    pub year: u16,
     /// An audiobook part (`books::is_book`), set when the library loads; never
     /// stored, so the rule can change without a rescan.
     #[serde(default)]
