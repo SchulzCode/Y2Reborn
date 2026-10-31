@@ -83,7 +83,12 @@ pub enum JoinOutcome {
 pub enum Command {
     Power(bool),
     Scan,
-    Connect { ssid: String, password: String },
+    /// `hidden`: a network that is not broadcast, found by probing for its name.
+    Connect {
+        ssid: String,
+        password: String,
+        hidden: bool,
+    },
     Saved(u32),
     Forget(u32),
     Disconnect,
@@ -304,7 +309,7 @@ pub fn radio(on: bool, persist: bool) -> Result<(), String> {
     Paths::default().radio(on, persist)
 }
 /// A new network block for a join, not selected and not saved yet.
-fn add_network(c: &Control, ssid: &str, password: &str) -> Result<u32, String> {
+fn add_network(c: &Control, ssid: &str, password: &str, hidden: bool) -> Result<u32, String> {
     if ssid.is_empty()
         || ssid.len() > 32
         || (!password.is_empty() && !(8..=63).contains(&password.len()))
@@ -319,6 +324,10 @@ fn add_network(c: &Control, ssid: &str, password: &str) -> Result<u32, String> {
         .map_err(|_| "invalid network id")?;
     let result = (|| {
         c.request(&format!("SET_NETWORK {id} ssid {ssid}"))?;
+        // A hidden network answers only a probe that names it (Y2Reborn #61).
+        if hidden {
+            c.request(&format!("SET_NETWORK {id} scan_ssid 1"))?;
+        }
         if password.is_empty() {
             c.request(&format!("SET_NETWORK {id} key_mgmt NONE"))?;
         } else {
@@ -382,6 +391,7 @@ impl PendingJoin {
         ssid: &str,
         password: Option<&str>,
         saved: Option<u32>,
+        hidden: bool,
     ) -> Result<Self, String> {
         let c = Control::at(paths)?;
         // Attach before selecting: no event of this join may be missed.
@@ -394,7 +404,7 @@ impl PendingJoin {
             .map_err(|e| e.to_string())?;
         let (id, added) = match saved {
             Some(id) => (id, false),
-            None => (add_network(&c, ssid, password.unwrap_or(""))?, true),
+            None => (add_network(&c, ssid, password.unwrap_or(""), hidden)?, true),
         };
         if let Err(e) = c.request(&format!("SELECT_NETWORK {id}")) {
             if added {
@@ -883,7 +893,11 @@ fn run(log: Observer, rx: Receiver<Command>, et: SyncSender<Status>, paths: Path
                 scan = Some(Scan::new(id, Instant::now()));
                 paths.radio(true, true)
             }
-            Command::Connect { ssid, password } => {
+            Command::Connect {
+                ssid,
+                password,
+                hidden,
+            } => {
                 log.emit(
                     Level::Info,
                     "wifi",
@@ -893,14 +907,16 @@ fn run(log: Observer, rx: Receiver<Command>, et: SyncSender<Status>, paths: Path
                     json!({"ssid":ssid}),
                 );
                 attempts += 1;
-                PendingJoin::start(&paths, attempts, &ssid, Some(&password), None).map(|pending| {
-                    current.join = Some(Join {
-                        attempt: pending.attempt,
-                        ssid: ssid.clone(),
-                        outcome: JoinOutcome::Checking,
-                    });
-                    join = Some(pending);
-                })
+                PendingJoin::start(&paths, attempts, &ssid, Some(&password), None, hidden).map(
+                    |pending| {
+                        current.join = Some(Join {
+                            attempt: pending.attempt,
+                            ssid: ssid.clone(),
+                            outcome: JoinOutcome::Checking,
+                        });
+                        join = Some(pending);
+                    },
+                )
             }
             Command::Disconnect => {
                 Control::at(&paths).and_then(|c| c.request("DISCONNECT").map(|_| ()))
@@ -913,14 +929,16 @@ fn run(log: Observer, rx: Receiver<Command>, et: SyncSender<Status>, paths: Path
                     .map(|n| n.ssid.clone())
                     .unwrap_or_default();
                 attempts += 1;
-                PendingJoin::start(&paths, attempts, &ssid, None, Some(network)).map(|pending| {
-                    current.join = Some(Join {
-                        attempt: pending.attempt,
-                        ssid,
-                        outcome: JoinOutcome::Checking,
-                    });
-                    join = Some(pending);
-                })
+                PendingJoin::start(&paths, attempts, &ssid, None, Some(network), false).map(
+                    |pending| {
+                        current.join = Some(Join {
+                            attempt: pending.attempt,
+                            ssid,
+                            outcome: JoinOutcome::Checking,
+                        });
+                        join = Some(pending);
+                    },
+                )
             }
             Command::Forget(id) => Control::at(&paths).and_then(|c| {
                 c.request(&format!("REMOVE_NETWORK {id}"))?;
@@ -1140,9 +1158,16 @@ pub fn join_test(id: u32, wrong: bool) -> Result<serde_json::Value, String> {
         }
     };
     let mut join = if wrong {
-        PendingJoin::start(&paths, 0, &ssid, Some("y2-wrong-password-test"), None)?
+        PendingJoin::start(
+            &paths,
+            0,
+            &ssid,
+            Some("y2-wrong-password-test"),
+            None,
+            false,
+        )?
     } else {
-        PendingJoin::start(&paths, 0, &ssid, None, Some(id))?
+        PendingJoin::start(&paths, 0, &ssid, None, Some(id), false)?
     };
     let started = Instant::now();
     let outcome = loop {
@@ -1476,6 +1501,21 @@ mod tests {
         }
     }
     #[test]
+    fn a_hidden_network_is_probed_by_name() {
+        // Y2Reborn #61: a network that is not broadcast never shows in a scan.
+        let fake = Supplicant::new(HEADER.into());
+        fake.paths.radio(true, false).unwrap();
+        let probes = |fake: &Supplicant| {
+            let sent = fake.requests.lock().unwrap().clone();
+            sent.iter().any(|r| r == "SET_NETWORK 3 scan_ssid 1")
+        };
+        PendingJoin::start(&fake.paths, 1, "Attic", Some("password1"), None, true).unwrap();
+        assert!(probes(&fake));
+        fake.requests.lock().unwrap().clear();
+        PendingJoin::start(&fake.paths, 2, "Home", Some("password1"), None, false).unwrap();
+        assert!(!probes(&fake), "a visible network is not probed");
+    }
+    #[test]
     fn a_join_is_saved_only_when_it_connects() {
         // Y2Reborn #20: one wrong letter, 15 tries; each try was saved at once,
         // the list said "Saved" and nothing ever said the password was wrong.
@@ -1484,7 +1524,7 @@ mod tests {
         *fake.saved.lock().unwrap() = "0\tHome\tany\t\n".into();
         let sent = |fake: &Supplicant| fake.requests.lock().unwrap().clone();
         let mut join =
-            PendingJoin::start(&fake.paths, 1, "Home", Some("wrongpassword"), None).unwrap();
+            PendingJoin::start(&fake.paths, 1, "Home", Some("wrongpassword"), None, false).unwrap();
         assert_eq!((join.id, join.added), (3, true));
         let order = sent(&fake);
         let at = |c: &str| order.iter().position(|r| r.starts_with(c)).unwrap();
@@ -1504,7 +1544,7 @@ mod tests {
         *fake.saved.lock().unwrap() =
             "0\tHome\tany\t\n1\tCafe\tany\t\n3\tHome\tany\t[CURRENT]\n".into();
         let mut join =
-            PendingJoin::start(&fake.paths, 2, "Home", Some("rightpassword"), None).unwrap();
+            PendingJoin::start(&fake.paths, 2, "Home", Some("rightpassword"), None, false).unwrap();
         fake.event(
             "<3>CTRL-EVENT-CONNECTED - Connection to aa:bb:cc:dd:ee:ff completed [id=3 id_str=]",
         );
@@ -1520,7 +1560,7 @@ mod tests {
         assert!(at("ENABLE_NETWORK all") < at("SAVE_CONFIG"));
         // Out of range: three "not found" in a row.
         let mut join =
-            PendingJoin::start(&fake.paths, 3, "Home", Some("rightpassword"), None).unwrap();
+            PendingJoin::start(&fake.paths, 3, "Home", Some("rightpassword"), None, false).unwrap();
         for _ in 0..3 {
             fake.event("<3>CTRL-EVENT-NETWORK-NOT-FOUND");
         }
@@ -1528,7 +1568,7 @@ mod tests {
         // F52: a handshake cut short on this side (a sleep's radio off, another
         // join) is not a password verdict; the supplicant's timeout is.
         let mut join =
-            PendingJoin::start(&fake.paths, 5, "Home", Some("rightpassword"), None).unwrap();
+            PendingJoin::start(&fake.paths, 5, "Home", Some("rightpassword"), None, false).unwrap();
         fake.event(
             "<3>CTRL-EVENT-DISCONNECTED bssid=aa:bb:cc:dd:ee:ff reason=3 locally_generated=1",
         );
@@ -1540,7 +1580,7 @@ mod tests {
         );
         assert_eq!(outcome(&mut join, &fake.paths), JoinOutcome::Joined);
         let mut join =
-            PendingJoin::start(&fake.paths, 6, "Home", Some("wrongpassword"), None).unwrap();
+            PendingJoin::start(&fake.paths, 6, "Home", Some("wrongpassword"), None, false).unwrap();
         fake.event("<3>Authentication with aa:bb:cc:dd:ee:ff timed out.");
         fake.event(
             "<3>CTRL-EVENT-DISCONNECTED bssid=aa:bb:cc:dd:ee:ff reason=3 locally_generated=1",
@@ -1550,7 +1590,7 @@ mod tests {
         );
         assert_eq!(outcome(&mut join, &fake.paths), JoinOutcome::WrongPassword);
         // A saved network is selected, never removed when it fails.
-        let mut join = PendingJoin::start(&fake.paths, 4, "Home", None, Some(0)).unwrap();
+        let mut join = PendingJoin::start(&fake.paths, 4, "Home", None, Some(0), false).unwrap();
         assert!(!join.added);
         fake.event("<3>CTRL-EVENT-SSID-TEMP-DISABLED id=0 ssid=\"Home\" reason=WRONG_KEY");
         assert_eq!(outcome(&mut join, &fake.paths), JoinOutcome::WrongPassword);

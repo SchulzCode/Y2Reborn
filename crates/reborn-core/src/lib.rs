@@ -1845,6 +1845,8 @@ pub enum Effect {
     WifiConnect {
         ssid: String,
         password: String,
+        /// Typed under Other Network: not broadcast, so probed for by name (Y2Reborn #61).
+        hidden: bool,
     },
     WifiSaved(u32),
     WifiForget(u32),

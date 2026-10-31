@@ -1685,7 +1685,8 @@ fn password_keyboard_types_with_buttons_and_never_draws_the_password() {
         ui.model_action(&mut m, Action::ContextMenu),
         Effect::WifiConnect {
             ssid: "Café".into(),
-            password: "secretpass".into()
+            password: "secretpass".into(),
+            hidden: false
         }
     );
     assert!(ui.keyboard.is_none());
@@ -1694,6 +1695,39 @@ fn password_keyboard_types_with_buttons_and_never_draws_the_password() {
     assert_eq!(ui.model_action(&mut m, Action::Home), Effect::None);
     assert!(ui.keyboard.is_none());
     assert_eq!(m.screen, Screen::Wifi, "cancel stays on the Wi-Fi page");
+}
+
+#[test]
+fn other_network_joins_a_hidden_network_by_its_name() {
+    // Y2Reborn #61: a network that is not broadcast never showed in the list.
+    use crate::keyboard::Purpose;
+    let mut ui = radios();
+    let mut m = app(Screen::Wifi);
+    assert!(ui.rows(&m, &[]).iter().any(|r| r.key == "wifi_other"));
+    select_key(&mut ui, &mut m, "wifi_other");
+    assert_eq!(ui.keyboard.as_ref().unwrap().purpose, Purpose::WifiName);
+    ui.keyboard.as_mut().unwrap().text = "Attic".into();
+    assert_eq!(ui.model_action(&mut m, Action::ContextMenu), Effect::None);
+    assert_eq!(
+        ui.keyboard.as_ref().unwrap().purpose,
+        Purpose::WifiPassword {
+            ssid: "Attic".into(),
+            hidden: true
+        }
+    );
+    // Too short is refused; empty joins an open hidden network.
+    ui.keyboard.as_mut().unwrap().text = "short".into();
+    assert_eq!(ui.model_action(&mut m, Action::ContextMenu), Effect::None);
+    assert!(ui.keyboard.is_some());
+    ui.keyboard.as_mut().unwrap().text.clear();
+    assert_eq!(
+        ui.model_action(&mut m, Action::ContextMenu),
+        Effect::WifiConnect {
+            ssid: "Attic".into(),
+            password: String::new(),
+            hidden: true
+        }
+    );
 }
 
 #[test]
@@ -1723,7 +1757,7 @@ fn a_wrong_wifi_password_reopens_the_keyboard_with_it_and_says_so() {
     assert_eq!(k.text, "secretpasz");
     assert!(k.note.contains("Wrong password"));
     assert!(
-        matches!(&k.purpose, crate::keyboard::Purpose::WifiPassword { ssid } if ssid == "Café")
+        matches!(&k.purpose, crate::keyboard::Purpose::WifiPassword { ssid, .. } if ssid == "Café")
     );
     // Said once: the same outcome again does nothing.
     ui.keyboard = None;
@@ -1742,7 +1776,7 @@ fn a_wrong_wifi_password_reopens_the_keyboard_with_it_and_says_so() {
     assert!(visible_text(&ui, &m).contains("Check the password"));
     assert_eq!(select_key(&mut ui, &mut m, "saved:7"), Effect::None);
     assert!(matches!(&ui.keyboard.as_ref().unwrap().purpose,
-        crate::keyboard::Purpose::WifiPassword { ssid } if ssid == "Home"));
+        crate::keyboard::Purpose::WifiPassword { ssid, .. } if ssid == "Home"));
     ui.keyboard = None;
     // Change Password is in the saved network's menu.
     ui.wifi.problem = None;
@@ -1758,7 +1792,7 @@ fn a_wrong_wifi_password_reopens_the_keyboard_with_it_and_says_so() {
     m.navigation.modal_focus = at;
     ui.model_action(&mut m, Action::Select);
     assert!(matches!(&ui.keyboard.as_ref().unwrap().purpose,
-        crate::keyboard::Purpose::WifiPassword { ssid } if ssid == "Home"));
+        crate::keyboard::Purpose::WifiPassword { ssid, .. } if ssid == "Home"));
 }
 
 #[test]

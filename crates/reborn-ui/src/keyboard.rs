@@ -23,9 +23,13 @@ use reborn_core::Action;
 /// What the typed text is for.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Purpose {
+    /// `hidden`: typed under Other Network, so it may be open (an empty password).
     WifiPassword {
         ssid: String,
+        hidden: bool,
     },
+    /// Other Network: the name of a network that is not broadcast (Y2Reborn #61).
+    WifiName,
     RadioSearch,
     LibrarySearch,
     /// A new playlist's name, or a playlist's new name.
@@ -43,6 +47,8 @@ impl Purpose {
         match self {
             // WPA passphrases: 8 to 63 printable ASCII characters.
             Self::WifiPassword { .. } => 63,
+            // An SSID: up to 32 bytes.
+            Self::WifiName => 32,
             Self::RadioSearch | Self::LibrarySearch => 40,
             Self::PlaylistNew | Self::PlaylistRename => 60,
             Self::LastFmUser => 32,
@@ -58,6 +64,7 @@ impl Purpose {
     pub fn done_label(&self) -> &'static str {
         match self {
             Self::WifiPassword { .. } => "Join",
+            Self::WifiName => "Next",
             Self::RadioSearch | Self::LibrarySearch => "Search",
             Self::PlaylistNew => "Create",
             Self::PlaylistRename => "Rename",
@@ -69,6 +76,7 @@ impl Purpose {
         match self {
             // The prompt names the network; the title says what this is.
             Self::WifiPassword { .. } => "Wi-Fi Password".into(),
+            Self::WifiName => "Other Network".into(),
             Self::RadioSearch => "Radio Search".into(),
             Self::LibrarySearch => "Search".into(),
             Self::PlaylistNew => "New Playlist".into(),
@@ -79,7 +87,14 @@ impl Purpose {
     }
     fn prompt(&self) -> String {
         match self {
-            Self::WifiPassword { ssid } => format!("Password for “{ssid}”"),
+            Self::WifiPassword {
+                ssid,
+                hidden: false,
+            } => format!("Password for “{ssid}”"),
+            Self::WifiPassword { ssid, hidden: true } => {
+                format!("Password for “{ssid}” (none: Join)")
+            }
+            Self::WifiName => "Network name".into(),
             Self::RadioSearch => "Station name".into(),
             Self::LibrarySearch => "Artist, album or song".into(),
             Self::PlaylistNew | Self::PlaylistRename => "Playlist name".into(),
@@ -778,7 +793,9 @@ mod tests {
         for purpose in [
             Purpose::WifiPassword {
                 ssid: "Home".into(),
+                hidden: false,
             },
+            Purpose::WifiName,
             Purpose::LibrarySearch,
         ] {
             let mut k = kb(purpose);
@@ -865,6 +882,7 @@ mod tests {
     fn passwords_reveal_instead_of_accents_and_stop_at_63() {
         let mut k = kb(Purpose::WifiPassword {
             ssid: "Home".into(),
+            hidden: false,
         });
         k.row = 3;
         k.col = 1;

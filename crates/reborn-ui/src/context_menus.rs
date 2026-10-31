@@ -332,7 +332,7 @@ impl Ui {
                 if let Some(ssid) = ssid {
                     // Joined like a new network: kept only if it connects,
                     // and then it replaces the old entry.
-                    self.open_wifi_keyboard(ssid, "");
+                    self.open_wifi_keyboard(ssid, "", false);
                 }
                 return Effect::None;
             }
@@ -486,16 +486,32 @@ impl Ui {
                         self.keyboard = None;
                         self.playlist_named(&purpose, text)
                     }
-                    Purpose::WifiPassword { ssid } => {
-                        // WPA passphrases keep their spaces.
-                        if k.text.len() < 8 {
+                    Purpose::WifiName => {
+                        if text.is_empty() || text.len() > 32 {
+                            self.flash("Type the network's name (up to 32 characters)");
+                            return Effect::None;
+                        }
+                        self.open_wifi_keyboard(text, "", true);
+                        Effect::None
+                    }
+                    Purpose::WifiPassword { ssid, hidden } => {
+                        // WPA passphrases keep their spaces. A hidden network may be open.
+                        if k.text.len() < 8 && !(hidden && k.text.is_empty()) {
                             self.flash("Wi-Fi passwords have at least 8 characters");
                             return Effect::None;
                         }
                         let password = std::mem::take(&mut k.text);
                         self.keyboard = None;
-                        self.wifi_typed = Some((ssid.clone(), password.clone()));
-                        Effect::WifiConnect { ssid, password }
+                        self.wifi_typed = Some(crate::selects::TypedJoin {
+                            ssid: ssid.clone(),
+                            password: password.clone(),
+                            hidden,
+                        });
+                        Effect::WifiConnect {
+                            ssid,
+                            password,
+                            hidden,
+                        }
                     }
                     Purpose::LastFmUser => {
                         if text.is_empty() {

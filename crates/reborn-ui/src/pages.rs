@@ -884,6 +884,8 @@ fn wifi(ui: &Ui) -> Page {
         };
         rows.push(disabled(row(&n.ssid, &key, state), n.secured.is_some()));
     }
+    // A network that is not broadcast never shows above (Y2Reborn #61).
+    rows.push(row("Other Network…", "wifi_other", ""));
     let scanning = w.scan.active();
     rows.push(disabled(
         row(

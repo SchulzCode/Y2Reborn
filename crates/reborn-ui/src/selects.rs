@@ -1,6 +1,13 @@
 //! Selecting on the radio, settings, Bluetooth and Wi-Fi screens, and playing what is chosen.
 use crate::*;
 
+/// A network the user typed a password for: its keyboard reopens with it after a wrong password.
+pub(crate) struct TypedJoin {
+    pub ssid: String,
+    pub password: String,
+    pub hidden: bool,
+}
+
 impl Ui {
     /// The Brightness card while it is adjusted: the wheel moves it in 5 % steps, Select or Back
     /// ends (Y2Linux #74: Select only cycled 20 % steps). `None` leaves the action to the screen.
@@ -272,6 +279,10 @@ impl Ui {
             "scan_library" => Effect::ScanLibrary,
             "wifi_power" => Effect::WifiPower,
             "wifi_scan" => Effect::WifiScan,
+            "wifi_other" => {
+                self.keyboard = Some(keyboard::Keyboard::new(keyboard::Purpose::WifiName, ""));
+                Effect::None
+            }
             "bt_power" => Effect::BluetoothPower,
             "bt_scan" => Effect::BluetoothScan,
             _ => return None,
@@ -388,7 +399,7 @@ impl Ui {
             }
             // Its password failed: ask for the new one instead of trying it again.
             if let Some(ssid) = self.wifi_failed_ssid(id) {
-                self.open_wifi_keyboard(ssid, "");
+                self.open_wifi_keyboard(ssid, "", false);
                 return Effect::None;
             }
             return id.parse().map(Effect::WifiSaved).unwrap_or(Effect::None);
@@ -406,18 +417,19 @@ impl Ui {
             Some(false) => Effect::WifiConnect {
                 ssid: ssid.into(),
                 password: String::new(),
+                hidden: false,
             },
             Some(true) => {
-                self.open_wifi_keyboard(ssid.to_owned(), "");
+                self.open_wifi_keyboard(ssid.to_owned(), "", false);
                 Effect::None
             }
             None => Effect::None,
         }
     }
 
-    pub(crate) fn open_wifi_keyboard(&mut self, ssid: String, text: &str) {
+    pub(crate) fn open_wifi_keyboard(&mut self, ssid: String, text: &str, hidden: bool) {
         self.keyboard = Some(keyboard::Keyboard::new(
-            keyboard::Purpose::WifiPassword { ssid },
+            keyboard::Purpose::WifiPassword { ssid, hidden },
             text,
         ));
     }
@@ -449,16 +461,12 @@ impl Ui {
             return;
         }
         self.wifi_join_seen = join.attempt;
-        let typed = self
-            .wifi_typed
-            .take()
-            .filter(|(ssid, _)| *ssid == join.ssid)
-            .map(|(_, password)| password);
+        let typed = self.wifi_typed.take().filter(|t| t.ssid == join.ssid);
         match join.outcome {
             WifiJoinOutcome::Joined => self.flash(format!("Connected to {}", join.ssid)),
             WifiJoinOutcome::WrongPassword => match typed {
-                Some(password) => {
-                    self.open_wifi_keyboard(join.ssid.clone(), &password);
+                Some(typed) => {
+                    self.open_wifi_keyboard(join.ssid.clone(), &typed.password, typed.hidden);
                     if let Some(k) = self.keyboard.as_mut() {
                         k.note = "Wrong password".into();
                     }

@@ -396,7 +396,7 @@ pub struct Ui {
     pub keyboard: Option<keyboard::Keyboard>,
     /// The network and password of the join being checked, in memory only:
     /// a wrong password reopens the keyboard with it, to fix one letter.
-    wifi_typed: Option<(String, String)>,
+    wifi_typed: Option<selects::TypedJoin>,
     /// The last join outcome already said.
     wifi_join_seen: u64,
     /// Playlist files as read, and what the Playlist screens are doing.
