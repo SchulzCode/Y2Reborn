@@ -426,6 +426,7 @@ class Skin:
             add_heart(self.id, doc)
         add_sleep(self.id, doc)
         add_status(self.id, doc)
+        add_numbers(doc)
         (self.dir / "skin.json").write_text(json.dumps(doc, indent=1, ensure_ascii=False) + "\n")
 
 
@@ -604,6 +605,28 @@ def add_status(sid, doc):
             if e.get("image") == "stripes" and e.get("x") == 352:
                 e["if"] = "!charging & !bluetooth & !wifi"
     bar.extend(spec["bar"])
+
+
+def add_numbers(doc):
+    """Album songs show their track number where the row's cover would be, in the row label's font and
+    colour, as Reborn's own album page does (Y2Linux #75): every song of an album has the same cover."""
+    def walk(elements):
+        for i in range(len(elements) - 1, -1, -1):
+            e = elements[i]
+            if "elements" in e:
+                walk(e["elements"])
+            if e.get("type") != "art" or e.get("source") != "row":
+                continue
+            label = next((s for s in elements if "{label}" in s.get("text", "")), {})
+            number = {"type": "text", "if": "numbered", "x": e.get("x", 0), "y": e.get("y", 0),
+                      "w": e["size"], "h": e["size"], "text": "{track_number}", "align": "center"}
+            number.update({k: label[k] for k in ("font", "color") if k in label})
+            e["if"] = f"{e['if']} & !numbered" if "if" in e else "!numbered"
+            elements.insert(i + 1, number)
+    for body in doc["parts"].values():
+        walk(body)
+    for body in doc["screens"].values():
+        walk(body)
 
 # A station has no queue position: the station (title bars) or On Air instead.
 LIVE_TEXT = {

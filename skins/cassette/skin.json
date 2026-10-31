@@ -182,7 +182,20 @@
       "x": 6,
       "y": 4,
       "size": 26,
-      "source": "row"
+      "source": "row",
+      "if": "!numbered"
+     },
+     {
+      "type": "text",
+      "if": "numbered",
+      "x": 6,
+      "y": 4,
+      "w": 26,
+      "h": 26,
+      "text": "{track_number}",
+      "align": "center",
+      "font": "menu",
+      "color": "text"
      },
      {
       "type": "text",
@@ -356,7 +369,20 @@
       "x": 6,
       "y": 4,
       "size": 26,
-      "source": "row"
+      "source": "row",
+      "if": "!numbered"
+     },
+     {
+      "type": "text",
+      "if": "numbered",
+      "x": 6,
+      "y": 4,
+      "w": 26,
+      "h": 26,
+      "text": "{track_number}",
+      "align": "center",
+      "font": "menu",
+      "color": "cream"
      },
      {
       "type": "text",
@@ -494,7 +520,20 @@
       "x": 6,
       "y": 4,
       "size": 26,
-      "source": "row"
+      "source": "row",
+      "if": "!numbered"
+     },
+     {
+      "type": "text",
+      "if": "numbered",
+      "x": 6,
+      "y": 4,
+      "w": 26,
+      "h": 26,
+      "text": "{track_number}",
+      "align": "center",
+      "font": "menu",
+      "color": "text"
      },
      {
       "type": "text",
@@ -668,7 +707,20 @@
       "x": 6,
       "y": 4,
       "size": 26,
-      "source": "row"
+      "source": "row",
+      "if": "!numbered"
+     },
+     {
+      "type": "text",
+      "if": "numbered",
+      "x": 6,
+      "y": 4,
+      "w": 26,
+      "h": 26,
+      "text": "{track_number}",
+      "align": "center",
+      "font": "menu",
+      "color": "cream"
      },
      {
       "type": "text",
@@ -806,7 +858,20 @@
       "x": 6,
       "y": 4,
       "size": 26,
-      "source": "row"
+      "source": "row",
+      "if": "!numbered"
+     },
+     {
+      "type": "text",
+      "if": "numbered",
+      "x": 6,
+      "y": 4,
+      "w": 26,
+      "h": 26,
+      "text": "{track_number}",
+      "align": "center",
+      "font": "menu",
+      "color": "text"
      },
      {
       "type": "text",
@@ -980,7 +1045,20 @@
       "x": 6,
       "y": 4,
       "size": 26,
-      "source": "row"
+      "source": "row",
+      "if": "!numbered"
+     },
+     {
+      "type": "text",
+      "if": "numbered",
+      "x": 6,
+      "y": 4,
+      "w": 26,
+      "h": 26,
+      "text": "{track_number}",
+      "align": "center",
+      "font": "menu",
+      "color": "cream"
      },
      {
       "type": "text",

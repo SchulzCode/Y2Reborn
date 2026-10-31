@@ -170,6 +170,7 @@ Write `{name}` inside `text`:
 | Value | |
 | --- | --- |
 | `title` `artist` `album` `album_artist` `genre` `track_number` | the playing song; for a station the song it announces, its artist and the station with its country, as Reborn's own Now Playing |
+| `track_number` in a list row | that row's song's number (for `numbered` rows on the album page) |
 | `station` | the station playing (empty for a song) |
 | `elapsed` `remaining` `duration` | `1:23`, `-2:05`, `3:28` |
 | `queue_index` `queue_length` | for “3 of 12” |
@@ -206,7 +207,8 @@ hide the queue position), `favorite` (the song playing is in Favorites),
 `has_body`, `has_title`, `has_action`, `has_facts`, `interactive`.
 
 Inside list rows: `focused`, `disabled`, `toggle`, `on`, `check`, `checked`,
-`chevron`, `has_detail`, `row_art`, `current` (the playing song), `first`,
+`chevron`, `has_detail`, `row_art`, `numbered` (a song on the album page with a track number: show `{track_number}`
+there instead of its cover, as Reborn's own album page does), `current` (the playing song), `first`,
 `last`, `odd`.
 
 ### Icons

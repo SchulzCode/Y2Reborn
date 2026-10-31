@@ -174,7 +174,19 @@
       "x": 8,
       "y": 3,
       "size": 27,
-      "source": "row"
+      "source": "row",
+      "if": "!numbered"
+     },
+     {
+      "type": "text",
+      "if": "numbered",
+      "x": 8,
+      "y": 3,
+      "w": 27,
+      "h": 27,
+      "text": "{track_number}",
+      "align": "center",
+      "font": "menu"
      },
      {
       "type": "text",
@@ -317,7 +329,20 @@
       "x": 8,
       "y": 3,
       "size": 27,
-      "source": "row"
+      "source": "row",
+      "if": "!numbered"
+     },
+     {
+      "type": "text",
+      "if": "numbered",
+      "x": 8,
+      "y": 3,
+      "w": 27,
+      "h": 27,
+      "text": "{track_number}",
+      "align": "center",
+      "font": "menu",
+      "color": "white"
      },
      {
       "type": "text",

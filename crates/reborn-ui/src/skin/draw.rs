@@ -139,6 +139,10 @@ impl Scene<'_> {
             Flag::RowArt => {
                 row.is_some_and(|r| r.item.art.is_some() || self.row_station(r).is_some())
             }
+            // A song of the album shown, as Reborn's own album page numbers it (Y2Linux #75).
+            Flag::Numbered => {
+                m.screen == Screen::Album && self.row_song(row).is_some_and(|t| t.track > 0)
+            }
             Flag::Current => row.is_some_and(|r| r.current),
             Flag::First => row.is_some_and(|r| r.index == 0),
             Flag::Last => row.is_some_and(|r| r.index + 1 == r.count),
@@ -217,7 +221,10 @@ impl Scene<'_> {
                 })
                 .unwrap_or_default(),
             Var::Duration => track(|t| components::time(t.duration_ms)),
-            Var::TrackNumber => t
+            // In a row its song's number, elsewhere the playing song's.
+            Var::TrackNumber => self
+                .row_song(row)
+                .or(t)
                 .filter(|t| t.track > 0)
                 .map(|t| t.track.to_string())
                 .unwrap_or_default(),
@@ -394,6 +401,12 @@ impl Scene<'_> {
                 None => (vec![], 0, None, 0),
             },
         }
+    }
+
+    /// The song a list row stands for.
+    fn row_song(&self, row: Option<&Row>) -> Option<&Track> {
+        row.and_then(|r| row_track(r.item, self.tracks))
+            .map(|(_, t)| t)
     }
 
     fn row_current(&self, item: &Item) -> bool {

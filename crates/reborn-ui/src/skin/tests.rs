@@ -665,3 +665,39 @@ fn indicators_show_charging_and_the_radios_right_to_left_and_close_up() {
         );
     }
 }
+
+#[test]
+fn album_songs_are_numbered_in_skins_as_on_reborns_album_page() {
+    // Y2Linux #75: skins showed each album song with the album's cover and no number.
+    let row = r##"[{"type": "text", "if": "numbered", "x": 0, "y": 0, "w": 60, "h": 30, "text": "#{track_number}"},
+                 {"type": "text", "if": "!numbered", "x": 60, "y": 0, "w": 300, "h": 30, "text": "{label}"}]"##;
+    let list = format!(
+        r##"{{"type": "list", "x": 0, "y": 0, "w": 480, "rows": 8, "row_height": 30, "row": {row}, "focused": {row}}}"##
+    );
+    let screens = format!(r##"{{"album": [{list}], "list": [{list}]}}"##);
+    let ui = skinned(compile_test(&screens).unwrap());
+    let mut tracks = library(3);
+    for (i, t) in tracks.iter_mut().enumerate() {
+        t.track = i as u32 + 1;
+        t.album_artist = "Artist".into();
+    }
+    let mut m = model(Screen::Album);
+    m.navigation.filter = "album:Artist\u{1f}Album".into();
+    let text = crate::tests::drawn_text(&ui.draw(&m, &tracks, false));
+    assert!(text.contains("#1") && text.contains("#3"), "{text}");
+    assert!(
+        text.contains("Play"),
+        "Play and Shuffle keep their label: {text}"
+    );
+    // Songs is not an album: its rows keep the label.
+    m.screen = Screen::Tracks;
+    m.navigation.filter.clear();
+    let text = crate::tests::drawn_text(&ui.draw(&m, &tracks, false));
+    assert!(!text.contains('#') && text.contains("Song 01"), "{text}");
+    for json in SHIPPED {
+        assert!(
+            json.contains(r#""if": "numbered""#),
+            "a shipped skin without numbers"
+        );
+    }
+}
