@@ -110,13 +110,19 @@ const STEP: f32 = 44.;
 const MAX_ANGLE: f32 = 1.2; // radians, ≈69°
 const DEPTH: f32 = 110.;
 
-pub fn cover_corners(d: f32) -> [[f32; 2]; 4] {
-    let near = d.abs().min(1.);
+/// Where the centre of the cover `d` places from the middle stands, in screen pixels.
+pub fn centre_x(d: f32) -> f32 {
     let x = if d.abs() <= 1. {
         d * FIRST
     } else {
         d.signum() * (FIRST + (d.abs() - 1.) * STEP)
     };
+    CENTRE_X + x
+}
+
+pub fn cover_corners(d: f32) -> [[f32; 2]; 4] {
+    let near = d.abs().min(1.);
+    let x = centre_x(d) - CENTRE_X;
     // Left covers face right: their outer (left) edge comes toward the viewer.
     let angle = -d.clamp(-1., 1.) * MAX_ANGLE;
     let (sin, cos) = angle.sin_cos();
