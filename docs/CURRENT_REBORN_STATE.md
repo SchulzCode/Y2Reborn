@@ -1,6 +1,16 @@
 # Current Reborn state on the Y2
 
-## 1.0.0-beta.9.2.3 — Y2Linux 1.0 Beta 9.2.3 (Baseline 194), 2026-10-31 (latest): album years, defaults from the issues
+## 1.0.0-beta.9.2.4 — Y2Linux 1.0 Beta 9.2.4 (Baseline 195), 2026-10-31 (latest): own orders, wheel click
+
+Published as `baseline-195` (Reborn `8ecff51`; sequence 12000). Home order under Customize > Home Menu and playlist
+order through the playlist menu's Move (#53, #33): settings `home_order`/`playlist_order`, reborn-core `home.rs`,
+reborn-ui `reorder.rs` (`Carry`, `mode_input`). Customize > Wheel Click Off/When Paused/Always (#67): `WheelClick`,
+`Playback::click`; the sink thread mixes a 4 ms tick into the wired sink only (never Bluetooth, only with a sink
+open), taking back unplayed frames (`AudioSink::rewind`, `rb_sink_rewind`) and writing them again from
+`playback/click.rs` `Tail`; held, it plays the tick over silence and pauses again 1 s later. Cover Flow text travels
+with its cover (#71, `flow::centre_x`). Details: Y2Linux `docs/validation/Y2-LINUX-1.0-BETA-9.2.4.md`.
+
+## 1.0.0-beta.9.2.3 — Y2Linux 1.0 Beta 9.2.3 (Baseline 194), 2026-10-31: album years, defaults from the issues
 
 Published as `baseline-194` (Reborn `9a50d47`; sequence 11900). `Track.year` from the date tag (additive column,
 `METADATA_REVISION` 5, `AlbumTotal`, `year_key`): an artist's albums oldest first, years in album rows and lines
