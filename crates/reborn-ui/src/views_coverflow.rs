@@ -7,7 +7,7 @@ use crate::{
     flow::{self, TransitionKind},
     screens::screen_title,
     text::{self, Face},
-    theme::{alpha, color, mix, HEIGHT, WIDTH},
+    theme::{alpha, color, fade, mix, HEIGHT, WIDTH},
     Ui,
 };
 use reborn_core::{AppModel, Screen, Track};
@@ -139,28 +139,32 @@ pub fn albums(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interacti
         }
     }
     if let Some(row) = ui.row_at(m, tracks, focus) {
+        // The album's text rides under its cover while the row glides, fading as it travels
+        // (Y2Reborn #71); at rest it stands in the middle.
+        let d = focus as f32 - pos;
+        let (x, shown) = (flow::centre_x(d), 1. - d.abs().min(1.) * 0.6);
         c.text_center(
-            240.,
+            x,
             270. + Face::S20.mid_offset(),
             &text::fit(Face::S20, &row.label, 440.),
             Face::S20,
-            color::TEXT,
+            fade(color::TEXT, shown),
         );
         c.text_center(
-            240.,
+            x,
             298. + Face::R15.mid_offset(),
             &text::fit(Face::R15, &row.secondary, 440.),
             Face::R15,
-            color::MUTED,
+            fade(color::MUTED, shown),
         );
         // An album's songs and length; a book's progress is its own line.
         if row.key.starts_with("album:") {
             c.text_center(
-                240.,
+                x,
                 324. + Face::R13.mid_offset(),
                 &ui.album_detail(m, tracks, &row.key),
                 Face::R13,
-                color::DIM,
+                fade(color::DIM, shown),
             );
         }
     }

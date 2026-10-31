@@ -3128,6 +3128,37 @@ fn cover_flow_glides_opens_with_a_flight_and_asks_for_the_sharp_cover_at_rest() 
 }
 
 #[test]
+fn cover_flow_text_rides_under_its_cover_while_the_row_glides() {
+    // Y2Reborn #71: the album's text moves with its cover instead of standing still.
+    let title_x = |quads: &[reborn_graphics::Quad]| {
+        let glyphs: Vec<_> = quads
+            .iter()
+            .filter(|q| {
+                matches!(q.tex, reborn_graphics::Tex::Font(_)) && (258. ..284.).contains(&q.y)
+            })
+            .collect();
+        glyphs.iter().map(|q| q.x + q.w / 2.).sum::<f32>() / glyphs.len() as f32
+    };
+    let ui = radios();
+    let mut m = app(Screen::Albums);
+    let tracks = m.library.tracks.clone();
+    ui.draw(&m, &tracks, false);
+    m.navigation.focus = 1;
+    let gliding = title_x(&ui.draw(&m, &tracks, false));
+    assert!(
+        gliding > 300.,
+        "the new album's text comes in with its cover: {gliding}"
+    );
+    let mut ui = radios();
+    ui.motion_fixed = true;
+    let resting = title_x(&ui.draw(&m, &tracks, false));
+    assert!(
+        (resting - 240.).abs() < 12.,
+        "at rest in the middle: {resting}"
+    );
+}
+
+#[test]
 fn album_detail_shows_short_albums_in_seconds_and_follows_the_library() {
     let ui = radios();
     let m = app(Screen::Albums);
