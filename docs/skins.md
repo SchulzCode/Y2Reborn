@@ -178,7 +178,8 @@ Write `{name}` inside `text`:
 | `sleep` | a running sleep timer as Now Playing says it: `Sleeps in 23 min`, `Sleeps after song`; empty without one (Beta 8.37) |
 | `screen` | the screen's title (empty on Home) |
 | `battery` `volume` | numbers 0–100 |
-| `clock` | the time in the chosen time zone (`21:41`, or `9:41` where a 12-hour clock is usual); empty until the player's time is set |
+| `clock` | the time in the chosen time zone (`21:41`, or `9:41 PM` where a 12-hour clock is usual); empty until the player's time is set |
+| `date` | the short date in the chosen time zone (`Sat 31 Oct`, or `Sat, Oct 31` where a 12-hour clock is usual); empty until the player's time is set |
 | `status` | a page's status line (Wi-Fi, Bluetooth, pickers) |
 | `page_title` `page_body` | a page's heading and explanation |
 | `empty_title` `empty_body` `empty_action` | what an empty list says |

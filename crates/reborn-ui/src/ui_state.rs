@@ -419,7 +419,12 @@ impl Ui {
 
     /// The status-bar clock in the chosen zone, once the system time is set.
     pub fn clock(&self, m: &AppModel) -> Option<String> {
-        time_zone::text(self, m)
+        time_zone::read(self, m).map(|clock| clock.time)
+    }
+
+    /// The short date skins show (`{date}`), once the system time is set.
+    pub fn date(&self, m: &AppModel) -> Option<String> {
+        time_zone::read(self, m).map(|clock| clock.date)
     }
 
     /// The device a Bluetooth request is waiting on, with its operation.

@@ -164,16 +164,35 @@ pub fn civil(seconds: i64) -> Local {
     }
 }
 
-/// "9:41" (12-hour) or "21:41".
+/// "9:41 PM" (12-hour) or "21:41". The status bar showed 12-hour times without
+/// AM or PM (Y2Linux #72).
 pub fn clock_text(t: &Local, twelve_hour: bool) -> String {
     if twelve_hour {
         let h = match t.hour % 12 {
             0 => 12,
             h => h,
         };
-        format!("{h}:{:02}", t.minute)
+        let half = if t.hour < 12 { "AM" } else { "PM" };
+        format!("{h}:{:02} {half}", t.minute)
     } else {
         format!("{:02}:{:02}", t.hour, t.minute)
+    }
+}
+
+/// The short date skins show (`{date}`): "Sat 31 Oct", or "Sat, Oct 31" where
+/// the zone reads a 12-hour clock.
+pub fn date_text(t: &Local, twelve_hour: bool) -> String {
+    const DAYS: [&str; 7] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+    const MONTHS: [&str; 12] = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ];
+    // 1970-01-01 (day 0) was a Thursday.
+    let weekday = DAYS[(days_from(t.year, t.month, t.day) + 4).rem_euclid(7) as usize];
+    let month = MONTHS[usize::from(t.month.clamp(1, 12)) - 1];
+    if twelve_hour {
+        format!("{weekday}, {month} {}", t.day)
+    } else {
+        format!("{weekday} {} {month}", t.day)
     }
 }
 
@@ -387,8 +406,26 @@ mod tests {
         assert_eq!(ny.offset_at(at(2026, 11, 1, 6, 0)), -5 * 3600);
         let t = ny.local(at(2026, 10, 12, 3, 31));
         assert_eq!((t.day, t.hour, t.minute), (11, 23, 31));
-        assert_eq!(clock_text(&t, true), "11:31");
+        assert_eq!(clock_text(&t, true), "11:31 PM");
         assert_eq!(clock_text(&t, false), "23:31");
+        assert_eq!(date_text(&t, true), "Sun, Oct 11");
+        assert_eq!(date_text(&t, false), "Sun 11 Oct");
+    }
+
+    #[test]
+    fn twelve_hour_clock_reads_midnight_and_noon_as_twelve() {
+        let at = |hour| Local {
+            year: 2026,
+            month: 10,
+            day: 31,
+            hour,
+            minute: 5,
+        };
+        assert_eq!(clock_text(&at(0), true), "12:05 AM");
+        assert_eq!(clock_text(&at(11), true), "11:05 AM");
+        assert_eq!(clock_text(&at(12), true), "12:05 PM");
+        assert_eq!(clock_text(&at(0), false), "00:05");
+        assert_eq!(date_text(&at(0), false), "Sat 31 Oct");
     }
 
     #[test]

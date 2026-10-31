@@ -23,21 +23,33 @@ pub(crate) fn rule(m: &AppModel) -> Rule {
     clock::zone(&m.settings.time_zone).unwrap_or(Rule::UTC)
 }
 
-/// The status-bar clock, e.g. "9:41" or "21:41". Made once a minute: every
-/// other call (each main-loop pass, each skin element) reuses it.
-pub(crate) fn text(ui: &Ui, m: &AppModel) -> Option<String> {
+/// The status-bar clock ("9:41 PM" or "21:41") and the skins' short date.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Clock {
+    pub time: String,
+    pub date: String,
+}
+
+/// The clock in the chosen zone, once the system time is set. Made once a
+/// minute: every other call (each main-loop pass, each skin element) reuses it.
+pub(crate) fn read(ui: &Ui, m: &AppModel) -> Option<Clock> {
     let now = now(ui);
     let zone = &m.settings.time_zone;
     let minute = now.div_euclid(60);
-    if let Some((z, at, text)) = &*ui.clock_cache.borrow() {
+    if let Some((z, at, clock)) = &*ui.clock_cache.borrow() {
         if z == zone && *at == minute {
-            return text.clone();
+            return clock.clone();
         }
     }
-    let text = (now >= CLOCK_SET_AFTER)
-        .then(|| clock::clock_text(&rule(m).local(now), clock::twelve_hour(zone)));
-    *ui.clock_cache.borrow_mut() = Some((zone.clone(), minute, text.clone()));
-    text
+    let clock = (now >= CLOCK_SET_AFTER).then(|| {
+        let (local, twelve) = (rule(m).local(now), clock::twelve_hour(zone));
+        Clock {
+            time: clock::clock_text(&local, twelve),
+            date: clock::date_text(&local, twelve),
+        }
+    });
+    *ui.clock_cache.borrow_mut() = Some((zone.clone(), minute, clock.clone()));
+    clock
 }
 
 /// The Display row's value: the city, "Automatic · city", or UTC.
@@ -206,14 +218,17 @@ mod tests {
             ..Default::default()
         };
         let mut m = AppModel::default();
-        assert_eq!(text(&ui, &m).as_deref(), Some("03:31"));
+        assert_eq!(ui.clock(&m).as_deref(), Some("03:31"));
+        assert_eq!(ui.date(&m).as_deref(), Some("Mon 12 Oct"));
         m.settings.time_zone = "America/New_York".into();
-        assert_eq!(text(&ui, &m).as_deref(), Some("11:31"));
+        // Y2Linux #72: a 12-hour clock says AM or PM; its date reads month first.
+        assert_eq!(ui.clock(&m).as_deref(), Some("11:31 PM"));
+        assert_eq!(ui.date(&m).as_deref(), Some("Sun, Oct 11"));
         m.settings.time_zone = "Europe/Berlin".into();
-        assert_eq!(text(&ui, &m).as_deref(), Some("05:31"));
+        assert_eq!(ui.clock(&m).as_deref(), Some("05:31"));
         m.settings.time_zone = "Mars/Olympus".into();
-        assert_eq!(text(&ui, &m).as_deref(), Some("03:31"));
+        assert_eq!(ui.clock(&m).as_deref(), Some("03:31"));
         ui.clock_fixed = Some(86_400);
-        assert_eq!(text(&ui, &m), None);
+        assert_eq!(read(&ui, &m), None);
     }
 }

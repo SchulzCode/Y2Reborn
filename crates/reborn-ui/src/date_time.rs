@@ -65,19 +65,9 @@ fn month_name(month: u8) -> &'static str {
     MONTHS[usize::from(month.clamp(1, 12)) - 1]
 }
 
-/// "14:05", or "2:05 PM" where the zone reads a 12-hour clock.
-fn time_text(t: &Local, twelve: bool) -> String {
-    let time = clock::clock_text(t, twelve);
-    match (twelve, t.hour < 12) {
-        (true, true) => format!("{time} AM"),
-        (true, false) => format!("{time} PM"),
-        (false, _) => time,
-    }
-}
-
 /// "22 Oct 2026, 14:05", or "Oct 22, 2026, 2:05 PM" with a 12-hour clock.
 fn text(t: &Local, twelve: bool) -> String {
-    let (month, time) = (&month_name(t.month)[..3], time_text(t, twelve));
+    let (month, time) = (&month_name(t.month)[..3], clock::clock_text(t, twelve));
     if twelve {
         format!("{month} {}, {}, {time}", t.day, t.year)
     } else {
@@ -183,7 +173,7 @@ pub(crate) fn rows(ui: &Ui, m: &AppModel) -> Vec<Item> {
             ))
         })
         .collect();
-    rows.push(Item::new("Time", "date_field:hour").with_secondary(time_text(&t, twelve)));
+    rows.push(Item::new("Time", "date_field:hour").with_secondary(clock::clock_text(&t, twelve)));
     rows.push(Item::new("Set Date & Time", "date_set").with_kind(RowKind::Chevron));
     rows
 }

@@ -494,9 +494,9 @@ pub struct Ui {
     pub clock_fixed: Option<i64>,
     /// The status-bar clock as last drawn; a new minute redraws.
     clock_shown: Option<String>,
-    /// The clock text for (zone, minute): the zone's rule is looked up and
-    /// the text made once a minute, not on every pass of the main loop.
-    clock_cache: RefCell<Option<(String, i64, Option<String>)>>,
+    /// The clock and date texts for (zone, minute): the zone's rule is looked
+    /// up and the texts made once a minute, not on every pass of the main loop.
+    clock_cache: RefCell<Option<(String, i64, Option<time_zone::Clock>)>>,
     /// The time zone picker's rows for (zone, minute): several hundred
     /// zones parsed and sorted once, not on every frame.
     zone_rows: RefCell<Option<(String, i64, Vec<Item>)>>,
