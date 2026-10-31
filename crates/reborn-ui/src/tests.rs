@@ -1513,13 +1513,14 @@ fn customize_holds_how_reborn_behaves() {
         Effect::SetHaptics(reborn_core::Haptics::Off)
     );
     m.settings.haptics = reborn_core::Haptics::Off;
-    // #67: Off by default, Select steps When Paused, Always, Off.
+    // #67, #77: Off by default, Select switches On and Off.
     assert_eq!(row(&ui, &m, "wheel_click").unwrap().secondary, "Off");
     assert_eq!(
         select_key(&mut ui, &mut m, "wheel_click"),
-        Effect::SetWheelClick(reborn_core::WheelClick::WhenPaused)
+        Effect::SetWheelClick(reborn_core::WheelClick::On)
     );
-    m.settings.wheel_click = reborn_core::WheelClick::Always;
+    m.settings.wheel_click = reborn_core::WheelClick::On;
+    assert_eq!(row(&ui, &m, "wheel_click").unwrap().secondary, "On");
     assert_eq!(
         select_key(&mut ui, &mut m, "wheel_click"),
         Effect::SetWheelClick(reborn_core::WheelClick::Off)

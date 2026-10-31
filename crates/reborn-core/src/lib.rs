@@ -1156,7 +1156,7 @@ pub struct Settings {
     /// A tick of the vibration motor on each button press (#28).
     #[serde(default)]
     pub haptics: Haptics,
-    /// A click on each wheel step, through the headphones or the speaker (#67).
+    /// A click on each wheel step while paused, through the headphones or the speaker (#67, #77).
     #[serde(default)]
     pub wheel_click: WheelClick,
     /// Play on the internal speaker while no headphones are plugged in, as
@@ -1495,40 +1495,35 @@ impl Haptics {
         }
     }
 }
-/// The click on each wheel step (#67), mixed into the headphone or speaker
-/// output that is open: while a song plays or is paused, never on Bluetooth
-/// (its delay would part the click from the step). Off until chosen.
+/// The click on each wheel step (#67) while the music is paused (#77: never over the music), on
+/// the headphone or speaker output a paused song keeps open; never on Bluetooth (its delay would
+/// part the click from the step). Off until chosen. On keeps 9.2.4's name `when_paused`, so 9.2.4
+/// reads it after Restore Previous System; its `always` reads as On.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "snake_case")]
 pub enum WheelClick {
     #[default]
+    #[serde(rename = "off")]
     Off,
-    WhenPaused,
-    Always,
+    #[serde(rename = "when_paused", alias = "always")]
+    On,
 }
 impl WheelClick {
     pub fn label(self) -> &'static str {
         match self {
             Self::Off => "Off",
-            Self::WhenPaused => "When Paused",
-            Self::Always => "Always",
+            Self::On => "On",
         }
     }
-    /// The next choice, as one press on its row steps through them.
+    /// The other choice, as one press on its row switches.
     pub fn next(self) -> Self {
         match self {
-            Self::Off => Self::WhenPaused,
-            Self::WhenPaused => Self::Always,
-            Self::Always => Self::Off,
+            Self::Off => Self::On,
+            Self::On => Self::Off,
         }
     }
     /// Whether a wheel step clicks while the music is `playing` or not.
     pub fn clicks(self, playing: bool) -> bool {
-        match self {
-            Self::Off => false,
-            Self::WhenPaused => !playing,
-            Self::Always => true,
-        }
+        self == Self::On && !playing
     }
 }
 fn default_true() -> bool {
@@ -2399,6 +2394,22 @@ mod radio_station_tests {
 mod tests {
     use super::*;
     use serde_json::json;
+    /// #77: 9.2.4's three wheel-click choices read as Off and On, and On is written under 9.2.4's
+    /// `when_paused`, so 9.2.4 still reads it after Restore Previous System.
+    #[test]
+    fn wheel_click_settings_read_and_write_as_9_2_4_did() {
+        let read = |value: &str| serde_json::from_value::<WheelClick>(json!(value)).unwrap();
+        assert_eq!(read("off"), WheelClick::Off);
+        assert_eq!(read("when_paused"), WheelClick::On);
+        assert_eq!(read("always"), WheelClick::On);
+        assert_eq!(
+            serde_json::to_value(WheelClick::On).unwrap(),
+            json!("when_paused")
+        );
+        assert_eq!(serde_json::to_value(WheelClick::Off).unwrap(), json!("off"));
+        assert!(WheelClick::On.clicks(false) && !WheelClick::On.clicks(true));
+        assert!(!WheelClick::Off.clicks(false));
+    }
     #[test]
     fn s24_le_has_24_valid_bits_in_a_four_byte_stereo_frame() {
         assert_eq!(PcmFormat::S24LE.bytes_per_sample(), 4);

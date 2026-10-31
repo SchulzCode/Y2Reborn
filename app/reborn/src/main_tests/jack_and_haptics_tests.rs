@@ -70,16 +70,15 @@ fn haptics_tick_for_presses_and_held_seek_steps_only() {
     ));
 }
 
-/// #67: wheel steps click on a lit screen as the setting says; presses and
-/// the dark never do.
+/// #67, #77: wheel steps click on a lit screen while the music is not playing, when switched on;
+/// presses and the dark never do.
 #[test]
-fn wheel_steps_click_as_the_setting_says() {
+fn wheel_steps_click_when_on_and_the_music_is_not_playing() {
     let step = NormalizedInput::WheelCounterClockwise(1);
-    assert!(wheel_clicks(true, step, WheelClick::Always, true));
-    assert!(wheel_clicks(true, step, WheelClick::WhenPaused, false));
-    assert!(!wheel_clicks(true, step, WheelClick::WhenPaused, true));
+    assert!(wheel_clicks(true, step, WheelClick::On, false));
+    assert!(!wheel_clicks(true, step, WheelClick::On, true));
     assert!(!wheel_clicks(true, step, WheelClick::Off, false));
-    assert!(!wheel_clicks(false, step, WheelClick::Always, false));
+    assert!(!wheel_clicks(false, step, WheelClick::On, false));
     let press = NormalizedInput::Press(PhysicalControl::Select);
-    assert!(!wheel_clicks(true, press, WheelClick::Always, false));
+    assert!(!wheel_clicks(true, press, WheelClick::On, false));
 }

@@ -1562,13 +1562,15 @@ fn live_radio_station_decodes() {
     }
 }
 
-/// A wired device for the wheel click (#67): what it will play (the left channel), how far it
-/// played (128 frames per write unless paused, as real time would), and its pauses.
+/// The wired device as the wheel click meets it (#67, #77): what it will play (the left channel),
+/// how far it played (128 frames per write, as real time would), and its pauses. Like the Y2's
+/// codec it has no pause of its own: a pause plays out what is queued and stops the stream, which
+/// refuses writes ("File descriptor in bad state") until it is started again.
 #[derive(Clone, Default)]
 struct ClickDevice {
     out: Arc<Mutex<Vec<i32>>>,
     played: Arc<AtomicU64>,
-    paused: Arc<AtomicBool>,
+    stopped: Arc<AtomicBool>,
     pauses: Arc<Mutex<Vec<bool>>>,
 }
 impl AudioSink for ClickDevice {
@@ -1582,13 +1584,14 @@ impl AudioSink for ClickDevice {
         .parameters()
     }
     fn write(&mut self, s: &[u8]) -> Result<usize, String> {
+        if self.stopped.load(Ordering::Relaxed) {
+            return Err("ALSA -77: File descriptor in bad state".into());
+        }
         thread::sleep(Duration::from_millis(2));
         let mut out = self.out.lock().unwrap();
-        if !self.paused.load(Ordering::Relaxed) {
-            let played = (self.played.load(Ordering::Relaxed) + 128).min(out.len() as u64);
-            self.played.store(played, Ordering::Relaxed);
-        }
-        let room = 4096 - (out.len() as u64 - self.played.load(Ordering::Relaxed)) as usize;
+        let played = (self.played.load(Ordering::Relaxed) + 128).min(out.len() as u64);
+        self.played.store(played, Ordering::Relaxed);
+        let room = 4096 - (out.len() as u64 - played) as usize;
         let n = (s.len() / 8).min(512).min(room);
         for frame in s.as_chunks::<8>().0.iter().take(n) {
             out.push(i32::from_le_bytes(frame[..4].try_into().unwrap()));
@@ -1602,11 +1605,19 @@ impl AudioSink for ClickDevice {
         self.out.lock().unwrap().len() as u64 - self.played.load(Ordering::Relaxed)
     }
     fn pause(&mut self, on: bool) -> Result<(), String> {
-        self.paused.store(on, Ordering::Relaxed);
+        if on {
+            // Drained: what was queued plays out.
+            let queued = self.out.lock().unwrap().len() as u64;
+            self.played.store(queued, Ordering::Relaxed);
+        }
+        self.stopped.store(on, Ordering::Relaxed);
         self.pauses.lock().unwrap().push(on);
         Ok(())
     }
     fn rewind(&mut self, frames: u64) -> Result<u64, String> {
+        if self.stopped.load(Ordering::Relaxed) {
+            return Err("ALSA -77: File descriptor in bad state".into());
+        }
         let back = frames.min(self.delay());
         let mut out = self.out.lock().unwrap();
         let keep = out.len() - back as usize;
@@ -1648,10 +1659,10 @@ fn played_with(name: &str, during: impl FnOnce(&mut Playback, &ClickDevice)) -> 
     out
 }
 
-/// #67: a click while music plays rides on the music without losing or repeating any of it; a
-/// click while paused plays over silence, and the music goes on where it paused.
+/// #67, #77: clicks while paused play over silence and the music goes on where it paused; a click
+/// asked for while the music plays is not mixed into it.
 #[test]
-fn wheel_clicks_neither_lose_nor_repeat_music() {
+fn wheel_clicks_sound_while_paused_and_never_over_the_music() {
     let plain = played_with("plain", |_, _| {});
     assert!(plain.len() > 40_000, "{}", plain.len());
     let playing = played_with("playing", |p, _| {
@@ -1660,10 +1671,7 @@ fn wheel_clicks_neither_lose_nor_repeat_music() {
             thread::sleep(Duration::from_millis(40));
         }
     });
-    assert_eq!(playing.len(), plain.len(), "nothing lost or repeated");
-    let changed = plain.iter().zip(&playing).filter(|(a, b)| a != b).count();
-    assert!(changed > 0 && changed <= 3 * 176, "{changed}");
-
+    assert_eq!(playing, plain, "the music as it is");
     let paused = played_with("paused", |p, device| {
         p.hold(true);
         while device.pauses.lock().unwrap().is_empty() {
@@ -1672,7 +1680,7 @@ fn wheel_clicks_neither_lose_nor_repeat_music() {
         p.click();
         thread::sleep(Duration::from_millis(100));
         p.click();
-        // LINGER after the last click the stream pauses again.
+        // LINGER after the last click the stream stops again.
         thread::sleep(LINGER + Duration::from_millis(300));
         p.hold(false);
         while device.pauses.lock().unwrap().len() < 4 {
@@ -1680,8 +1688,6 @@ fn wheel_clicks_neither_lose_nor_repeat_music() {
         }
         assert_eq!(*device.pauses.lock().unwrap(), [true, false, true, false]);
     });
-    // The device's clock moves only on writes, so the stretch is what was written past the
-    // queue the resume dropped: at least the clicks.
     let silence = inserted_stretch(&paused, &plain);
     assert!(silence >= 176, "the clicks played over silence: {silence}");
 }
