@@ -1,6 +1,12 @@
 # Current Reborn state on the Y2
 
-## 1.0.0-beta.9.2.4 — Y2Linux 1.0 Beta 9.2.4 (Baseline 195), 2026-10-31 (latest): own orders, wheel click
+## 1.0.0-beta.9.2.5 — Y2Linux 1.0 Beta 9.2.5 (Baseline 196), 2026-10-31 (latest): platform Wi-Fi fix only
+
+Published as `baseline-196` (Reborn `f45f6bc`; sequence 12100). No Reborn change besides the version: the platform
+now switches Wi-Fi off and on when scans keep missing the saved network after a wake (F60, Y2Linux #83). Reborn shows
+Wi-Fi Off for a moment then; its Wi-Fi preference (`/data/network/enabled`) is untouched.
+
+## 1.0.0-beta.9.2.4 — Y2Linux 1.0 Beta 9.2.4 (Baseline 195), 2026-10-31: own orders, wheel click
 
 Published as `baseline-195` (Reborn `8ecff51`; sequence 12000). Home order under Customize > Home Menu and playlist
 order through the playlist menu's Move (#53, #33): settings `home_order`/`playlist_order`, reborn-core `home.rs`,
