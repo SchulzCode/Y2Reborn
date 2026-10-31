@@ -129,7 +129,7 @@
    {
     "type": "text",
     "if": "has_clock",
-    "x": 316,
+    "x": 248,
     "y": 0,
     "w": 60,
     "h": 33,
@@ -137,6 +137,16 @@
     "font": "small",
     "color": "orange",
     "align": "right"
+   },
+   {
+    "type": "indicators",
+    "x": 380,
+    "y": 10,
+    "size": 14,
+    "gap": 4,
+    "color": "text",
+    "dim": "muted",
+    "charge": "success"
    }
   ],
   "title": [
@@ -144,7 +154,7 @@
     "type": "text",
     "x": 22,
     "y": 0,
-    "w": 340,
+    "w": 286,
     "h": 33,
     "text": "{screen}",
     "font": "bartitle",
@@ -157,7 +167,7 @@
     "type": "text",
     "x": 22,
     "y": 0,
-    "w": 286,
+    "w": 222,
     "h": 33,
     "text": "{screen}",
     "font": "bartitle",

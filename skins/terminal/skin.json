@@ -90,6 +90,28 @@
     "color": "text",
     "align": "right",
     "if": "has_clock"
+   },
+   {
+    "type": "indicators",
+    "x": 344,
+    "y": 7,
+    "size": 14,
+    "gap": 4,
+    "color": "text",
+    "dim": "text/45",
+    "charge": "success",
+    "if": "has_clock"
+   },
+   {
+    "type": "indicators",
+    "x": 424,
+    "y": 7,
+    "size": 14,
+    "gap": 4,
+    "color": "text",
+    "dim": "text/45",
+    "charge": "success",
+    "if": "!has_clock"
    }
   ],
   "title": [
@@ -97,7 +119,7 @@
     "type": "text",
     "x": 10,
     "y": 0,
-    "w": 360,
+    "w": 340,
     "h": 29,
     "text": "reborn:~/{screen} $",
     "font": "bartitle",
@@ -108,7 +130,7 @@
     "type": "text",
     "x": 10,
     "y": 0,
-    "w": 280,
+    "w": 258,
     "h": 29,
     "text": "reborn:~/{screen} $",
     "font": "bartitle",

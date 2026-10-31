@@ -45,6 +45,25 @@ impl Files for Mem {
 }
 
 const CLASSIC: &str = include_str!("../../../../skins/classic/skin.json");
+/// Every shipped skin's manifest.
+const SHIPPED: [&str; 16] = [
+    include_str!("../../../../skins/big-type/skin.json"),
+    include_str!("../../../../skins/bunny-bow/skin.json"),
+    include_str!("../../../../skins/cassette/skin.json"),
+    include_str!("../../../../skins/classic/skin.json"),
+    include_str!("../../../../skins/mini-blue/skin.json"),
+    include_str!("../../../../skins/mini-gold/skin.json"),
+    include_str!("../../../../skins/mini-green/skin.json"),
+    include_str!("../../../../skins/mini-pink/skin.json"),
+    include_str!("../../../../skins/mini-silver/skin.json"),
+    include_str!("../../../../skins/nano-glass/skin.json"),
+    include_str!("../../../../skins/neon/skin.json"),
+    include_str!("../../../../skins/paper/skin.json"),
+    include_str!("../../../../skins/terminal/skin.json"),
+    include_str!("../../../../skins/walkman/skin.json"),
+    include_str!("../../../../skins/winamp/skin.json"),
+    include_str!("../../../../skins/zune/skin.json"),
+];
 
 fn classic_files() -> Mem {
     macro_rules! file {
@@ -587,24 +606,7 @@ fn skins_say_when_the_sleep_timer_runs() {
         "{}",
         text(&ui, &m)
     );
-    for json in [
-        include_str!("../../../../skins/big-type/skin.json"),
-        include_str!("../../../../skins/bunny-bow/skin.json"),
-        include_str!("../../../../skins/cassette/skin.json"),
-        include_str!("../../../../skins/classic/skin.json"),
-        include_str!("../../../../skins/mini-blue/skin.json"),
-        include_str!("../../../../skins/mini-gold/skin.json"),
-        include_str!("../../../../skins/mini-green/skin.json"),
-        include_str!("../../../../skins/mini-pink/skin.json"),
-        include_str!("../../../../skins/mini-silver/skin.json"),
-        include_str!("../../../../skins/nano-glass/skin.json"),
-        include_str!("../../../../skins/neon/skin.json"),
-        include_str!("../../../../skins/paper/skin.json"),
-        include_str!("../../../../skins/terminal/skin.json"),
-        include_str!("../../../../skins/walkman/skin.json"),
-        include_str!("../../../../skins/winamp/skin.json"),
-        include_str!("../../../../skins/zune/skin.json"),
-    ] {
+    for json in SHIPPED {
         assert!(
             json.contains("{output} · {sleep}"),
             "a shipped skin without the timer"
@@ -656,4 +658,10 @@ fn indicators_show_charging_and_the_radios_right_to_left_and_close_up() {
     // Not charging: Bluetooth moves into the bolt's place.
     m.platform.battery.charging = reborn_core::platform::ChargingState::OnBattery;
     assert!((centre(&ui, &m, on).unwrap() - 432.).abs() < 2.);
+    for json in SHIPPED {
+        assert!(
+            json.contains(r#""type": "indicators""#),
+            "a shipped skin without status icons"
+        );
+    }
 }

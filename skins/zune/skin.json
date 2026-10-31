@@ -90,6 +90,16 @@
     "font": "small",
     "color": "muted",
     "align": "center"
+   },
+   {
+    "type": "indicators",
+    "x": 336,
+    "y": 6,
+    "size": 13,
+    "gap": 4,
+    "color": "text",
+    "dim": "muted",
+    "charge": "success"
    }
   ],
   "title": [

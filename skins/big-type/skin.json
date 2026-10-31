@@ -87,34 +87,38 @@
     "if": "has_clock"
    },
    {
-    "type": "icon",
-    "if": "charging & !has_clock",
-    "x": 330,
-    "y": 10,
-    "size": 22,
-    "icon": "bolt",
-    "color": "yellow"
-   },
-   {
-    "type": "icon",
-    "if": "charging & has_clock",
-    "x": 240,
-    "y": 10,
-    "size": 22,
-    "icon": "bolt",
-    "color": "yellow"
-   },
-   {
     "type": "text",
     "if": "has_clock",
-    "x": 268,
+    "x": 266,
     "y": 0,
-    "w": 98,
+    "w": 100,
     "h": 42,
     "text": "{clock}",
     "font": "bartitle",
     "color": "text",
     "align": "right"
+   },
+   {
+    "type": "indicators",
+    "x": 262,
+    "y": 10,
+    "size": 22,
+    "gap": 6,
+    "color": "text",
+    "dim": "text/45",
+    "charge": "yellow",
+    "if": "has_clock"
+   },
+   {
+    "type": "indicators",
+    "x": 410,
+    "y": 10,
+    "size": 22,
+    "gap": 6,
+    "color": "text",
+    "dim": "text/45",
+    "charge": "yellow",
+    "if": "!has_clock"
    }
   ],
   "title": [
@@ -122,7 +126,7 @@
     "type": "text",
     "x": 14,
     "y": 0,
-    "w": 320,
+    "w": 286,
     "h": 42,
     "text": "{screen}",
     "font": "bartitle",
@@ -133,7 +137,7 @@
     "type": "text",
     "x": 14,
     "y": 0,
-    "w": 224,
+    "w": 140,
     "h": 42,
     "text": "{screen}",
     "font": "bartitle",

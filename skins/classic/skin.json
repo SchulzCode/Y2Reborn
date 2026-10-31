@@ -119,50 +119,33 @@
     "image": "battery"
    },
    {
-    "type": "icon",
-    "if": "charging",
-    "x": 420,
-    "y": 7,
-    "size": 16,
-    "icon": "bolt",
-    "color": "success"
-   },
-   {
-    "type": "icon",
-    "if": "bluetooth_connected & charging",
-    "x": 400,
-    "y": 7,
-    "size": 16,
-    "icon": "bluetooth",
-    "color": "dim"
-   },
-   {
-    "type": "icon",
-    "if": "bluetooth_connected & !charging",
-    "x": 420,
-    "y": 7,
-    "size": 16,
-    "icon": "bluetooth",
-    "color": "dim"
-   },
-   {
     "type": "text",
     "if": "has_clock",
     "x": 32,
     "y": 0,
-    "w": 60,
+    "w": 72,
     "h": 30,
     "text": "{clock}",
     "font": "title",
     "color": "text"
+   },
+   {
+    "type": "indicators",
+    "x": 436,
+    "y": 7,
+    "size": 16,
+    "gap": 4,
+    "color": "text",
+    "dim": "text/40",
+    "charge": "success"
    }
   ],
   "title": [
    {
     "type": "text",
-    "x": 60,
+    "x": 120,
     "y": 0,
-    "w": 360,
+    "w": 240,
     "h": 30,
     "text": "{screen}",
     "font": "title",
@@ -171,9 +154,9 @@
    },
    {
     "type": "text",
-    "x": 100,
+    "x": 120,
     "y": 0,
-    "w": 280,
+    "w": 240,
     "h": 30,
     "text": "{screen}",
     "font": "title",

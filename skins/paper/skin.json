@@ -105,14 +105,24 @@
     "text": "{clock}",
     "font": "small",
     "color": "muted"
+   },
+   {
+    "type": "indicators",
+    "x": 426,
+    "y": 10,
+    "size": 14,
+    "gap": 4,
+    "color": "text",
+    "dim": "muted",
+    "charge": "success"
    }
   ],
   "title": [
    {
     "type": "text",
-    "x": 80,
+    "x": 122,
     "y": 0,
-    "w": 320,
+    "w": 236,
     "h": 34,
     "text": "{screen}",
     "font": "bartitle",

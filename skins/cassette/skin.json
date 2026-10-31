@@ -124,20 +124,30 @@
     "if": "has_clock",
     "x": 32,
     "y": 0,
-    "w": 64,
+    "w": 80,
     "h": 32,
     "text": "{clock}",
     "font": "bartitle",
     "color": "bar_text",
     "tracking": 1
+   },
+   {
+    "type": "indicators",
+    "x": 436,
+    "y": 9,
+    "size": 14,
+    "gap": 4,
+    "color": "bar_text",
+    "dim": "bar_text/45",
+    "charge": "success"
    }
   ],
   "title": [
    {
     "type": "text",
-    "x": 60,
+    "x": 112,
     "y": 0,
-    "w": 360,
+    "w": 256,
     "h": 32,
     "text": "{screen}",
     "font": "bartitle",
@@ -149,9 +159,9 @@
    },
    {
     "type": "text",
-    "x": 104,
+    "x": 112,
     "y": 0,
-    "w": 272,
+    "w": 256,
     "h": 32,
     "text": "{screen}",
     "font": "bartitle",

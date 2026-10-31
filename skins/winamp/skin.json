@@ -90,9 +90,9 @@
    },
    {
     "type": "image",
-    "x": 62,
+    "x": 70,
     "y": 0,
-    "w": 66,
+    "w": 58,
     "h": 24,
     "image": "stripes",
     "if": "has_clock"
@@ -103,7 +103,8 @@
     "y": 0,
     "w": 50,
     "h": 24,
-    "image": "stripes"
+    "image": "stripes",
+    "if": "!charging & !bluetooth & !wifi"
    },
    {
     "type": "text",
@@ -149,7 +150,7 @@
     "if": "has_clock",
     "x": 8,
     "y": 4,
-    "w": 48,
+    "w": 58,
     "h": 16,
     "color": "#000000"
    },
@@ -158,20 +159,30 @@
     "if": "has_clock",
     "x": 8,
     "y": 4,
-    "w": 48,
+    "w": 58,
     "h": 16,
     "text": "{clock}",
     "font": "small",
     "color": "lcd",
     "align": "center"
+   },
+   {
+    "type": "indicators",
+    "x": 404,
+    "y": 5,
+    "size": 14,
+    "gap": 3,
+    "color": "bar_text",
+    "dim": "bar_text/45",
+    "charge": "success"
    }
   ],
   "title": [
    {
     "type": "text",
-    "x": 130,
+    "x": 140,
     "y": 0,
-    "w": 220,
+    "w": 200,
     "h": 24,
     "text": "REBORN · {screen}",
     "font": "bartitle",

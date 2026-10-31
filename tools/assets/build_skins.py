@@ -425,6 +425,7 @@ class Skin:
             add_keyboard(self.id, doc)
             add_heart(self.id, doc)
         add_sleep(self.id, doc)
+        add_status(self.id, doc)
         (self.dir / "skin.json").write_text(json.dumps(doc, indent=1, ensure_ascii=False) + "\n")
 
 
@@ -532,6 +533,77 @@ def add_clock(sid, doc):
         parts["titlebar"].append({"type": "text", "if": "has_clock", "x": 8, "y": 4, "w": 48, "h": 16,
                                   "text": "{clock}", "font": "small", "color": "lcd", "align": "center"})
 
+
+
+def status(x, y, size, gap, on, dim, charge="success", cond=None):
+    e = {"type": "indicators", "x": x, "y": y, "size": size, "gap": gap, "color": on, "dim": dim,
+         "charge": charge}
+    return {**e, "if": cond} if cond else e
+
+
+IPOD_STATUS = {"bar": [status(436, 7, 16, 4, "bar_text", "bar_text/45")],
+               "clock": {"w": 72}, "title": {None: {"x": 120, "w": 240}}}
+# The status icons Reborn's bar shows left of the battery (charging, a computer, Bluetooth and
+# Wi-Fi: Y2Linux #70, #73) in each title bar's idiom, and what moves aside for them: titles keep
+# clear of four icons, clocks get room for "12:55 PM" (Y2Linux #72). Keys of "title": the title's
+# "if" (None: every title).
+STATUS = {
+    **{sid: IPOD_STATUS for sid in
+       ("mini-blue", "mini-gold", "mini-green", "mini-pink", "mini-silver", "nano-glass")},
+    "classic": {"bar": [status(436, 7, 16, 4, "text", "text/40")],
+                "clock": {"w": 72}, "title": {None: {"x": 120, "w": 240}}},
+    "cassette": {"bar": [status(436, 9, 14, 4, "bar_text", "bar_text/45")],
+                 "clock": {"w": 80}, "title": {None: {"x": 112, "w": 256}}},
+    "bunny-bow": {"bar": [status(398, 10, 16, 4, "text", "muted")],
+                  "clock": {"w": 76}, "title": {None: {"x": 162, "w": 156}}},
+    "big-type": {"bar": [status(262, 10, 22, 6, "text", "text/45", "yellow", "has_clock"),
+                         status(410, 10, 22, 6, "text", "text/45", "yellow", "!has_clock")],
+                 "clock": {"x": 266, "w": 100},
+                 "title": {"has_clock": {"w": 140}, "!has_clock": {"w": 286}}},
+    "neon": {"bar": [status(406, 11, 16, 4, "text", "muted")],
+             "clock": {"x": 266},
+             "title": {"has_clock": {"w": 244}, "!has_clock": {"w": 308}}},
+    "paper": {"bar": [status(426, 10, 14, 4, "text", "muted")],
+              "title": {None: {"x": 122, "w": 236}}},
+    "terminal": {"bar": [status(344, 7, 14, 4, "text", "text/45", cond="has_clock"),
+                         status(424, 7, 14, 4, "text", "text/45", cond="!has_clock")],
+                 "title": {"has_clock": {"w": 258}, "!has_clock": {"w": 340}}},
+    "walkman": {"bar": [status(380, 10, 14, 4, "text", "muted")],
+                "clock": {"x": 248},
+                "title": {"has_clock": {"w": 222}, "!has_clock": {"w": 286}}},
+    "winamp": {"bar": [status(404, 5, 14, 3, "bar_text", "bar_text/45")],
+               "clock": {"w": 58}, "title": {None: {"x": 140, "w": 200}}},
+    "zune": {"bar": [status(336, 6, 13, 4, "text", "muted")]},
+}
+
+
+def add_status(sid, doc):
+    spec = STATUS[sid]
+    bar = doc["parts"]["titlebar"]
+    # The indicators draw charging and Bluetooth themselves.
+    bar[:] = [e for e in bar if e.get("icon") not in ("bolt", "bluetooth")]
+    for e in bar:
+        if "{clock}" in e.get("text", ""):
+            e.update(spec.get("clock", {}))
+    for e in doc["parts"]["title"]:
+        for cond, changes in spec.get("title", {}).items():
+            if is_title(e) and (cond is None or e.get("if") == cond):
+                e.update(changes)
+    if sid == "bunny-bow":
+        # The percentage stays while charging; the bolt is among the indicators now.
+        for e in bar:
+            if e.get("text") == "{battery}%":
+                e.pop("if", None)
+    if sid == "winamp":
+        # The LCD clock box widens; the right stripes give their place to the icons.
+        for e in bar:
+            if e.get("if") == "has_clock" and e.get("w") == 48:
+                e["w"] = 58
+            if e.get("image") == "stripes" and e.get("x") == 62:
+                e.update(x=70, w=58)
+            if e.get("image") == "stripes" and e.get("x") == 352:
+                e["if"] = "!charging & !bluetooth & !wifi"
+    bar.extend(spec["bar"])
 
 # A station has no queue position: the station (title bars) or On Air instead.
 LIVE_TEXT = {

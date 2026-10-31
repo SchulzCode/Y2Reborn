@@ -98,21 +98,12 @@
     "type": "text",
     "x": 34,
     "y": 0,
-    "w": 64,
+    "w": 76,
     "h": 36,
     "text": "{clock}",
     "font": "bartitle",
     "color": "text",
     "if": "has_clock"
-   },
-   {
-    "type": "icon",
-    "if": "charging",
-    "x": 412,
-    "y": 10,
-    "size": 16,
-    "icon": "bolt",
-    "color": "bow"
    },
    {
     "type": "text",
@@ -123,8 +114,7 @@
     "text": "{battery}%",
     "font": "small",
     "color": "muted",
-    "align": "right",
-    "if": "!charging"
+    "align": "right"
    },
    {
     "type": "bar",
@@ -169,14 +159,24 @@
     "w": 50,
     "h": 14,
     "image": "hearts"
+   },
+   {
+    "type": "indicators",
+    "x": 398,
+    "y": 10,
+    "size": 16,
+    "gap": 4,
+    "color": "text",
+    "dim": "muted",
+    "charge": "success"
    }
   ],
   "title": [
    {
     "type": "text",
-    "x": 100,
+    "x": 162,
     "y": 0,
-    "w": 280,
+    "w": 156,
     "h": 32,
     "text": "{screen}",
     "font": "bartitle",

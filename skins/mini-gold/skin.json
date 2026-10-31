@@ -93,15 +93,6 @@
     "color": "#B48D24"
    },
    {
-    "type": "icon",
-    "if": "charging",
-    "x": 420,
-    "y": 7,
-    "size": 16,
-    "icon": "bolt",
-    "color": "success"
-   },
-   {
     "type": "bar",
     "if": "!battery_low",
     "x": 442,
@@ -134,19 +125,29 @@
     "if": "has_clock",
     "x": 32,
     "y": 0,
-    "w": 60,
+    "w": 72,
     "h": 30,
     "text": "{clock}",
     "font": "bartitle",
     "color": "bar_text"
+   },
+   {
+    "type": "indicators",
+    "x": 436,
+    "y": 7,
+    "size": 16,
+    "gap": 4,
+    "color": "bar_text",
+    "dim": "bar_text/45",
+    "charge": "success"
    }
   ],
   "title": [
    {
     "type": "text",
-    "x": 60,
+    "x": 120,
     "y": 0,
-    "w": 360,
+    "w": 240,
     "h": 30,
     "text": "{screen}",
     "font": "bartitle",
@@ -156,9 +157,9 @@
    },
    {
     "type": "text",
-    "x": 100,
+    "x": 120,
     "y": 0,
-    "w": 280,
+    "w": 240,
     "h": 30,
     "text": "{screen}",
     "font": "bartitle",
