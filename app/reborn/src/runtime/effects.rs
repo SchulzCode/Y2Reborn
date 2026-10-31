@@ -248,7 +248,7 @@ impl Runtime {
                 self.checkpoint();
             }
             Effect::SetBrightness(percent) => {
-                self.model.settings.brightness = percent.clamp(10, 100);
+                self.model.settings.brightness = percent.clamp(reborn_core::BRIGHTNESS_MIN, 100);
                 if !self.headless {
                     power::set_brightness(self.model.settings.brightness)?;
                 }

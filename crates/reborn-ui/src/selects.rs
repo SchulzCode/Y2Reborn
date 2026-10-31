@@ -2,6 +2,34 @@
 use crate::*;
 
 impl Ui {
+    /// The Brightness card while it is adjusted: the wheel moves it in 5 % steps, Select or Back
+    /// ends (Y2Linux #74: Select only cycled 20 % steps). `None` leaves the action to the screen.
+    pub(crate) fn brightness_input(&mut self, m: &AppModel, action: Action) -> Option<Effect> {
+        if !self.adjusting_brightness {
+            return None;
+        }
+        if m.screen != Screen::SettingsDisplay || m.navigation.modal.is_some() {
+            self.adjusting_brightness = false;
+            return None;
+        }
+        let step = i16::from(reborn_core::BRIGHTNESS_STEP);
+        let delta = match action {
+            Action::WheelClockwise(_) | Action::NavigateDown => step,
+            Action::WheelCounterClockwise(_) | Action::NavigateUp => -step,
+            Action::Select | Action::Back => {
+                self.adjusting_brightness = false;
+                return Some(Effect::None);
+            }
+            _ => {
+                self.adjusting_brightness = false;
+                return None;
+            }
+        };
+        let level = (i16::from(m.settings.brightness) + delta)
+            .clamp(i16::from(reborn_core::BRIGHTNESS_MIN), 100);
+        Some(Effect::SetBrightness(level as u8))
+    }
+
     pub(crate) fn radio_select(&mut self, m: &mut AppModel, key: &str) -> Effect {
         let list = |m: &mut AppModel, ui: &mut Self, title: &str, request: RadioRequest| {
             ui.radio.title = title.into();
@@ -229,7 +257,10 @@ impl Ui {
                 6_000 => 10_000,
                 _ => 0,
             }),
-            "brightness" => Effect::SetBrightness(next_brightness(m.settings.brightness)),
+            "brightness" => {
+                self.adjusting_brightness = true;
+                Effect::None
+            }
             "timeout" => Effect::SetScreenTimeout(match m.settings.screen_timeout_seconds {
                 15 => 30,
                 30 => 60,

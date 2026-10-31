@@ -390,6 +390,8 @@ pub struct Ui {
     pub lastfm: LastFmView,
     pub pairing: Option<String>,
     pub pairing_focus: usize,
+    /// The Brightness card follows the wheel until Select or Back.
+    pub(crate) adjusting_brightness: bool,
     /// The full-screen keyboard, while it is open.
     pub keyboard: Option<keyboard::Keyboard>,
     /// The network and password of the join being checked, in memory only:
@@ -791,14 +793,6 @@ fn next_repeat(mode: RepeatMode) -> RepeatMode {
         RepeatMode::All => RepeatMode::Track,
         RepeatMode::Track => RepeatMode::Off,
     }
-}
-
-fn next_brightness(current: u8) -> u8 {
-    reborn_core::BRIGHTNESS_LEVELS
-        .iter()
-        .copied()
-        .find(|level| *level > current)
-        .unwrap_or(reborn_core::BRIGHTNESS_LEVELS[0])
 }
 
 /// The letter a row of `screen` files under in A to Z order (the fast-scroll

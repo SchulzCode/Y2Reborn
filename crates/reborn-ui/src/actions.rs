@@ -134,6 +134,9 @@ impl Ui {
         if self.keyboard.is_some() {
             return self.entry(m, tracks, action);
         }
+        if let Some(effect) = self.brightness_input(m, action) {
+            return effect;
+        }
         // Up Next's song moving with the wheel; Select Songs.
         if let Some(effect) = self.list_mode_input(m, tracks, action) {
             return effect;

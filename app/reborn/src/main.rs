@@ -739,7 +739,7 @@ fn install_refusal(error: &str) -> String {
 /// saved setting this version understands, field by field; the rest keeps its
 /// default. The queue is not recovered.
 fn recover_settings(path: &Path) -> Option<reborn_core::Settings> {
-    use reborn_core::{Settings, BRIGHTNESS_LEVELS, SESSION_MAX_BYTES};
+    use reborn_core::{Settings, BRIGHTNESS_MIN, SESSION_MAX_BYTES};
     use std::io::Read;
     let mut bytes = Vec::new();
     fs::File::open(path)
@@ -773,7 +773,7 @@ fn recover_settings(path: &Path) -> Option<reborn_core::Settings> {
     settings.crossfade_ms = settings.crossfade_ms.min(30_000);
     settings.eq_bands.truncate(8);
     settings.sanitize_eq_profile();
-    settings.brightness = settings.brightness.clamp(BRIGHTNESS_LEVELS[0], 100);
+    settings.brightness = settings.brightness.clamp(BRIGHTNESS_MIN, 100);
     Some(settings)
 }
 

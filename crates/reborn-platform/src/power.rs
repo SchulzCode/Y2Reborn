@@ -188,7 +188,7 @@ fn dac_hold_path(devices: &Path) -> Option<PathBuf> {
 }
 
 fn brightness_value(max: u32, percent: u8) -> u32 {
-    let percent = u32::from(percent.clamp(10, 100));
+    let percent = u32::from(percent.clamp(reborn_core::BRIGHTNESS_MIN, 100));
     (max * percent).div_ceil(100).clamp(1, max.max(1))
 }
 
@@ -358,7 +358,9 @@ mod tests {
     #[test]
     fn brightness_is_bounded_and_never_zero() {
         assert_eq!(brightness_value(255, 100), 255);
-        assert_eq!(brightness_value(255, 0), 26);
+        assert_eq!(brightness_value(255, 0), 13);
+        // The Y2's backlight: 5 % is its second-lowest of 32 levels.
+        assert_eq!(brightness_value(32, 5), 2);
         assert_eq!(brightness_value(4, 20), 1);
         assert_eq!(brightness_value(1023, 60), 614);
     }

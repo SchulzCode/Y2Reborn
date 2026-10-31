@@ -6511,3 +6511,36 @@ fn lists_without_letters_keep_their_row_steps() {
     ui.model_action(&mut m, Action::WheelClockwise(1));
     assert_eq!(m.navigation.focus, 1);
 }
+
+#[test]
+fn the_wheel_adjusts_brightness_in_five_percent_steps_after_select() {
+    // Y2Linux #74: Select on the card cycled 20 % steps from 20 %.
+    let mut ui = radios();
+    let mut m = app(Screen::SettingsDisplay);
+    m.settings.brightness = 80;
+    m.navigation.focus = 0;
+    assert_eq!(ui.model_action(&mut m, Action::Select), Effect::None);
+    assert!(ui.adjusting_brightness);
+    assert_eq!(
+        ui.model_action(&mut m, Action::WheelClockwise(3)),
+        Effect::SetBrightness(85),
+        "one step per detent, even a fast one"
+    );
+    m.settings.brightness = 100;
+    assert_eq!(
+        ui.model_action(&mut m, Action::WheelClockwise(1)),
+        Effect::SetBrightness(100)
+    );
+    m.settings.brightness = 5;
+    assert_eq!(
+        ui.model_action(&mut m, Action::WheelCounterClockwise(1)),
+        Effect::SetBrightness(5),
+        "5 % is the dimmest"
+    );
+    // Back ends adjusting and stays on Display; the wheel moves the focus again.
+    assert_eq!(ui.model_action(&mut m, Action::Back), Effect::None);
+    assert_eq!(m.screen, Screen::SettingsDisplay);
+    assert!(!ui.adjusting_brightness);
+    ui.model_action(&mut m, Action::WheelClockwise(1));
+    assert_eq!(m.navigation.focus, 1);
+}

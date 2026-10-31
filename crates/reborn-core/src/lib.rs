@@ -1491,7 +1491,9 @@ fn default_brightness() -> u8 {
 fn default_time_zone() -> String {
     "UTC".into()
 }
-pub const BRIGHTNESS_LEVELS: [u8; 5] = [20, 40, 60, 80, 100];
+/// The dimmest brightness and the wheel's step on the card (Y2Linux #74; 32 backlight levels).
+pub const BRIGHTNESS_MIN: u8 = 5;
+pub const BRIGHTNESS_STEP: u8 = 5;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
@@ -2263,7 +2265,7 @@ impl AppModel {
         m.settings.balance = m.settings.balance.clamp(-MAX_BALANCE, MAX_BALANCE);
         m.settings.eq_bands.truncate(8);
         m.settings.sanitize_eq_profile();
-        m.settings.brightness = m.settings.brightness.clamp(BRIGHTNESS_LEVELS[0], 100);
+        m.settings.brightness = m.settings.brightness.clamp(BRIGHTNESS_MIN, 100);
         Ok(m)
     }
     pub fn checkpoint(&self, path: &Path) -> io::Result<()> {

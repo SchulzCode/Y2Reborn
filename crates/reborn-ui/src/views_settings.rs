@@ -719,12 +719,18 @@ fn display(c: &mut Canvas, ui: &Ui, m: &AppModel, page: &Page, focus: usize, int
             components::focus_row(c, 14., y + 4., WIDTH - 28., 70.);
         }
         c.text_mid(28., y + 24., 250., "Brightness", Face::S15, color::TEXT);
+        // While the wheel adjusts it (Select on the card), the value and bar take the accent.
+        let (value, bar) = if ui.adjusting_brightness {
+            (ui.accent(), ui.accent())
+        } else {
+            (color::MUTED, color::TEXT)
+        };
         c.text_mid_right(
             WIDTH - 28.,
             y + 24.,
             &format!("{}%", m.settings.brightness),
             Face::R11,
-            color::MUTED,
+            value,
         );
         components::slider(
             c,
@@ -732,7 +738,7 @@ fn display(c: &mut Canvas, ui: &Ui, m: &AppModel, page: &Page, focus: usize, int
             y + 54.,
             WIDTH - 56.,
             f32::from(m.settings.brightness) / 100.,
-            color::TEXT,
+            bar,
             true,
         );
         index = 1;
