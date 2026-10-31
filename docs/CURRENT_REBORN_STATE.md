@@ -1,6 +1,15 @@
 # Current Reborn state on the Y2
 
-## 1.0.0-beta.9.2.2 — Y2Linux 1.0 Beta 9.2.2 (Baseline 193), 2026-10-31 (latest): status icons in skins, GitHub requests
+## 1.0.0-beta.9.2.3 — Y2Linux 1.0 Beta 9.2.3 (Baseline 194), 2026-10-31 (latest): album years, defaults from the issues
+
+Published as `baseline-194` (Reborn `9a50d47`; sequence 11900). `Track.year` from the date tag (additive column,
+`METADATA_REVISION` 5, `AlbumTotal`, `year_key`): an artist's albums oldest first, years in album rows and lines
+(#66). Other Network… for hidden Wi-Fi (`Purpose::WifiName`, `hidden` → `scan_ssid 1`, #61). Cover Flow's position
+in the status bar, skins' `{position}` (#70). Skins number album songs (`numbered`, `{track_number}` in rows; Y2Linux
+#75). `MUTED`/`DIM` a step brighter (#59). `send_wifi`, library `has_column`. Details:
+[Y2Linux Beta 9.2.3 report](https://github.com/SchulzCode/Y2Linux/blob/main/docs/validation/Y2-LINUX-1.0-BETA-9.2.3.md).
+
+## 1.0.0-beta.9.2.2 — Y2Linux 1.0 Beta 9.2.2 (Baseline 193), 2026-10-31: status icons in skins, GitHub requests
 
 Published as `baseline-193` (Reborn `29aa1cc`; sequence 11800). Skins: element `indicators` (charging, computer,
 Bluetooth, Wi-Fi; right to left, closing up) in every shipped skin (`build_skins.py add_status`), variable `{date}`
