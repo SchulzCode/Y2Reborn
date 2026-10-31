@@ -1,6 +1,14 @@
 # Current Reborn state on the Y2
 
-## 1.0.0-beta.9.2.5 — Y2Linux 1.0 Beta 9.2.5 (Baseline 196), 2026-10-31 (latest): platform Wi-Fi fix only
+## 1.0.0-beta.9.2.6 — Y2Linux 1.0 Beta 9.2.6 (Baseline 197), 2026-10-31 (latest): wheel click while paused
+
+Published as `baseline-197` (Reborn `dc335e8`; sequence 12200). #77: the wired codec has no device pause, so a held
+stream is drained to SETUP and 9.2.4's clicks failed `ALSA -77`. `click_while_held` now waits for the paused music
+to play out, prepares the stream (`pause(false)`), clicks over silence and stops it 1 s after the last click; no click
+while music plays (the rewind-and-replay `Tail`/`joined` removed). `WheelClick` Off/On, On serialized as 9.2.4's
+`when_paused`, `always` read as On.
+
+## 1.0.0-beta.9.2.5 — Y2Linux 1.0 Beta 9.2.5 (Baseline 196), 2026-10-31: platform Wi-Fi fix only
 
 Published as `baseline-196` (Reborn `f45f6bc`; sequence 12100). No Reborn change besides the version: the platform
 now switches Wi-Fi off and on when scans keep missing the saved network after a wake (F60, Y2Linux #83). Reborn shows
