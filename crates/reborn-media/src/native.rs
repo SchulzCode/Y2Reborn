@@ -84,13 +84,13 @@ struct RawDspConfig {
 }
 // Pinned with RbDspConfig in native/media.c (a _Static_assert there).
 const _: () = assert!(
-    std::mem::size_of::<RawDspConfig>() == 360
+    std::mem::size_of::<RawDspConfig>() == 680
         && std::mem::offset_of!(RawDspConfig, eq) == 16
         && std::mem::size_of::<RawEqBand>() == 32
         && std::mem::offset_of!(RawEqBand, kind) == 24
-        && std::mem::offset_of!(RawDspConfig, crossfade_ms) == 336
-        && std::mem::offset_of!(RawDspConfig, preamp_db) == 344
-        && std::mem::offset_of!(RawDspConfig, speed) == 352
+        && std::mem::offset_of!(RawDspConfig, crossfade_ms) == 656
+        && std::mem::offset_of!(RawDspConfig, preamp_db) == 664
+        && std::mem::offset_of!(RawDspConfig, speed) == 672
 );
 
 type CancelNew = unsafe extern "C" fn() -> *mut c_void;

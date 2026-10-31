@@ -6,8 +6,9 @@
 use crate::{EqBand, EqKind};
 use serde::{Deserialize, Serialize};
 
-/// Filters one profile may hold (AutoEQ writes ten).
-pub const MAX_BANDS: usize = 10;
+/// Filters one profile may hold. AutoEQ writes ten; other tools write more (Y2Linux #76). Each is
+/// one FFmpeg biquad: twenty cost about 6 % of one Cortex-A7 core while playing, ten about 3 %.
+pub const MAX_BANDS: usize = 20;
 /// Larger files are not equalizer profiles.
 pub const MAX_FILE_BYTES: u64 = 64 * 1024;
 /// File names Reborn offers as profiles, matched without letter case.
@@ -406,10 +407,14 @@ Filter 10: ON PK Fc 5332 Hz Gain -1.1 dB Q 5.75
             let error = parse("x", text).unwrap_err();
             assert!(error.contains(needle), "{text:?}: {error}");
         }
-        let eleven: String = (1..=11)
-            .map(|i| format!("Filter {i}: ON PK Fc {} Hz Gain 1 dB Q 1\n", 100 * i))
-            .collect();
-        assert!(parse("x", &eleven).unwrap_err().contains("11 filters"));
+        let filters = |n: u32| -> String {
+            (1..=n)
+                .map(|i| format!("Filter {i}: ON PK Fc {} Hz Gain 1 dB Q 1\n", 100 * i))
+                .collect()
+        };
+        // Y2Linux #76: more than AutoEQ's ten are taken, up to twenty.
+        assert_eq!(parse("x", &filters(20)).unwrap().bands.len(), 20);
+        assert!(parse("x", &filters(21)).unwrap_err().contains("21 filters"));
     }
 
     /// Every profile Reborn ships (assets/eq) reads with the real parser and
@@ -426,7 +431,7 @@ Filter 10: ON PK Fc 5332 Hz Gain -1.1 dB Q 5.75
             }
             let text = std::fs::read_to_string(&path).unwrap();
             let p = parse(&profile_name(&file), &text).unwrap_or_else(|e| panic!("{file}: {e}"));
-            assert_eq!(p.bands.len(), MAX_BANDS, "{file}");
+            assert_eq!(p.bands.len(), 10, "{file}: AutoEQ writes ten");
             assert!(
                 p.preamp_db <= 0.0 && p.preamp_db > -20.0,
                 "{file}: {}",

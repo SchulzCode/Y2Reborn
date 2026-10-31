@@ -122,7 +122,7 @@ typedef struct {
   uint32_t info_runs;
 } RbMetadata;
 
-#define RB_EQ_BANDS 10
+#define RB_EQ_BANDS 20
 typedef struct {
   int replay_gain_mode;
   uint32_t volume;
@@ -138,12 +138,12 @@ typedef struct {
   double speed;     /* playback speed (an audiobook's), 0.5..2; 1 is none */
 } RbDspConfig;
 /* Pinned with RawDspConfig in src/native.rs (same numbers on ARM and x86-64). */
-_Static_assert(sizeof(RbDspConfig) == 360 && offsetof(RbDspConfig, eq) == 16 &&
+_Static_assert(sizeof(RbDspConfig) == 680 && offsetof(RbDspConfig, eq) == 16 &&
                    sizeof(((RbDspConfig *)0)->eq[0]) == 32 &&
                    offsetof(RbDspConfig, eq[0].kind) == 40 &&
-                   offsetof(RbDspConfig, crossfade_ms) == 336 &&
-                   offsetof(RbDspConfig, preamp_db) == 344 &&
-                   offsetof(RbDspConfig, speed) == 352,
+                   offsetof(RbDspConfig, crossfade_ms) == 656 &&
+                   offsetof(RbDspConfig, preamp_db) == 664 &&
+                   offsetof(RbDspConfig, speed) == 672,
                "RbDspConfig layout differs from RawDspConfig");
 
 typedef struct {
