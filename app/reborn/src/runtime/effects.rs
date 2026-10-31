@@ -307,6 +307,10 @@ impl Runtime {
                 self.model.settings.haptics = strength;
                 self.checkpoint();
             }
+            Effect::SetWheelClick(when) => {
+                self.model.settings.wheel_click = when;
+                self.checkpoint();
+            }
             Effect::SetSpeaker(on) => self.on_set_speaker(on)?,
             Effect::SetShuffle(mode) => self.on_set_shuffle(mode)?,
             Effect::SetPlaylistSort(path, sort) => {

@@ -1,3 +1,4 @@
+use super::click::LINGER;
 use super::*;
 use reborn_audio::Parameters;
 use reborn_core::{AudioOutput, PcmFormat};
@@ -712,6 +713,7 @@ fn stop_send_deadline_covers_a_full_command_queue() {
         volume: Arc::new(AtomicU8::new(100)),
         balance: Arc::new(AtomicI8::new(0)),
         hold: Arc::new(AtomicBool::new(false)),
+        click: Arc::new(AtomicBool::new(false)),
         upcoming: Arc::new(Mutex::new(None)),
         cancel: None,
         pending_start: None,
@@ -748,6 +750,7 @@ fn stop_with_unavailable_worker_fails_without_blocking() {
         volume: Arc::new(AtomicU8::new(100)),
         balance: Arc::new(AtomicI8::new(0)),
         hold: Arc::new(AtomicBool::new(false)),
+        click: Arc::new(AtomicBool::new(false)),
         upcoming: Arc::new(Mutex::new(None)),
         cancel: None,
         pending_start: None,
@@ -1557,4 +1560,144 @@ fn live_radio_station_decodes() {
         );
         assert!(rms > 100.0, "decoded audio is silent");
     }
+}
+
+/// A wired device for the wheel click (#67): what it will play (the left channel), how far it
+/// played (128 frames per write unless paused, as real time would), and its pauses.
+#[derive(Clone, Default)]
+struct ClickDevice {
+    out: Arc<Mutex<Vec<i32>>>,
+    played: Arc<AtomicU64>,
+    paused: Arc<AtomicBool>,
+    pauses: Arc<Mutex<Vec<bool>>>,
+}
+impl AudioSink for ClickDevice {
+    fn parameters(&self) -> Parameters {
+        Sink {
+            frames: Arc::default(),
+            fail: false,
+            rate: 44100,
+            samples: None,
+        }
+        .parameters()
+    }
+    fn write(&mut self, s: &[u8]) -> Result<usize, String> {
+        thread::sleep(Duration::from_millis(2));
+        let mut out = self.out.lock().unwrap();
+        if !self.paused.load(Ordering::Relaxed) {
+            let played = (self.played.load(Ordering::Relaxed) + 128).min(out.len() as u64);
+            self.played.store(played, Ordering::Relaxed);
+        }
+        let room = 4096 - (out.len() as u64 - self.played.load(Ordering::Relaxed)) as usize;
+        let n = (s.len() / 8).min(512).min(room);
+        for frame in s.as_chunks::<8>().0.iter().take(n) {
+            out.push(i32::from_le_bytes(frame[..4].try_into().unwrap()));
+        }
+        Ok(n)
+    }
+    fn discard(&mut self) -> Result<(), String> {
+        Ok(())
+    }
+    fn delay(&self) -> u64 {
+        self.out.lock().unwrap().len() as u64 - self.played.load(Ordering::Relaxed)
+    }
+    fn pause(&mut self, on: bool) -> Result<(), String> {
+        self.paused.store(on, Ordering::Relaxed);
+        self.pauses.lock().unwrap().push(on);
+        Ok(())
+    }
+    fn rewind(&mut self, frames: u64) -> Result<u64, String> {
+        let back = frames.min(self.delay());
+        let mut out = self.out.lock().unwrap();
+        let keep = out.len() - back as usize;
+        out.truncate(keep);
+        Ok(back)
+    }
+}
+
+/// Plays the tone on a `ClickDevice`, with `during` acting on the playback once some of it played;
+/// returns everything the device played or would play.
+fn played_with(name: &str, during: impl FnOnce(&mut Playback, &ClickDevice)) -> Vec<i32> {
+    let device = ClickDevice::default();
+    let opened = device.clone();
+    let root = std::env::temp_dir().join(format!("reborn-click-{name}-{}", std::process::id()));
+    let log = Observer::new(&root).unwrap();
+    let mut p = Playback::with_sink(
+        log,
+        root,
+        Box::new(move |_, _, _| Ok(Box::new(opened.clone()))),
+    )
+    .unwrap();
+    let spec = spec(AudioOutput::Wired, 44100);
+    p.load(track(), vec![], 0, spec, 1, DspConfig::with_volume(100), 1)
+        .unwrap();
+    let length = || device.out.lock().unwrap().len();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while length() < 8_000 && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(2));
+    }
+    during(&mut p, &device);
+    // Until the device got all of it.
+    let mut last = 0;
+    while length() != last && Instant::now() < deadline + Duration::from_secs(5) {
+        last = length();
+        thread::sleep(Duration::from_millis(200));
+    }
+    p.shutdown(2).unwrap();
+    let out = device.out.lock().unwrap().clone();
+    out
+}
+
+/// #67: a click while music plays rides on the music without losing or repeating any of it; a
+/// click while paused plays over silence, and the music goes on where it paused.
+#[test]
+fn wheel_clicks_neither_lose_nor_repeat_music() {
+    let plain = played_with("plain", |_, _| {});
+    assert!(plain.len() > 40_000, "{}", plain.len());
+    let playing = played_with("playing", |p, _| {
+        for _ in 0..3 {
+            p.click();
+            thread::sleep(Duration::from_millis(40));
+        }
+    });
+    assert_eq!(playing.len(), plain.len(), "nothing lost or repeated");
+    let changed = plain.iter().zip(&playing).filter(|(a, b)| a != b).count();
+    assert!(changed > 0 && changed <= 3 * 176, "{changed}");
+
+    let paused = played_with("paused", |p, device| {
+        p.hold(true);
+        while device.pauses.lock().unwrap().is_empty() {
+            thread::sleep(Duration::from_millis(2));
+        }
+        p.click();
+        thread::sleep(Duration::from_millis(100));
+        p.click();
+        // LINGER after the last click the stream pauses again.
+        thread::sleep(LINGER + Duration::from_millis(300));
+        p.hold(false);
+        while device.pauses.lock().unwrap().len() < 4 {
+            thread::sleep(Duration::from_millis(2));
+        }
+        assert_eq!(*device.pauses.lock().unwrap(), [true, false, true, false]);
+    });
+    // The device's clock moves only on writes, so the stretch is what was written past the
+    // queue the resume dropped: at least the clicks.
+    let silence = inserted_stretch(&paused, &plain);
+    assert!(silence >= 176, "the clicks played over silence: {silence}");
+}
+
+/// `with` is `plain` with one stretch put in (the paused stream's clicks over silence): its length,
+/// after checking that the music before and after it is `plain`'s, in order.
+fn inserted_stretch(with: &[i32], plain: &[i32]) -> usize {
+    let inserted = with.len() - plain.len();
+    let at = (plain.iter().zip(with)).position(|(a, b)| a != b).unwrap();
+    assert_eq!(with[..at], plain[..at]);
+    assert_eq!(
+        with[at + inserted..],
+        plain[at..],
+        "the music goes on where it paused"
+    );
+    let clicks = with[at..at + inserted].iter().filter(|v| **v != 0).count();
+    assert!(clicks > 0 && clicks <= 2 * 176, "{clicks}");
+    inserted
 }

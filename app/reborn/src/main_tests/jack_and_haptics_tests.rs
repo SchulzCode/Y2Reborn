@@ -1,5 +1,5 @@
-use super::{input_ticks, jack_move, JackMove, HEADPHONES_LOST};
-use reborn_core::{Action, NormalizedInput, PhysicalControl};
+use super::{input_ticks, jack_move, wheel_clicks, JackMove, HEADPHONES_LOST};
+use reborn_core::{Action, NormalizedInput, PhysicalControl, WheelClick};
 
 /// #62: unplugged headphones that were playing pause, with a message; a
 /// playing speaker moves to plugged headphones; anything else stays.
@@ -68,4 +68,18 @@ fn haptics_tick_for_presses_and_held_seek_steps_only() {
         &[Action::NextTrack],
         false
     ));
+}
+
+/// #67: wheel steps click on a lit screen as the setting says; presses and
+/// the dark never do.
+#[test]
+fn wheel_steps_click_as_the_setting_says() {
+    let step = NormalizedInput::WheelCounterClockwise(1);
+    assert!(wheel_clicks(true, step, WheelClick::Always, true));
+    assert!(wheel_clicks(true, step, WheelClick::WhenPaused, false));
+    assert!(!wheel_clicks(true, step, WheelClick::WhenPaused, true));
+    assert!(!wheel_clicks(true, step, WheelClick::Off, false));
+    assert!(!wheel_clicks(false, step, WheelClick::Always, false));
+    let press = NormalizedInput::Press(PhysicalControl::Select);
+    assert!(!wheel_clicks(true, press, WheelClick::Always, false));
 }

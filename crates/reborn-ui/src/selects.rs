@@ -253,6 +253,7 @@ impl Ui {
                 Effect::SetScreenOffButtons(m.settings.screen_off_buttons.next())
             }
             "haptics" => Effect::SetHaptics(m.settings.haptics.next()),
+            "wheel_click" => Effect::SetWheelClick(m.settings.wheel_click.next()),
             "speaker" => Effect::SetSpeaker(!m.settings.speaker),
             "album_view" => Effect::SetAlbumView(m.settings.album_view.next()),
             "album_order" => Effect::SetAlbumOrder(m.settings.album_order.next()),

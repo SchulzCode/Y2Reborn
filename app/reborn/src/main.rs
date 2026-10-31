@@ -851,6 +851,21 @@ fn input_ticks(
                 .any(|a| matches!(a, Action::SeekForward | Action::SeekBackward))))
 }
 
+/// #67: a click per wheel step on a lit screen, while the music plays or not
+/// as Customize > Wheel Click says.
+fn wheel_clicks(
+    lit: bool,
+    input: reborn_core::NormalizedInput,
+    when: reborn_core::WheelClick,
+    playing: bool,
+) -> bool {
+    use reborn_core::NormalizedInput;
+    lit && matches!(
+        input,
+        NormalizedInput::WheelClockwise(_) | NormalizedInput::WheelCounterClockwise(_)
+    ) && when.clicks(playing)
+}
+
 /// One haptic tick at the strength set; a motor that fails is dropped.
 fn haptic_tick(
     motor: &mut Option<reborn_platform::haptics::Motor>,

@@ -1156,6 +1156,9 @@ pub struct Settings {
     /// A tick of the vibration motor on each button press (#28).
     #[serde(default)]
     pub haptics: Haptics,
+    /// A click on each wheel step, through the headphones or the speaker (#67).
+    #[serde(default)]
+    pub wheel_click: WheelClick,
     /// Play on the internal speaker while no headphones are plugged in, as
     /// stock's "Speaker" setting (#28 speaker).
     #[serde(default = "default_true")]
@@ -1492,6 +1495,42 @@ impl Haptics {
         }
     }
 }
+/// The click on each wheel step (#67), mixed into the headphone or speaker
+/// output that is open: while a song plays or is paused, never on Bluetooth
+/// (its delay would part the click from the step). Off until chosen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum WheelClick {
+    #[default]
+    Off,
+    WhenPaused,
+    Always,
+}
+impl WheelClick {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Off => "Off",
+            Self::WhenPaused => "When Paused",
+            Self::Always => "Always",
+        }
+    }
+    /// The next choice, as one press on its row steps through them.
+    pub fn next(self) -> Self {
+        match self {
+            Self::Off => Self::WhenPaused,
+            Self::WhenPaused => Self::Always,
+            Self::Always => Self::Off,
+        }
+    }
+    /// Whether a wheel step clicks while the music is `playing` or not.
+    pub fn clicks(self, playing: bool) -> bool {
+        match self {
+            Self::Off => false,
+            Self::WhenPaused => !playing,
+            Self::Always => true,
+        }
+    }
+}
 fn default_true() -> bool {
     true
 }
@@ -1539,6 +1578,7 @@ impl Default for Settings {
             wrap_around: WrapAround::Menus,
             screen_off_buttons: ScreenOffButtons::Buttons,
             haptics: Haptics::Off,
+            wheel_click: WheelClick::Off,
             speaker: true,
             audiobooks_on_home: true,
             playlist_sort: Default::default(),
@@ -1900,6 +1940,7 @@ pub enum Effect {
     SetWrapAround(WrapAround),
     SetScreenOffButtons(ScreenOffButtons),
     SetHaptics(Haptics),
+    SetWheelClick(WheelClick),
     SetSpeaker(bool),
     /// Play the audiobook with this key.
     PlayBook(String, BookStart),

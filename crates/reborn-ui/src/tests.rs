@@ -1482,7 +1482,8 @@ fn customize_holds_how_reborn_behaves() {
             "now_playing_wheel",
             "wrap_around",
             "screen_off_buttons",
-            "haptics"
+            "haptics",
+            "wheel_click"
         ]
     );
     let labels: Vec<String> = ui.rows(&m, &tracks).into_iter().map(|r| r.label).collect();
@@ -1496,7 +1497,8 @@ fn customize_holds_how_reborn_behaves() {
             "Now Playing Wheel",
             "Wrap Around",
             "When Screen Off",
-            "Haptics"
+            "Haptics",
+            "Wheel Click"
         ]
     );
     // #28: Off by default, Select steps Light, Strong, Off.
@@ -1511,6 +1513,17 @@ fn customize_holds_how_reborn_behaves() {
         Effect::SetHaptics(reborn_core::Haptics::Off)
     );
     m.settings.haptics = reborn_core::Haptics::Off;
+    // #67: Off by default, Select steps When Paused, Always, Off.
+    assert_eq!(row(&ui, &m, "wheel_click").unwrap().secondary, "Off");
+    assert_eq!(
+        select_key(&mut ui, &mut m, "wheel_click"),
+        Effect::SetWheelClick(reborn_core::WheelClick::WhenPaused)
+    );
+    m.settings.wheel_click = reborn_core::WheelClick::Always;
+    assert_eq!(
+        select_key(&mut ui, &mut m, "wheel_click"),
+        Effect::SetWheelClick(reborn_core::WheelClick::Off)
+    );
     assert_eq!(row(&ui, &m, "artists_list").unwrap().secondary, "All");
     assert_eq!(
         select_key(&mut ui, &mut m, "artists_list"),

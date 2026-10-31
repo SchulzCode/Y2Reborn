@@ -1317,6 +1317,10 @@ impl MainLoop {
                     }
                     haptic_tick(&mut self.motor, rt.model.settings.haptics, &self.log);
                 }
+                let playing = rt.model.playback == PlaybackState::Playing;
+                if wheel_clicks(lit, event.input, rt.model.settings.wheel_click, playing) {
+                    rt.playback.click();
+                }
                 if let Some((_, _, _, events)) = &mut self.monitor {
                     if events.len() < 512 {
                         events.push(json!({"device":event.device,"normalized":event.input,

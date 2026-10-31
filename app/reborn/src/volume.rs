@@ -136,6 +136,10 @@ impl VolumeRamp {
             self.gain + self.step * frames as f64
         }
     }
+    /// The gain the volume asks for (a wheel click follows it).
+    pub(crate) fn level(&self) -> f64 {
+        self.target
+    }
     pub(crate) fn advance(&mut self, frames: usize) {
         self.gain = self.at(frames);
         self.remaining = self.remaining.saturating_sub(frames);
@@ -145,7 +149,7 @@ impl VolumeRamp {
 
 /// One little-endian sample of `format` as a number (S24 in 32 bits, sign
 /// extended from its low three bytes).
-fn decode(sample: &[u8], format: PcmFormat) -> f64 {
+pub(crate) fn decode(sample: &[u8], format: PcmFormat) -> f64 {
     match format {
         PcmFormat::S16LE => f64::from(i16::from_le_bytes(sample.try_into().unwrap())),
         PcmFormat::S24LE => f64::from((i32::from_le_bytes(sample.try_into().unwrap()) << 8) >> 8),
@@ -153,7 +157,7 @@ fn decode(sample: &[u8], format: PcmFormat) -> f64 {
     }
 }
 /// Round, clamp to the format's range and append.
-fn encode(value: f64, format: PcmFormat, out: &mut Vec<u8>) {
+pub(crate) fn encode(value: f64, format: PcmFormat, out: &mut Vec<u8>) {
     match format {
         PcmFormat::S16LE => {
             let value = value

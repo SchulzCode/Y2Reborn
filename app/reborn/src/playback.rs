@@ -19,6 +19,7 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
+mod click;
 mod decode;
 mod media_state;
 mod output;
@@ -228,6 +229,8 @@ pub struct Playback {
     /// Paused in place: the audio thread stops writing and pauses the open
     /// device; the decoder waits on the full queue. Resume is instant.
     hold: Arc<AtomicBool>,
+    /// A wheel click for the sink thread (#67).
+    click: Arc<AtomicBool>,
     upcoming: Arc<Mutex<Option<Upcoming>>>,
     cancel: Option<Cancel>,
     pending_start: Option<PendingStart>,
@@ -298,6 +301,8 @@ impl Playback {
         let meter = crate::meter::Meter::new(levels.clone());
         let hold = Arc::new(AtomicBool::new(false));
         let sink_hold = hold.clone();
+        let click = Arc::new(AtomicBool::new(false));
+        let sink_click = click.clone();
         let upcoming = Arc::new(Mutex::new(None::<Upcoming>));
         let decode_upcoming = upcoming.clone();
         let state = Arc::new(Mutex::new(json!({
@@ -350,6 +355,7 @@ impl Playback {
             sink_volume,
             sink_balance,
             sink_hold,
+            sink_click,
             audio_state,
             meter,
             factory,
@@ -368,6 +374,7 @@ impl Playback {
             volume,
             balance,
             hold,
+            click,
             upcoming,
             cancel: None,
             pending_start: None,
@@ -516,6 +523,10 @@ impl Playback {
     /// A pause is held in place; any stop or new start ends it.
     pub fn is_held(&self) -> bool {
         self.hold.load(Ordering::Acquire)
+    }
+    /// One wheel click (#67): heard on the headphones or the speaker while a song is loaded.
+    pub(crate) fn click(&self) {
+        self.click.store(true, Ordering::Release);
     }
     /// Left/right balance in dB (negative: the left is louder), live like
     /// the volume.

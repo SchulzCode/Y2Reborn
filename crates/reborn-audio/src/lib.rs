@@ -155,6 +155,12 @@ pub trait AudioSink {
         let _ = on;
         Ok(())
     }
+    /// Take back up to `frames` queued frames not yet played; returns how
+    /// many. A sink that cannot takes none back.
+    fn rewind(&mut self, frames: u64) -> Result<u64, String> {
+        let _ = frames;
+        Ok(0)
+    }
 }
 /// The headphone output's only rate, as on the stock firmware. The DAC's
 /// crystal (22.5792 MHz) clocks 44.1 kHz directly; 48 kHz needs the codec's
