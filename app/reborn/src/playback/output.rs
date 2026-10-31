@@ -42,7 +42,6 @@ impl SinkWorker {
         let kept: Option<KeptSink> = None;
         let mut st = Playing {
             click: Click::default(),
-            silence_queued: false,
             clicking: None,
             sink,
             generation,
@@ -294,10 +293,6 @@ impl SinkWorker {
         let want_hold = self.sink_hold.load(Ordering::Acquire) && st.sink.is_some();
         if want_hold != st.held {
             if let Some(s) = &mut st.sink {
-                // Clicks left silence queued: the music goes on without it.
-                if !want_hold && std::mem::take(&mut st.silence_queued) {
-                    let _ = s.rewind(u64::MAX);
-                }
                 st.clicking = None;
                 if let Err(e) = s.pause(want_hold) {
                     self.al.emit(
@@ -513,7 +508,9 @@ impl SinkWorker {
     /// Paused in place: a wheel click plays over silence, and `LINGER` after the last click the
     /// stream stops again. The wired codec has no pause of its own: a pause plays out the queued
     /// music and stops the stream (#77: writing to it failed "File descriptor in bad state"), so
-    /// the first click prepares it again, once that music has played.
+    /// the first click prepares it again, once that music has played. Later clicks go into the
+    /// next silence written; the short queue keeps them prompt (taking the queued silence back
+    /// left the stream empty and underrunning: crackle).
     fn click_while_held(&mut self, st: &mut Playing) {
         let was_stopped = st.clicking.is_none();
         let wired = st.wired();
@@ -524,11 +521,6 @@ impl SinkWorker {
                 self.sink_click.store(true, Ordering::Relaxed);
                 return;
             }
-            if !was_stopped {
-                // Silence queued after the last click: the click goes in front.
-                let _ = s.rewind(u64::MAX);
-            }
-            st.silence_queued = true;
             st.click.start(st.rate);
             st.clicking = Some(Instant::now());
         }
@@ -609,17 +601,18 @@ impl SinkWorker {
     }
 }
 
-/// Silence with the click in it, enough that a paused stream that clicked keeps playing.
+/// Silence with the click in it, enough that a paused stream that clicked keeps playing: about
+/// 35 ms queued (a click waits at most that long), from 256-frame pieces.
 fn click_over_silence(
     sink: &mut dyn AudioSink,
     click: &mut Click,
     format: PcmFormat,
     gain: f64,
 ) -> Result<(), String> {
-    const CHUNK: usize = 512;
-    const QUEUED: u64 = 2048;
+    const CHUNK: usize = 256;
+    const QUEUED: u64 = 1536;
     let mut pcm = vec![0; CHUNK * format.bytes_per_frame()];
-    for _ in 0..4 {
+    for _ in 0..QUEUED as usize / CHUNK {
         if sink.delay() >= QUEUED {
             break;
         }
@@ -639,8 +632,6 @@ fn click_over_silence(
 pub(super) struct Playing {
     /// The wheel click sounding (#67).
     click: Click,
-    /// Paused in place, the sink holds silence a click left, not music.
-    silence_queued: bool,
     /// Paused in place, the stream plays for clicks: since the last one.
     clicking: Option<Instant>,
     kept: Option<KeptSink>,
@@ -666,7 +657,6 @@ impl Playing {
     /// The stream ended or changed: no click sounds.
     fn forget_clicks(&mut self) {
         self.click.stop();
-        self.silence_queued = false;
         self.clicking = None;
     }
 }

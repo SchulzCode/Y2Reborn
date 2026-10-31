@@ -581,19 +581,6 @@ int rb_sink_pause(RbSink *s, int on, int device_pause) {
     return snd_pcm_prepare(s->pcm);
   return 0;
 }
-/* Take back queued frames the device has not played yet, up to `frames`,
- * leaving the few milliseconds the DMA may already hold (a wheel click goes
- * in front of the music, #67). Returns the frames taken back. */
-#define RB_REWIND_MARGIN 256
-int rb_sink_rewind(RbSink *s, int frames) {
-  snd_pcm_sframes_t n = snd_pcm_rewindable(s->pcm);
-  if (n < 0)
-    return (int)n;
-  n -= RB_REWIND_MARGIN;
-  if (n > frames)
-    n = frames;
-  return n > 0 ? (int)snd_pcm_rewind(s->pcm, (snd_pcm_uframes_t)n) : 0;
-}
 int rb_sink_delay(RbSink *s) {
   snd_pcm_sframes_t n = 0;
   int r = snd_pcm_delay(s->pcm, &n);

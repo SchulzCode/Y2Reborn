@@ -1614,16 +1614,6 @@ impl AudioSink for ClickDevice {
         self.pauses.lock().unwrap().push(on);
         Ok(())
     }
-    fn rewind(&mut self, frames: u64) -> Result<u64, String> {
-        if self.stopped.load(Ordering::Relaxed) {
-            return Err("ALSA -77: File descriptor in bad state".into());
-        }
-        let back = frames.min(self.delay());
-        let mut out = self.out.lock().unwrap();
-        let keep = out.len() - back as usize;
-        out.truncate(keep);
-        Ok(back)
-    }
 }
 
 /// Plays the tone on a `ClickDevice`, with `during` acting on the playback once some of it played;

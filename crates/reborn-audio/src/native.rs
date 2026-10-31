@@ -62,7 +62,6 @@ unsafe extern "C" {
     fn rb_sink_drop(p: *mut c_void) -> c_int;
     fn rb_sink_pause(p: *mut c_void, on: c_int, device_pause: c_int) -> c_int;
     fn rb_sink_delay(p: *mut c_void) -> c_int;
-    fn rb_sink_rewind(p: *mut c_void, frames: c_int) -> c_int;
 }
 fn error(e: c_int) -> String {
     // SAFETY: snd_strerror provides a static terminated string for all ALSA errors.
@@ -641,16 +640,6 @@ impl AudioSink for AlsaSink {
     fn delay(&self) -> u64 {
         // SAFETY: same-thread ALSA query.
         unsafe { rb_sink_delay(self.raw.as_ptr()) }.max(0) as u64
-    }
-    fn rewind(&mut self, frames: u64) -> Result<u64, String> {
-        let frames = c_int::try_from(frames).unwrap_or(c_int::MAX);
-        // SAFETY: caller uniquely owns the PCM context.
-        let r = unsafe { rb_sink_rewind(self.raw.as_ptr(), frames) };
-        if r < 0 {
-            Err(error(r))
-        } else {
-            Ok(r as u64)
-        }
     }
 }
 impl Drop for AlsaSink {
