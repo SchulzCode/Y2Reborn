@@ -1,6 +1,15 @@
 # Current Reborn state on the Y2
 
-## 1.0.0-beta.9.2.6 — Y2Linux 1.0 Beta 9.2.6 (Baseline 197), 2026-10-31 (latest): wheel click while paused
+## 1.0.0-beta.9.2.7 — Y2Linux 1.0 Beta 9.2.7 (Baseline 198), 2026-10-31 (latest): wheel clicks whenever no music plays
+
+Published as `baseline-198` (Reborn `38946ea`; sequence 12300). `Runtime::wheel_click` sends the wired plan
+(`click_spec`, planned once) unless a pause holds the output on the right route (a hold on the other route is
+released); the sink thread's `click_while_idle` plays in the kept wired sink or opens one (`keep_for_clicks`) and
+keeps it `CLICK_KEEP` 10 s (`KeptSink::until`); a start reuses it via the switch. A sleep request closes a kept sink.
+Crackle fixed: no rewind of queued silence (`AudioSink::rewind` gone), ≈ 1536 frames queued. Click level from the
+live volume.
+
+## 1.0.0-beta.9.2.6 — Y2Linux 1.0 Beta 9.2.6 (Baseline 197), 2026-10-31: wheel click while paused
 
 Published as `baseline-197` (Reborn `dc335e8`; sequence 12200). #77: the wired codec has no device pause, so a held
 stream is drained to SETUP and 9.2.4's clicks failed `ALSA -77`. `click_while_held` now waits for the paused music
