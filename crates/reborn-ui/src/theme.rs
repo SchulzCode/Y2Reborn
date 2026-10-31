@@ -14,10 +14,11 @@ pub mod color {
     pub const BG: u32 = 0x06070AFF;
     pub const BLACK: u32 = 0x000000FF;
     pub const TEXT: u32 = 0xF6F6F8FF;
-    /// Secondary text; at least 4.5:1 on `BG`.
-    pub const MUTED: u32 = 0xA0A4AEFF;
-    /// Quiet labels and hints; at least 4.5:1 on `BG`.
-    pub const DIM: u32 = 0x848894FF;
+    /// Secondary text; at least 4.5:1 on `BG`. A step brighter in 9.2.3: at low screen brightness the
+    /// grey values read too dark (Y2Reborn #59; was #A0A4AE).
+    pub const MUTED: u32 = 0xB4B8C2FF;
+    /// Quiet labels and hints; at least 4.5:1 on `BG` (was #848894).
+    pub const DIM: u32 = 0x989CA8FF;
     pub const INK: u32 = 0x06070AFF;
     /// The accent of controls and state; also Now Playing's colour before a
     /// cover is known, or when a cover is too dull.
