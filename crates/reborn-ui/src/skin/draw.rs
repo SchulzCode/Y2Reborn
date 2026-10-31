@@ -237,7 +237,8 @@ impl Scene<'_> {
                 .filter(|p| *p <= 100)
                 .map(|p| p.to_string())
                 .unwrap_or_default(),
-            Var::Clock | Var::Date => self.clock_text(v),
+            Var::Clock => self.ui.clock(m).unwrap_or_default(),
+            Var::Date => self.ui.date(m).unwrap_or_default(),
             Var::Volume => m.settings.volume.min(100).to_string(),
             Var::Status => self.page.and_then(|p| p.status.clone()).unwrap_or_default(),
             Var::PageTitle => self
@@ -276,16 +277,6 @@ impl Scene<'_> {
             Var::Number => row.map(|r| (r.index + 1).to_string()).unwrap_or_default(),
             Var::Count => row.map(|r| r.count.to_string()).unwrap_or_default(),
         }
-    }
-
-    /// `{clock}` or `{date}`; empty until the player's time is set.
-    fn clock_text(&self, v: Var) -> String {
-        let clock = if v == Var::Date {
-            self.ui.date(self.m)
-        } else {
-            self.ui.clock(self.m)
-        };
-        clock.unwrap_or_default()
     }
 
     /// A book: chapter, author and book, times within the chapter, the
