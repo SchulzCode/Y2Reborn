@@ -202,16 +202,7 @@ fn open(path: &Path) -> Result<Connection, OpenFailure> {
     // An additive cache stamp keeps schema-1 consumers/row IDs readable.
     // Each successful old row refreshes once; failed files do not invalidate
     // already upgraded rows elsewhere in the library.
-    let has_revision = c
-        .prepare("PRAGMA table_info(tracks)")
-        .map_err(|e| classify_open_error(e, OpenStage::Migration))?
-        .query_map([], |row| row.get::<_, String>(1))
-        .map_err(|e| classify_open_error(e, OpenStage::Migration))?
-        .collect::<rusqlite::Result<Vec<_>>>()
-        .map_err(|e| classify_open_error(e, OpenStage::Migration))?
-        .iter()
-        .any(|name| name == "metadata_revision");
-    if !has_revision {
+    if !has_column(&c, "metadata_revision")? {
         c.execute_batch(
             "ALTER TABLE tracks ADD COLUMN metadata_revision INTEGER NOT NULL DEFAULT 0;",
         )
@@ -219,16 +210,7 @@ fn open(path: &Path) -> Result<Connection, OpenFailure> {
     }
     // Additive like metadata_revision: older rows keep '' until their tags are
     // re-read (METADATA_REVISION 3), schema-1 readers ignore the column.
-    let has_genre = c
-        .prepare("PRAGMA table_info(tracks)")
-        .map_err(|e| classify_open_error(e, OpenStage::Migration))?
-        .query_map([], |row| row.get::<_, String>(1))
-        .map_err(|e| classify_open_error(e, OpenStage::Migration))?
-        .collect::<rusqlite::Result<Vec<_>>>()
-        .map_err(|e| classify_open_error(e, OpenStage::Migration))?
-        .iter()
-        .any(|name| name == "genre");
-    if !has_genre {
+    if !has_column(&c, "genre")? {
         c.execute_batch("ALTER TABLE tracks ADD COLUMN genre TEXT NOT NULL DEFAULT '';")
             .map_err(|e| classify_open_error(e, OpenStage::Migration))?;
     }
@@ -255,6 +237,18 @@ fn open(path: &Path) -> Result<Connection, OpenFailure> {
         CREATE TEMP TABLE scan_candidates(position INTEGER PRIMARY KEY,path TEXT NOT NULL,size INTEGER NOT NULL,mtime INTEGER NOT NULL);")
         .map_err(|error| classify_open_error(error, OpenStage::Setup))?;
     Ok(c)
+}
+/// Whether `tracks` has the column `name` (the additive migrations).
+fn has_column(c: &Connection, name: &str) -> Result<bool, OpenFailure> {
+    let migration = |e| classify_open_error(e, OpenStage::Migration);
+    let names = c
+        .prepare("PRAGMA table_info(tracks)")
+        .map_err(migration)?
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(migration)?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(migration)?;
+    Ok(names.iter().any(|n| n == name))
 }
 fn from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Track> {
     let mut track = Track {
