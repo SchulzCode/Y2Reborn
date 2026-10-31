@@ -1343,8 +1343,26 @@
     "name": "titlebar"
    },
    {
-    "type": "part",
-    "name": "title"
+    "type": "text",
+    "x": 120,
+    "y": 0,
+    "w": 240,
+    "h": 30,
+    "text": "{screen} · {position}",
+    "font": "title",
+    "align": "center",
+    "if": "!has_clock"
+   },
+   {
+    "type": "text",
+    "x": 120,
+    "y": 0,
+    "w": 240,
+    "h": 30,
+    "text": "{screen} · {position}",
+    "font": "title",
+    "align": "center",
+    "if": "has_clock"
    }
   ],
   "keyboard": [

@@ -3042,6 +3042,18 @@ fn albums_use_cover_flow_by_default_and_the_grid_by_setting() {
 }
 
 #[test]
+fn cover_flow_shows_where_you_are_in_its_title() {
+    // Y2Reborn #70: "n of m" under the album took the room bigger text needed.
+    let ui = radios();
+    let mut m = app(Screen::Albums);
+    let count = ui.row_count(&m, &m.library.tracks);
+    m.navigation.focus = 1;
+    let text = drawn_text(&ui.draw(&m, &m.library.tracks, false));
+    assert!(text.contains(&format!("Albums · 2 of {count}")), "{text}");
+    assert_eq!(text.matches(&format!("2 of {count}")).count(), 1, "{text}");
+}
+
+#[test]
 fn cover_flow_glides_opens_with_a_flight_and_asks_for_the_sharp_cover_at_rest() {
     let mut ui = radios();
     let mut m = app(Screen::Albums);

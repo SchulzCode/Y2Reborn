@@ -46,9 +46,14 @@ fn warp(tex: Tex, corners: [[f32; 2]; 4], colors: [u32; 4]) -> Quad {
 }
 
 pub fn albums(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interactive: bool) {
-    components::status_bar(c, ui, m, &screen_title(m), true);
     let count = ui.row_count(m, tracks);
     let focus = m.navigation.focus.min(count.saturating_sub(1));
+    // Where you are goes up with the screen's name (Y2Reborn #70), so the album below has room.
+    let title = match count {
+        0 => screen_title(m),
+        _ => format!("{} · {} of {count}", screen_title(m), focus + 1),
+    };
+    components::status_bar(c, ui, m, &title, true);
     let pos = ui.flow_position(m, focus);
     // Back from the album page: the cover lands and the row fades in.
     let landing = ui
@@ -136,35 +141,28 @@ pub fn albums(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interacti
     if let Some(row) = ui.row_at(m, tracks, focus) {
         c.text_center(
             240.,
-            266. + Face::S20.mid_offset(),
+            270. + Face::S20.mid_offset(),
             &text::fit(Face::S20, &row.label, 440.),
             Face::S20,
             color::TEXT,
         );
         c.text_center(
             240.,
-            290. + Face::R13.mid_offset(),
-            &text::fit(Face::R13, &row.secondary, 440.),
-            Face::R13,
+            298. + Face::R15.mid_offset(),
+            &text::fit(Face::R15, &row.secondary, 440.),
+            Face::R15,
             color::MUTED,
         );
         // An album's songs and length; a book's progress is its own line.
         if row.key.starts_with("album:") {
             c.text_center(
                 240.,
-                312. + Face::R11.mid_offset(),
+                324. + Face::R13.mid_offset(),
                 &ui.album_detail(m, tracks, &row.key),
-                Face::R11,
+                Face::R13,
                 color::DIM,
             );
         }
-        c.text_center(
-            240.,
-            338. + Face::R11.mid_offset(),
-            &format!("{} of {}", focus + 1, count),
-            Face::R11,
-            color::DIM,
-        );
     }
     // Once the row rests, ask for the centre cover at full resolution.
     if let Some((at, t)) = ui

@@ -246,6 +246,10 @@ impl Scene<'_> {
                 .unwrap_or_default(),
             Var::Clock => self.ui.clock(m).unwrap_or_default(),
             Var::Date => self.ui.date(m).unwrap_or_default(),
+            Var::Position => match self.ui.row_count(m, self.tracks) {
+                0 => String::new(),
+                count => format!("{} of {count}", m.navigation.focus.min(count - 1) + 1),
+            },
             Var::Volume => m.settings.volume.min(100).to_string(),
             Var::Status => self.page.and_then(|p| p.status.clone()).unwrap_or_default(),
             Var::PageTitle => self

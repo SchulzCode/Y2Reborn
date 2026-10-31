@@ -181,6 +181,7 @@ Write `{name}` inside `text`:
 | `screen` | the screen's title (empty on Home) |
 | `battery` `volume` | numbers 0–100 |
 | `clock` | the time in the chosen time zone (`21:41`, or `9:41 PM` where a 12-hour clock is usual); empty until the player's time is set |
+| `position` | where the focus is in the screen's list: `25 of 100` (Cover Flow shows it in its title); empty for an empty list |
 | `date` | the short date in the chosen time zone (`Sat 31 Oct`, or `Sat, Oct 31` where a 12-hour clock is usual); empty until the player's time is set |
 | `status` | a page's status line (Wi-Fi, Bluetooth, pickers) |
 | `page_title` `page_body` | a page's heading and explanation |
