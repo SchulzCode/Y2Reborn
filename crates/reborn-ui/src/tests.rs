@@ -6872,7 +6872,7 @@ fn home_menu_moves_a_place_and_home_follows_its_order() {
 }
 
 #[test]
-fn a_playlist_moves_to_another_place_in_the_playlists_list() {
+fn a_playlist_moves_submenusto_another_place_in_the_playlists_list() {
     // Y2Reborn #33: playlists were Favorites first, then A to Z, always.
     let (mut ui, mut m) = playlists_app();
     let names = |ui: &Ui, m: &AppModel| -> Vec<String> {
@@ -6991,4 +6991,22 @@ fn the_status_bar_shows_the_radios_only_while_connected() {
     assert_eq!(icons(&ui), off, "on but not connected: as if off");
     ui.wifi.status = WifiStatus::Connected("Home Wi-Fi".into());
     assert!(icons(&ui) > off, "connected Wi-Fi shows");
+}
+
+#[test]
+fn settings_count_the_songs_they_are_given() {
+    // Each frame takes the library out of the model while normalize runs: Settings and
+    // Settings > Library counted that empty list, so the count cache flipped every frame
+    // and the draw counted the whole library again.
+    let ui = Ui::default();
+    for screen in [Screen::Settings, Screen::SettingsLibrary] {
+        let mut m = app(screen);
+        let tracks = std::mem::take(&mut m.library.tracks);
+        let page = pages::page(&ui, &m, &tracks);
+        assert!(
+            page.rows.iter().any(|row| row.secondary == "9 songs"),
+            "{screen:?}: {:?}",
+            page.rows
+        );
+    }
 }

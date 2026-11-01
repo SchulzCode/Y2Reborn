@@ -179,7 +179,7 @@ pub fn page(ui: &Ui, m: &AppModel, tracks: &[Track]) -> Page {
         .with_rows(vec![Item::new("Browse Music", "home")]),
         Screen::NowPlaying => Page::default(),
         Screen::TrackInfo => track_info(m, tracks),
-        Screen::Settings => settings(ui, m),
+        Screen::Settings => settings(ui, m, tracks),
         Screen::Wifi => radio_firmware(m, "Wi-Fi").unwrap_or_else(|| wifi(ui)),
         Screen::Radio => radio_menu(ui),
         Screen::RadioStations => radio_stations(ui),
@@ -205,7 +205,7 @@ pub fn page(ui: &Ui, m: &AppModel, tracks: &[Track]) -> Page {
             row("Crossfade", "crossfade", crate::crossfade_label(m.settings.crossfade_ms))
                 .with_kind(RowKind::Chevron),
         ]),
-        Screen::SettingsLibrary => library(ui, m),
+        Screen::SettingsLibrary => library(ui, m, tracks),
         Screen::SettingsDisplay => {
             let mut rows = vec![];
             if m.platform.brightness_available {
@@ -280,7 +280,7 @@ pub fn output_name(ui: &Ui, m: &AppModel) -> String {
 /// the radios, the sound, the screen, the look (Skin), how Reborn behaves (Customize), your music
 /// (Library) and the player itself (System). A new setting goes where its question is
 /// (docs/ui/REBORN-SETTINGS-MAP.md: find the place first, then add the setting).
-fn settings(ui: &Ui, m: &AppModel) -> Page {
+fn settings(ui: &Ui, m: &AppModel, tracks: &[Track]) -> Page {
     let eq = if m.settings.eq_enabled || m.settings.eq_profile_on {
         eq_summary(m)
     } else {
@@ -291,7 +291,7 @@ fn settings(ui: &Ui, m: &AppModel) -> Page {
     } else {
         String::new()
     };
-    let songs = ui.library_counts(m, &m.library.tracks)[2];
+    let songs = ui.library_counts(m, tracks)[2];
     let update = match update_summary(m) {
         summary if summary.is_empty() || summary == "Up to date" => {
             short_version(reborn_core::VERSION)
@@ -1029,14 +1029,14 @@ fn pc_transfer(m: &AppModel) -> Page {
 
 /// Settings > Library: your music, where it is kept, and where your listening goes (owner,
 /// 9.2.10: Scan for Music sat in Storage, Last.fm at the top).
-fn library(ui: &Ui, m: &AppModel) -> Page {
+fn library(ui: &Ui, m: &AppModel, tracks: &[Track]) -> Page {
     // Short enough for the value column; the root row counts the songs too.
     let scan = if m.library.scanning {
         "Scanning…".to_owned()
     } else if m.library.error.is_some() {
         "Last scan interrupted".to_owned()
     } else {
-        crate::components::count(ui.library_counts(m, &m.library.tracks)[2], "song", "songs")
+        crate::components::count(ui.library_counts(m, tracks)[2], "song", "songs")
     };
     let storage = free_text(&m.platform.snapshot.storage.internal)
         .map(|t| t.split(" free").next().unwrap_or("").to_owned() + " free")
