@@ -76,8 +76,8 @@ through ALSA (wired) or BlueALSA (Bluetooth), and keeps its library in SQLite.
   step (Update Now: Download · Check · Install with progress, speed and time left; Cancel during
   the download). A to Z lists ignore case, accents and a leading "The".
 - Skins: Settings → Skin switches between Reborn's own look and skins that
-  restyle every screen (colours, fonts, pictures, layouts). Sixteen skins ship with it (Classic, Nano Glass, Walkman, Terminal, Winamp, Paper, Big Type,
-  Cassette, Neon Night, Zune, Bunny Bow and five Mini colours);
+  restyle every screen (colours, fonts, pictures, layouts). Seventeen skins ship with it (Classic, Nano Glass, Walkman, Terminal, Winamp, Paper, Big Type,
+  Cassette, Neon Night, Zune, Bunny Bow, Gallery and five Mini colours);
   more are added by copying a folder into `Skins` on the player. See [skins](docs/skins.md).
 - Error reports (Settings → About & Updates → Error Reports), opt-in after a one-time question:
   sent over Wi-Fi when something goes wrong or with Send Report Now, or saved to Internal Storage
