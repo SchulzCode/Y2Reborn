@@ -105,10 +105,12 @@ impl Key {
     }
 }
 /// What supplies a picture: a track's cover or a downloaded station logo.
+#[allow(dead_code)] // The benchmark reuses this module for local covers only.
 pub enum Art {
     Track(Key),
+    /// A bounded network cover, decoded from an anonymous file off the UI thread.
+    Memory(Vec<u8>),
     // The benchmark build shares this file and decodes covers only.
-    #[allow(dead_code)]
     Logo(PathBuf),
 }
 impl From<Key> for Art {
@@ -121,6 +123,19 @@ impl Art {
     fn load(&self, side: usize, cancel: &Cancel) -> Option<Vec<u8>> {
         match self {
             Self::Track(key) => key.load_cover(side, cancel),
+            Self::Memory(bytes) => {
+                use std::io::Write;
+                use std::os::fd::AsRawFd;
+                let fd = rustix::fs::memfd_create("reborn-cover", rustix::fs::MemfdFlags::CLOEXEC)
+                    .ok()?;
+                let mut file = std::fs::File::from(fd);
+                file.write_all(bytes).ok()?;
+                external_artwork(
+                    &PathBuf::from(format!("/proc/self/fd/{}", file.as_raw_fd())),
+                    side as u32,
+                )
+                .ok()
+            }
             Self::Logo(path) => {
                 let _cpu_hint = reborn_platform::workload::CpuWorkloadLease::acquire_workload_hint(
                     reborn_platform::workload::Class::ArtworkDecode,
@@ -135,6 +150,7 @@ impl Art {
     fn folder_revision(&self) -> u64 {
         match self {
             Self::Track(key) => key.folder_revision(),
+            Self::Memory(_) => 0,
             Self::Logo(_) => 0,
         }
     }
@@ -142,6 +158,12 @@ impl Art {
     fn revision(&self) -> (u64, i64) {
         match self {
             Self::Track(key) => key.revision(),
+            Self::Memory(bytes) => {
+                let hash = bytes.iter().fold(0xcbf2_9ce4_8422_2325u64, |h, b| {
+                    (h ^ u64::from(*b)).wrapping_mul(0x100_0000_01b3)
+                });
+                (bytes.len() as u64, hash as i64)
+            }
             Self::Logo(path) => std::fs::metadata(path)
                 .map(|m| {
                     (
@@ -280,9 +302,20 @@ impl Worker {
     // Used by the player; the benchmark build shares this file without them.
     #[allow(dead_code)]
     pub fn record_failure(&mut self, thumb: u64) {
-        if self.failed.len() < 4096 {
+        if !self.status(thumb).0 && self.failed.len() < 4096 {
             self.failed.insert(thumb);
         }
+    }
+
+    /// Whether a thumbnail failed, or remains queued, decoding, or unread.
+    pub fn status(&self, thumb: u64) -> (bool, bool) {
+        let (lock, _) = &*self.shared;
+        let pending = lock.lock().is_ok_and(|shared| {
+            shared.current == Some(thumb)
+                || shared.queue.iter().any(|job| job.thumb == thumb)
+                || shared.unread.contains_key(&(thumb, false))
+        });
+        (self.failed.contains(&thumb), pending)
     }
     #[allow(dead_code)]
     pub fn forget_failures(&mut self) {
@@ -580,6 +613,34 @@ mod tests {
         0, 0, 0, 144, 119, 83, 222, 0, 0, 0, 12, 73, 68, 65, 84, 120, 156, 99, 248, 207, 192, 0, 0,
         3, 1, 1, 0, 201, 254, 146, 239, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130,
     ];
+    #[test]
+    fn thumbnail_status_detects_work_dropped_for_sleep() {
+        let shared = Arc::new((Mutex::new(Shared::default()), Condvar::new()));
+        let (_tx, replies) = channel();
+        let mut worker = Worker {
+            shared,
+            replies,
+            failed: HashSet::new(),
+        };
+        worker.want(vec![Job {
+            thumb: 42,
+            art: Art::Memory(RED.to_vec()),
+            cache: PathBuf::new(),
+        }]);
+        assert_eq!(worker.status(42), (false, true));
+        assert!(worker.quiesce());
+        assert_eq!(worker.status(42), (false, false));
+        worker.record_failure(42);
+        assert_eq!(worker.status(42), (true, false));
+    }
+    #[test]
+    fn network_cover_decodes_from_memory() {
+        let image = Art::Memory(RED.to_vec());
+        let pixels = image.load(64, &Cancel::new().unwrap()).unwrap();
+        assert_eq!(pixels.len(), 64 * 64 * 4);
+        assert!(pixels[0] > pixels[1]);
+        assert_ne!(image.revision(), Art::Memory(vec![1, 2, 3]).revision());
+    }
     fn fixture_track(root: &Path, name: &str, id: i64, embedded: bool) -> Track {
         let path = root.join(name);
         let meta = std::fs::metadata(&path).unwrap();

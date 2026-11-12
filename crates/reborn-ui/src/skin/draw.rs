@@ -140,9 +140,9 @@ impl Scene<'_> {
             Flag::Checked => row.is_some_and(|r| r.item.kind == RowKind::Check(true)),
             Flag::Chevron => row.is_some_and(|r| r.item.kind == RowKind::Chevron),
             Flag::HasDetail => row.is_some_and(|r| !r.item.secondary.is_empty()),
-            Flag::RowArt => {
-                row.is_some_and(|r| r.item.art.is_some() || self.row_station(r).is_some())
-            }
+            Flag::RowArt => row.is_some_and(|r| {
+                r.item.art.is_some() || r.item.remote_art.is_some() || self.row_station(r).is_some()
+            }),
             // A song of the album shown, as Reborn's own album page numbers it (Y2Linux #75).
             Flag::Numbered => {
                 m.screen == Screen::Album && self.row_song(row).is_some_and(|t| t.track > 0)
@@ -662,6 +662,46 @@ fn nodes(c: &mut Canvas, s: &Scene, list: &[Node], ox: f32, oy: f32, row: Option
     }
 }
 
+fn draw_art(c: &mut Canvas, s: &Scene, b: Bx, source: &ArtSource, radius: &f32, row: Option<&Row>) {
+    let tint = s.paint(Paint::Fixed(0xFFFF_FFFF));
+    match source {
+        ArtSource::Current => {
+            if s.has_art && s.m.current().is_some() {
+                c.draw.push(Quad {
+                    tex: Tex::Art,
+                    ..Quad::rect(b.x, b.y, b.w, b.w, tint)
+                });
+                if *radius >= 2. {
+                    c.round_off(b.x, b.y, b.w, *radius, s.skin.bg());
+                }
+            } else if let Some(t) = s.m.current().filter(|t| t.is_radio()) {
+                // A station without its logo (yet): its initials.
+                components::initials_tile(c, crate::track_title(t), b.x, b.y, b.w);
+            } else {
+                components::placeholder(c, b.x, b.y, b.w, *radius, 0);
+            }
+        }
+        ArtSource::Row if row.and_then(|r| r.item.remote_art).is_some() => {
+            if let Some(key) = row.and_then(|r| r.item.remote_art) {
+                components::remote_cover(c, s.ui, key, b.x, b.y, b.w);
+            }
+        }
+        ArtSource::Row if row.and_then(|r| s.row_station(r)).is_some() => {
+            let station = row.and_then(|r| s.row_station(r)).unwrap();
+            components::station_logo(c, s.ui, station, b.x, b.y, b.w);
+            if *radius >= 2. {
+                c.round_off(b.x, b.y, b.w, *radius, s.skin.bg());
+            }
+        }
+        ArtSource::Row => {
+            let track = row
+                .and_then(|r| r.item.art)
+                .and_then(|i| s.tracks.get(i).map(|t| (i, t)));
+            components::cover_rounded(c, s.ui, track, b.x, b.y, b.w, *radius);
+        }
+    }
+}
+
 fn element(c: &mut Canvas, s: &Scene, el: &El, ox: f32, oy: f32, row: Option<&Row>) {
     match el {
         El::Rect {
@@ -829,41 +869,7 @@ fn element(c: &mut Canvas, s: &Scene, el: &El, ox: f32, oy: f32, row: Option<&Ro
                 c.disc(cx, cy, *r, s.paint(*paint));
             }
         }
-        El::Art { b, source, radius } => {
-            let b = at(*b, ox, oy);
-            let tint = s.paint(Paint::Fixed(0xFFFF_FFFF));
-            match source {
-                ArtSource::Current => {
-                    if s.has_art && s.m.current().is_some() {
-                        c.draw.push(Quad {
-                            tex: Tex::Art,
-                            ..Quad::rect(b.x, b.y, b.w, b.w, tint)
-                        });
-                        if *radius >= 2. {
-                            c.round_off(b.x, b.y, b.w, *radius, s.skin.bg());
-                        }
-                    } else if let Some(t) = s.m.current().filter(|t| t.is_radio()) {
-                        // A station without its logo (yet): its initials.
-                        components::initials_tile(c, crate::track_title(t), b.x, b.y, b.w);
-                    } else {
-                        components::placeholder(c, b.x, b.y, b.w, *radius, 0);
-                    }
-                }
-                ArtSource::Row if row.and_then(|r| s.row_station(r)).is_some() => {
-                    let station = row.and_then(|r| s.row_station(r)).unwrap();
-                    components::station_logo(c, s.ui, station, b.x, b.y, b.w);
-                    if *radius >= 2. {
-                        c.round_off(b.x, b.y, b.w, *radius, s.skin.bg());
-                    }
-                }
-                ArtSource::Row => {
-                    let track = row
-                        .and_then(|r| r.item.art)
-                        .and_then(|i| s.tracks.get(i).map(|t| (i, t)));
-                    components::cover_rounded(c, s.ui, track, b.x, b.y, b.w, *radius);
-                }
-            }
-        }
+        El::Art { b, source, radius } => draw_art(c, s, at(*b, ox, oy), source, radius, row),
         El::List {
             b,
             rows,

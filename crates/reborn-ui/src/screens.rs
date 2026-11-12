@@ -86,6 +86,7 @@ fn native_screen(
         Screen::Queue => crate::views_queue::page(c, ui, m, tracks, interactive),
         Screen::Search => crate::views_search::page(c, ui, m, tracks, interactive),
         Screen::Book => crate::views_books::book_page(c, ui, m, tracks, interactive),
+        Screen::AudiobookshelfBook => crate::audiobookshelf_ui::book_screen(c, ui, m, interactive),
         Screen::Settings
         | Screen::Wifi
         | Screen::Bluetooth
@@ -161,6 +162,16 @@ fn layout_keys(m: &AppModel, page: Option<&Page>, empty: bool) -> &'static [&'st
         Screen::PcTransfer => keys!("computer"),
         Screen::SettingsAudio => keys!("sound"),
         Screen::LastFm => keys!("lastfm"),
+        Screen::Audiobookshelf | Screen::AudiobookshelfLibraries | Screen::AudiobookshelfBooks => {
+            keys!("audiobookshelf")
+        }
+        Screen::AudiobookshelfBook => {
+            if paged {
+                &[]
+            } else {
+                &crate::audiobookshelf_ui::BOOK_LAYOUTS
+            }
+        }
         Screen::SettingsPlayback => keys!("playback"),
         Screen::Crossfade => keys!("crossfade"),
         Screen::Balance => keys!("balance"),
@@ -707,6 +718,10 @@ pub fn screen_title(m: &AppModel) -> String {
         Screen::PcTransfer => "Computer".into(),
         Screen::SettingsAudio => "Sound".into(),
         Screen::LastFm => "Last.fm".into(),
+        Screen::Audiobookshelf => "Audiobookshelf".into(),
+        Screen::AudiobookshelfLibraries => "Libraries".into(),
+        Screen::AudiobookshelfBooks => "Books".into(),
+        Screen::AudiobookshelfBook => "Book".into(),
         Screen::Equalizer => "Equalizer".into(),
         Screen::SettingsPlayback => "Playback".into(),
         Screen::Crossfade => "Crossfade".into(),

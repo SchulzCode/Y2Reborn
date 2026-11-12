@@ -11,8 +11,11 @@ use reborn_ui::{BluetoothDeviceView, BluetoothView, NetworkView, Ui, WifiStatus,
 use serde_json::{json, Value};
 use std::{fs, path::PathBuf};
 
+#[path = "reborn_preview/audiobookshelf.rs"]
+mod preview_audiobookshelf;
 #[path = "../skins.rs"]
 mod skins;
+use preview_audiobookshelf::at;
 
 fn tracks() -> Vec<Track> {
     let albums = [
@@ -277,13 +280,6 @@ fn home_focus(ui: &Ui, m: &mut AppModel, key: &str) {
         .unwrap_or_else(|| panic!("Home has no {key}"));
 }
 
-fn at(screen: Screen, filter: &str) -> AppModel {
-    let mut m = model();
-    m.screen = screen;
-    m.navigation.filter = filter.into();
-    m
-}
-
 /// `at` over the CJK library, playing `current` (an index into it).
 fn cjk_at(screen: Screen, filter: &str, current: usize) -> AppModel {
     let mut m = at(screen, filter);
@@ -447,7 +443,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let themes = skins::scan(&[PathBuf::from("skins")]);
     let album = "album:Quiet Harbour\u{1f}Low Tide";
-    let mut cases: Vec<(&str, AppModel, Setup)> = vec![];
+    let mut cases: Vec<(&str, AppModel, Setup)> = preview_audiobookshelf::cases();
     let none = || -> Setup { Box::new(|_, _| {}) };
     macro_rules! case {
         ($name:expr, $m:expr) => {

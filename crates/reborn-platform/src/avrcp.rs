@@ -414,6 +414,14 @@ impl Drop for Player {
     }
 }
 
+/// Answer a call from BlueZ, unless it asked for no answer: it marks remote button presses so, and
+/// an answer sent anyway only makes dbus-daemon log a rejected message.
+fn answer(c: &dbus::blocking::Connection, msg: &Message, reply: Message) {
+    if !msg.get_no_reply() {
+        let _ = c.send(reply);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -640,13 +648,5 @@ mod tests {
         drop(player);
         end.store(true, Ordering::Relaxed);
         worker.join().unwrap();
-    }
-}
-
-/// Answer a call from BlueZ, unless it asked for no answer: it marks remote button presses so, and
-/// an answer sent anyway only makes dbus-daemon log a rejected message.
-fn answer(c: &dbus::blocking::Connection, msg: &Message, reply: Message) {
-    if !msg.get_no_reply() {
-        let _ = c.send(reply);
     }
 }

@@ -446,14 +446,10 @@ impl Ui {
         }
     }
 
-    pub(crate) fn select_row(&mut self, m: &mut AppModel, tracks: &[Track], key: &str) -> Effect {
-        if key == "back" {
-            Self::back(m);
-            return Effect::None;
-        }
+    fn select_book(&mut self, m: &mut AppModel, key: &str) -> Option<Effect> {
         if let Some(book) = key.strip_prefix("book:") {
             Self::go(m, Screen::Book, book);
-            return Effect::LoadChapters(book.to_owned());
+            return Some(Effect::LoadChapters(book.to_owned()));
         }
         if m.screen == Screen::Book {
             let start = match key {
@@ -467,8 +463,19 @@ impl Ui {
             if let Some(start) = start {
                 let book = m.navigation.filter.clone();
                 Self::go(m, Screen::NowPlaying, "");
-                return Effect::PlayBook(book, start);
+                return Some(Effect::PlayBook(book, start));
             }
+        }
+        None
+    }
+
+    pub(crate) fn select_row(&mut self, m: &mut AppModel, tracks: &[Track], key: &str) -> Effect {
+        if key == "back" {
+            Self::back(m);
+            return Effect::None;
+        }
+        if let Some(effect) = self.select_book(m, key) {
+            return effect;
         }
         if key == "home" {
             Self::home(m);
@@ -667,6 +674,12 @@ impl Ui {
             m.navigation.focus = crate::customize::picker_focus(m, key);
             return Effect::None;
         }
+        if key == "audiobookshelf" {
+            Self::go(m, Screen::Audiobookshelf, "");
+            self.audiobookshelf.loading = true;
+            self.audiobookshelf.error = None;
+            return Effect::Audiobookshelf(reborn_core::AudiobookshelfRequest::Status);
+        }
         if let Some(screen) = route(key) {
             Self::go(m, screen, "");
             if screen == Screen::Balance {
@@ -749,6 +762,10 @@ impl Ui {
             Screen::Radio | Screen::RadioStations | Screen::RadioCategories | Screen::RadioInfo => {
                 return self.radio_select(m, key)
             }
+            Screen::Audiobookshelf
+            | Screen::AudiobookshelfLibraries
+            | Screen::AudiobookshelfBooks
+            | Screen::AudiobookshelfBook => return self.audiobookshelf_select(m, key),
             _ => {}
         }
         Effect::None

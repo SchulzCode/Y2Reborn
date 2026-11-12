@@ -195,6 +195,12 @@ fn group(
         let face = if selected { Face::S15 } else { Face::R15 };
         let tint = if row.enabled { color::TEXT } else { color::DIM };
         let cy = y + h / 2.;
+        let left = if let Some(key) = row.remote_art {
+            components::remote_cover(c, ui, key, 20., y + 5., 40.);
+            70.
+        } else {
+            28.
+        };
         match row.kind {
             RowKind::Toggle(on) => {
                 c.text_mid(28., cy, 300., &row.label, face, tint);
@@ -221,7 +227,7 @@ fn group(
                     WIDTH - 28.
                 };
                 let reserve = text::width(Face::R11, &value) + 16.;
-                c.text_mid(28., cy, right - 28. - reserve, &row.label, face, tint);
+                c.text_mid(left, cy, right - left - reserve, &row.label, face, tint);
                 c.text_mid_right(right, cy, &value, Face::R11, color::MUTED);
                 if row.kind == RowKind::Chevron {
                     components::chevron(c, WIDTH - 22., cy);

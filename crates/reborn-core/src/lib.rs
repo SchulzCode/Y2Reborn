@@ -1,6 +1,9 @@
 #![forbid(unsafe_code)]
+mod audiobookshelf;
+pub use audiobookshelf::AudiobookshelfRequest;
 pub mod albums;
 pub mod books;
+pub use books::BookStart;
 pub mod clock;
 mod countries;
 pub mod eq;
@@ -929,6 +932,10 @@ pub enum Screen {
     Playlists,
     /// Settings > Last.fm: sign-in, scrobbling and the scrobbler log.
     LastFm,
+    Audiobookshelf,
+    AudiobookshelfLibraries,
+    AudiobookshelfBooks,
+    AudiobookshelfBook,
     /// One playlist; the navigation filter holds its file's path.
     Playlist,
     /// About & Updates > Error Reports; filter "info": what is sent, "save":
@@ -1864,17 +1871,6 @@ impl AppModel {
     }
 }
 
-/// How an audiobook starts.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BookStart {
-    /// Where it was left, a little before.
-    Resume,
-    /// From its first chapter.
-    Beginning,
-    /// At the start of chapter `n`.
-    Chapter(usize),
-}
-
 /// Effects are requests to the application/service boundary. They carry no
 /// platform handles and can be asserted in host tests without hardware.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1886,6 +1882,7 @@ pub enum Effect {
     Radio(RadioRequest),
     Playlist(Box<PlaylistRequest>),
     LastFm(LastFmRequest),
+    Audiobookshelf(AudiobookshelfRequest),
     SetScrobbleLog(bool),
     /// Settings → System → Software Update → Update Notifications (Y2Reborn #97).
     SetUpdateNotices(bool),

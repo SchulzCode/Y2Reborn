@@ -563,7 +563,10 @@ fn the_book_list_and_page_follow_progress_and_start_books() {
     let fresh = row(&ui, &m);
     assert_eq!(fresh.label, "Momo");
     assert_eq!(fresh.secondary, "Michael Ende · 3 min");
-    assert!(fresh.art.is_none(), "no cover in the fixture");
+    assert!(
+        fresh.art.is_some(),
+        "request folder art even without embedded artwork"
+    );
     // Opening the book asks for its chapter marks.
     let key = fresh.key.strip_prefix("book:").unwrap().to_owned();
     assert_eq!(
@@ -4577,8 +4580,8 @@ fn lastfm_settings_follow_the_account_and_the_sign_in() {
     assert_eq!(row(&ui, &m).secondary, "Off");
     m.settings.scrobble_log = true;
     assert_eq!(row(&ui, &m).secondary, "Log file");
-    // Library: Scan for Music, Storage and Last.fm.
-    assert_eq!(ui.rows(&m, &m.library.tracks).len(), 3);
+    // Library includes Audiobookshelf alongside the existing settings.
+    assert_eq!(ui.rows(&m, &m.library.tracks).len(), 4);
     assert_eq!(select_key(&mut ui, &mut m, "lastfm"), Effect::None);
     assert_eq!(m.screen, Screen::LastFm);
     // A build without the app key: the log still works.

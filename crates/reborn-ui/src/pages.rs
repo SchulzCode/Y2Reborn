@@ -35,7 +35,7 @@ impl Page {
             ..Default::default()
         }
     }
-    fn hero(title: impl Into<String>, body: impl Into<String>) -> Self {
+    pub(crate) fn hero(title: impl Into<String>, body: impl Into<String>) -> Self {
         Self {
             hero: Some(Hero {
                 title: title.into(),
@@ -44,7 +44,7 @@ impl Page {
             ..Default::default()
         }
     }
-    fn with_rows(mut self, rows: Vec<Item>) -> Self {
+    pub(crate) fn with_rows(mut self, rows: Vec<Item>) -> Self {
         self.rows = rows;
         self
     }
@@ -185,6 +185,10 @@ pub fn page(ui: &Ui, m: &AppModel, tracks: &[Track]) -> Page {
         Screen::RadioStations => radio_stations(ui),
         Screen::RadioCategories => radio_categories(ui),
         Screen::RadioInfo => radio_info(ui),
+        Screen::Audiobookshelf | Screen::AudiobookshelfLibraries
+        | Screen::AudiobookshelfBooks | Screen::AudiobookshelfBook => {
+            crate::audiobookshelf_ui::page(ui, m.screen)
+        }
         Screen::Bluetooth => radio_firmware(m, "Bluetooth").unwrap_or_else(|| bluetooth(ui, m)),
         Screen::PcTransfer => pc_transfer(m),
         Screen::SettingsAudio => sound(ui, m),
@@ -1055,6 +1059,7 @@ fn library(ui: &Ui, m: &AppModel, tracks: &[Track]) -> Page {
             ),
             row("Storage", "storage", storage).with_kind(RowKind::Chevron),
             row("Last.fm", "lastfm", lastfm_summary(ui, m)).with_kind(RowKind::Chevron),
+            row("Audiobookshelf", "audiobookshelf", "").with_kind(RowKind::Chevron),
         ])
     }
 }
