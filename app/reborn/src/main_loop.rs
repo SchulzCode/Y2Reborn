@@ -296,11 +296,9 @@ pub(crate) fn run() -> Result<(), String> {
         art_square: Vec::new(),
         history_seen: None,
         history_track: None,
-        dirty: DirtyState {
-            render: true,
-            persistence: false,
-        },
+        dirty: DirtyState::initial(),
         root: root.clone(),
+        audiobookshelf: audiobookshelf::start(&root),
         radio_favorites: reborn_platform::radio::load_favorites(&root.join("state/radio.json")),
         radio_current: None,
         radio_sequence: 0,
@@ -1451,6 +1449,7 @@ impl MainLoop {
     /// The library scanner's results.
     fn scan_results(&mut self, rt: &mut Runtime) {
         if let Ok(result) = rt.scanner.results.try_recv() {
+            let download_scan = std::mem::take(&mut rt.ui.audiobookshelf.download_scan_active);
             // A no-op scan must not rematerialize the resident catalog or
             // invalidate its cached navigation rows. Deletions alone count.
             let refresh_catalog = match &result {
@@ -1477,14 +1476,11 @@ impl MainLoop {
                     // Files that could not be read are counted on Settings →
                     // Library, not announced after every start.
                     let songs = stats.discovered.saturating_sub(stats.unreadable);
-                    rt.ui.flash(match songs {
-                        _ if stats.rescanned > 0 && songs > 1 => {
-                            format!("{} new songs added", stats.rescanned.min(songs))
-                        }
-                        0 => "Scan finished. No music found.".to_owned(),
-                        1 => "Scan finished. 1 song in your library.".to_owned(),
-                        n => format!("Scan finished. {n} songs in your library."),
-                    });
+                    rt.ui.flash(crate::audiobookshelf::scan_message(
+                        download_scan,
+                        songs,
+                        stats.rescanned,
+                    ));
                 }
                 Ok(stats) => {
                     let error = format!(
@@ -1592,7 +1588,7 @@ impl MainLoop {
         for reply in radio_replies {
             rt.radio_reply(reply);
         }
-        rt.radio_tick();
+        rt.remote_audio_tick();
         rt.lost_peer_tick();
         rt.scrobble_tick();
         rt.note_history();

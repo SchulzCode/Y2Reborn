@@ -565,7 +565,10 @@ fn the_book_list_and_page_follow_progress_and_start_books() {
     let fresh = row(&ui, &m);
     assert_eq!(fresh.label, "Momo");
     assert_eq!(fresh.secondary, "Michael Ende · 3 min");
-    assert!(fresh.art.is_none(), "no cover in the fixture");
+    assert!(
+        fresh.art.is_some(),
+        "request folder art even without embedded artwork"
+    );
     // Opening the book asks for its chapter marks.
     let key = fresh.key.strip_prefix("book:").unwrap().to_owned();
     assert_eq!(
@@ -3981,7 +3984,13 @@ fn wifi_share_is_a_page_of_library_that_stops_with_back() {
     };
     assert_eq!(
         keys(&ui, &m),
-        ["scan_library", "storage", "wifi_share", "lastfm"]
+        [
+            "scan_library",
+            "storage",
+            "wifi_share",
+            "lastfm",
+            "audiobookshelf"
+        ]
     );
     assert_eq!(select_key(&mut ui, &mut m, "wifi_share"), Effect::None);
     assert_eq!(
@@ -5107,8 +5116,8 @@ fn lastfm_settings_follow_the_account_and_the_sign_in() {
     assert_eq!(row(&ui, &m).secondary, "Off");
     m.settings.scrobble_log = true;
     assert_eq!(row(&ui, &m).secondary, "Log file");
-    // Library: Scan for Music, Storage, Wi-Fi Share and Last.fm.
-    assert_eq!(ui.rows(&m, &m.library.tracks).len(), 4);
+    // Library includes Wi-Fi Share and Audiobookshelf alongside the existing settings.
+    assert_eq!(ui.rows(&m, &m.library.tracks).len(), 5);
     assert_eq!(select_key(&mut ui, &mut m, "lastfm"), Effect::None);
     assert_eq!(m.screen, Screen::LastFm);
     // A build without the app key: the log still works.

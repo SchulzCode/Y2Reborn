@@ -43,6 +43,7 @@ skins. Written in Rust, it decodes with FFmpeg, draws with OpenGL ES on the Y2's
   ([guide](https://github.com/SchulzCode/Y2Linux/blob/main/docs/FM-RADIO.md)).
 - **Audiobooks** with chapters, your place in every book, a speed per book (0.75–2×) and a sleep timer
   ([guide](https://github.com/SchulzCode/Y2Linux/blob/main/docs/AUDIOBOOKS.md)).
+- **Audiobookshelf**: browse a server and download books to listen offline ([guide](docs/audiobookshelf.md)).
 - **Last.fm scrobbling**: scan a QR code with your phone to sign in; plays wait on the player while offline
   ([guide](https://github.com/SchulzCode/Y2Linux/blob/main/docs/LASTFM.md)).
 

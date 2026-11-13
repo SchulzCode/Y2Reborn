@@ -57,8 +57,15 @@ impl Runtime {
         }
         let scan_ready = self.scanner.quiesce();
         let art_ready = self.thumbs.as_mut().is_none_or(|worker| worker.quiesce());
-        if !scan_ready || !art_ready {
+        let book_ready = self
+            .audiobookshelf
+            .as_ref()
+            .is_none_or(|worker| worker.quiesce());
+        if !scan_ready || !art_ready || !book_ready {
             self.scanner.resume();
+            if let Some(worker) = &self.audiobookshelf {
+                worker.resume();
+            }
             self.background.update(
                 &self.model.settings.music_directory,
                 &self.model.sources,
@@ -81,6 +88,9 @@ impl Runtime {
         })();
         if let Err(error) = prepared {
             self.scanner.resume();
+            if let Some(worker) = &self.audiobookshelf {
+                worker.resume();
+            }
             self.background.update(
                 &self.model.settings.music_directory,
                 &self.model.sources,
@@ -100,6 +110,9 @@ impl Runtime {
         self.sleep_prepared = false;
         self.sleep_prepared_since = None;
         self.scanner.resume();
+        if let Some(worker) = &self.audiobookshelf {
+            worker.resume();
+        }
         self.background.update(
             &self.model.settings.music_directory,
             &self.model.sources,

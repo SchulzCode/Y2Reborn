@@ -1209,7 +1209,7 @@ impl Database {
 pub fn system_folder(name: &std::ffi::OsStr) -> bool {
     matches!(
         name.as_encoded_bytes(),
-        b".Spotlight-V100" | b".fseventsd" | b".Trashes" | b".TemporaryItems"
+        b".Spotlight-V100" | b".fseventsd" | b".Trashes" | b".TemporaryItems" | b".RebornDownloads"
     )
 }
 pub fn unchanged(old: &Track, size: u64, mtime: i64) -> bool {
@@ -2288,6 +2288,7 @@ mod tests {
         assert!(system_folder(std::ffi::OsStr::new(".Spotlight-V100")));
         assert!(system_folder(std::ffi::OsStr::new(".fseventsd")));
         assert!(system_folder(std::ffi::OsStr::new(".Trashes")));
+        assert!(system_folder(std::ffi::OsStr::new(".RebornDownloads")));
         assert!(!system_folder(std::ffi::OsStr::new("Music")));
     }
     #[test]
@@ -3226,13 +3227,19 @@ mod scan_safety_tests {
         let album = root.join("Album");
         fs::create_dir(&album).unwrap();
         let tone = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/fixtures/tone.flac");
-        fs::copy(tone, album.join("01 Song.flac")).unwrap();
+        fs::copy(&tone, album.join("01 Song.flac")).unwrap();
         // AppleDouble companion: Finder metadata under an audio name.
         fs::write(album.join("._01 Song.flac"), b"\0\x05\x16\x07Mac OS X").unwrap();
         let spotlight = root.join(".Spotlight-V100");
         fs::create_dir(&spotlight).unwrap();
         fs::write(spotlight.join("store.flac"), b"index").unwrap();
         fs::set_permissions(&spotlight, fs::Permissions::from_mode(0o000)).unwrap();
+        let staging = root.join(".RebornDownloads");
+        fs::create_dir(&staging).unwrap();
+        fs::copy(&tone, staging.join("incomplete.flac")).unwrap();
+        let published = root.join("Audiobooks/Audiobookshelf/book-id/A Book");
+        fs::create_dir_all(&published).unwrap();
+        fs::copy(&tone, published.join("0001.flac")).unwrap();
         let (db, log) = database(&root);
         db.sources(vec![source.clone()]).unwrap();
         let stats =
@@ -3241,10 +3248,22 @@ mod scan_safety_tests {
         fs::set_permissions(&spotlight, fs::Permissions::from_mode(0o700)).unwrap();
         assert!(stats.complete);
         assert_eq!(stats.failures, 0);
-        assert_eq!(stats.discovered, 1);
+        assert_eq!(stats.discovered, 2);
         let rows = tracks(&db);
-        assert_eq!(rows.len(), 1);
-        assert!(rows[0].path.ends_with("Album/01 Song.flac"));
+        assert_eq!(rows.len(), 2);
+        assert!(rows
+            .iter()
+            .any(|row| row.path.ends_with("Album/01 Song.flac")));
+        assert!(rows
+            .iter()
+            .any(|row| row.path.ends_with("book-id/A Book/0001.flac")));
+        let mut book_tracks = rows.clone();
+        for track in &mut book_tracks {
+            track.book = reborn_core::books::is_book(track);
+        }
+        assert!(reborn_core::books::books(&book_tracks)
+            .iter()
+            .any(|book| book.title == "A Book" && book.parts.len() == 1));
         db.stop();
     }
 

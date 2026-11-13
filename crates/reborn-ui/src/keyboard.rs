@@ -21,7 +21,7 @@ use crate::{
 use reborn_core::Action;
 
 /// What the typed text is for.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub enum Purpose {
     /// `hidden`: typed under Other Network, so it may be open (an empty password).
     WifiPassword {
@@ -40,6 +40,21 @@ pub enum Purpose {
     LastFmPassword {
         username: String,
     },
+    AbsServer,
+    AbsUsername {
+        server: String,
+    },
+    AbsPassword {
+        server: String,
+        username: String,
+    },
+    AbsSearch,
+}
+
+impl std::fmt::Debug for Purpose {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Purpose { .. }")
+    }
 }
 
 impl Purpose {
@@ -53,12 +68,15 @@ impl Purpose {
             Self::PlaylistNew | Self::PlaylistRename => 60,
             Self::LastFmUser => 32,
             Self::LastFmPassword { .. } => 64,
+            Self::AbsServer => 200,
+            Self::AbsUsername { .. } | Self::AbsSearch => 128,
+            Self::AbsPassword { .. } => 256,
         }
     }
     fn secret(&self) -> bool {
         matches!(
             self,
-            Self::WifiPassword { .. } | Self::LastFmPassword { .. }
+            Self::WifiPassword { .. } | Self::LastFmPassword { .. } | Self::AbsPassword { .. }
         )
     }
     pub fn done_label(&self) -> &'static str {
@@ -70,6 +88,9 @@ impl Purpose {
             Self::PlaylistRename => "Rename",
             Self::LastFmUser => "Next",
             Self::LastFmPassword { .. } => "Sign In",
+            Self::AbsServer | Self::AbsUsername { .. } => "Next",
+            Self::AbsPassword { .. } => "Sign In",
+            Self::AbsSearch => "Search",
         }
     }
     pub(crate) fn title(&self) -> String {
@@ -83,6 +104,10 @@ impl Purpose {
             Self::PlaylistRename => "Rename Playlist".into(),
             Self::LastFmUser => "Last.fm Username".into(),
             Self::LastFmPassword { .. } => "Last.fm Password".into(),
+            Self::AbsServer => "Audiobookshelf Server".into(),
+            Self::AbsUsername { .. } => "Audiobookshelf Username".into(),
+            Self::AbsPassword { .. } => "Audiobookshelf Password".into(),
+            Self::AbsSearch => "Search Audiobookshelf".into(),
         }
     }
     fn prompt(&self) -> String {
@@ -100,6 +125,10 @@ impl Purpose {
             Self::PlaylistNew | Self::PlaylistRename => "Playlist name".into(),
             Self::LastFmUser => "Username".into(),
             Self::LastFmPassword { username } => format!("Password for “{username}”"),
+            Self::AbsServer => "HTTPS server address".into(),
+            Self::AbsUsername { .. } => "Username".into(),
+            Self::AbsPassword { .. } => "Password".into(),
+            Self::AbsSearch => "Title or author".into(),
         }
     }
 }
@@ -142,7 +171,7 @@ const DIGITS: [&str; 3] = ["1234567890", "-/:;()$&@\"", ".,?!'_%"];
 const SYMBOLS: [&str; 3] = ["[]{}#^*+=`", "\\|~<>.,?!'", "_-/:;\"@"];
 const ACCENTS: [&str; 3] = ["äöüßéèêàâá", "íìîóòôúùû", "çñøåæëï"];
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct Keyboard {
     pub purpose: Purpose,
     pub text: String,
@@ -162,6 +191,12 @@ pub struct Keyboard {
     /// Where up/down aim, kept over several rows so Down then Up returns to
     /// the same key across the half-key offsets.
     aim: Option<f32>,
+}
+
+impl std::fmt::Debug for Keyboard {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Keyboard { .. }")
+    }
 }
 
 /// What a key press asks of the owner of the keyboard.

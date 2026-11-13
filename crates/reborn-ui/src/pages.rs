@@ -37,7 +37,7 @@ impl Page {
             ..Default::default()
         }
     }
-    fn hero(title: impl Into<String>, body: impl Into<String>) -> Self {
+    pub(crate) fn hero(title: impl Into<String>, body: impl Into<String>) -> Self {
         Self {
             hero: Some(Hero {
                 title: title.into(),
@@ -46,7 +46,7 @@ impl Page {
             ..Default::default()
         }
     }
-    fn with_rows(mut self, rows: Vec<Item>) -> Self {
+    pub(crate) fn with_rows(mut self, rows: Vec<Item>) -> Self {
         self.rows = rows;
         self
     }
@@ -187,6 +187,10 @@ pub fn page(ui: &Ui, m: &AppModel, tracks: &[Track]) -> Page {
         Screen::RadioStations => radio::radio_stations(ui),
         Screen::RadioCategories => radio::radio_categories(ui),
         Screen::RadioInfo => radio::radio_info(ui),
+        Screen::Audiobookshelf | Screen::AudiobookshelfLibraries
+        | Screen::AudiobookshelfBooks | Screen::AudiobookshelfBook => {
+            crate::audiobookshelf_ui::page(ui, m.screen)
+        }
         Screen::Bluetooth => radio_firmware(m, "Bluetooth").unwrap_or_else(|| bluetooth(ui, m)),
         Screen::PcTransfer => pc_transfer(m),
         Screen::SettingsAudio => sound(ui, m),
@@ -867,17 +871,6 @@ fn pc_transfer(m: &AppModel) -> Page {
         None => page,
     }
     .with_rows(vec![Item::new("Scan for Music", "scan_library")])
-}
-
-/// Settings > Library: your music, where it is kept, and where your listening goes (owner,
-/// 9.2.10: Scan for Music sat in Storage, Last.fm at the top).
-/// Last.fm's row: the account, the log file, or Off.
-fn lastfm_summary(ui: &Ui, m: &AppModel) -> String {
-    match &ui.lastfm.user {
-        Some(user) => user.clone(),
-        None if m.settings.scrobble_log => "Log file".to_owned(),
-        None => "Off".to_owned(),
-    }
 }
 
 /// The hidden service menu: everything an owner or developer needs that a

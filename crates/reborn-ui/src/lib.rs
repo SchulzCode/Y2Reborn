@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 pub mod art;
+pub mod audiobookshelf_ui;
 mod boot;
 mod buttons_page;
 mod canvas;
@@ -133,6 +134,8 @@ pub struct Item {
     pub kind: RowKind,
     /// Index of the library track whose cover represents this row.
     pub art: Option<usize>,
+    /// An already requested service thumbnail, independent of the local library.
+    pub remote_art: Option<u64>,
 }
 
 impl Item {
@@ -144,6 +147,7 @@ impl Item {
             enabled: true,
             kind: RowKind::Plain,
             art: None,
+            remote_art: None,
         }
     }
 
@@ -454,6 +458,7 @@ pub struct Ui {
     pub wifi: WifiView,
     pub bluetooth: BluetoothView,
     pub radio: RadioView,
+    pub audiobookshelf: audiobookshelf_ui::View,
     pub lastfm: LastFmView,
     pub share: ShareView,
     pub pairing: Option<String>,
@@ -826,7 +831,7 @@ fn confirm_copy(action: ConfirmAction) -> (&'static str, &'static str) {
         ),
         ConfirmAction::ResetSettings => (
             "Reset Reborn Settings?",
-            "Playback, audio and display settings return to their defaults. Music, queue and pairings stay.",
+            "Settings return to defaults. Last.fm and Audiobookshelf are signed out. Music, queue and pairings stay.",
         ),
         ConfirmAction::ClearCache => (
             "Clear Cache?",

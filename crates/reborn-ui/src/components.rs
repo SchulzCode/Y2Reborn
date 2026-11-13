@@ -459,6 +459,18 @@ pub fn cover_rounded(
     }
 }
 
+/// Draw an already requested service cover, or its placeholder while it loads.
+pub fn remote_cover(c: &mut Canvas, ui: &Ui, key: u64, x: f32, y: f32, size: f32) {
+    if ui.thumb_resident(key) {
+        c.draw.push(reborn_graphics::Quad {
+            tex: reborn_graphics::Tex::Thumb(key),
+            ..reborn_graphics::Quad::rect(x, y, size, size, color::TEXT)
+        });
+    } else {
+        placeholder(c, x, y, size, (size * 0.11).max(4.), key);
+    }
+}
+
 /// The calm tint of a missing or loading cover with identity `key`.
 pub fn placeholder_color(key: u64) -> u32 {
     let hue = [

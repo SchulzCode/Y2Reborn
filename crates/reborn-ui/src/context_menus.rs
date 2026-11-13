@@ -564,6 +564,13 @@ impl Ui {
                         self.keyboard = None;
                         Effect::LastFm(reborn_core::LastFmRequest::Login { username, password })
                     }
+                    purpose @ (Purpose::AbsServer
+                    | Purpose::AbsUsername { .. }
+                    | Purpose::AbsPassword { .. }
+                    | Purpose::AbsSearch) => {
+                        let raw = std::mem::take(&mut k.text);
+                        self.audiobookshelf_keyboard(purpose, text, raw)
+                    }
                     Purpose::RadioSearch => {
                         if text.chars().count() < 2 {
                             self.flash("Type at least two letters");

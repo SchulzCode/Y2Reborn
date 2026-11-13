@@ -99,6 +99,11 @@ impl Runtime {
         }
         self.with_model_action(|runtime| runtime.effect_inner(e))
     }
+    fn stop_playback(&mut self) {
+        self.pause();
+        self.model.playback = PlaybackState::Stopped;
+    }
+
     pub(crate) fn effect_inner(&mut self, e: Effect) -> Result<(), String> {
         if self.sleep_prepared && !matches!(e, Effect::None) {
             return Err("sleep_operation_in_progress".into());
@@ -115,13 +120,11 @@ impl Runtime {
         match e {
             Effect::None => {}
             Effect::Platform(task) => self.on_platform(task)?,
-            Effect::StopPlayback => {
-                self.pause();
-                self.model.playback = PlaybackState::Stopped;
-            }
+            Effect::StopPlayback => self.stop_playback(),
             Effect::CancelDownload => client::abort_download(),
             Effect::Radio(request) => self.radio(request)?,
             Effect::LastFm(request) => self.lastfm_request(request)?,
+            Effect::Audiobookshelf(request) => self.audiobookshelf_request(request),
             Effect::SetScrobbleLog(on) => {
                 self.model.settings.scrobble_log = on;
                 self.checkpoint();

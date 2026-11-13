@@ -21,6 +21,14 @@ impl Runtime {
             return Ok(());
         }
         if task == reborn_core::PlatformTask::InternalStorageSetup
+            && self
+                .audiobookshelf
+                .as_ref()
+                .is_some_and(|worker| worker.busy())
+        {
+            return Err("Wait for Audiobookshelf to finish first".into());
+        }
+        if task == reborn_core::PlatformTask::InternalStorageSetup
             && matches!(
                 self.model.platform.snapshot.usb,
                 reborn_core::platform::UsbTransfer::Ready
