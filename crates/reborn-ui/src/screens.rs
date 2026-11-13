@@ -70,6 +70,11 @@ fn native_screen(
     interactive: bool,
 ) {
     match m.screen {
+        Screen::NowPlaying if m.current().is_some_and(Track::is_video) => {
+            if let Some(film) = m.current() {
+                crate::views_videos::now_playing(c, ui, m, film);
+            }
+        }
         Screen::NowPlaying if m.current().is_some() => {
             views_playing::now_playing(c, ui, m, tracks, has_art, interactive)
         }
@@ -82,7 +87,8 @@ fn native_screen(
         | Screen::Folders
         | Screen::Album
         | Screen::Artist
-        | Screen::Audiobooks => views_library::browse(c, ui, m, tracks, has_art, interactive),
+        | Screen::Audiobooks
+        | Screen::Videos => views_library::browse(c, ui, m, tracks, has_art, interactive),
         Screen::Queue => crate::views_queue::page(c, ui, m, tracks, interactive),
         Screen::Search => crate::views_search::page(c, ui, m, tracks, interactive),
         Screen::Book => crate::views_books::book_page(c, ui, m, tracks, interactive),
@@ -113,6 +119,10 @@ fn native_screen(
         }
         Screen::Radio | Screen::RadioStations | Screen::RadioCategories | Screen::RadioInfo => {
             crate::views_radio::screen(c, ui, m, tracks, interactive)
+        }
+        // Wi-Fi Share's address and code: a page with a QR code, like the Last.fm sign-in.
+        Screen::SettingsLibrary if !ui.share.address.is_empty() => {
+            views_settings::screen(c, ui, m, tracks, interactive)
         }
         _ => views_system::page(c, ui, m, tracks, interactive),
     }
@@ -188,6 +198,7 @@ fn layout_keys(m: &AppModel, page: Option<&Page>, empty: bool) -> &'static [&'st
         Screen::SettingsDisplay => keys!("display"),
         Screen::Customize => keys!("customize"),
         Screen::Audiobooks => keys!("audiobooks"),
+        Screen::Videos => keys!("videos"),
         Screen::Book => keys!("book"),
         Screen::SettingsSystem => keys!("service"),
         Screen::Battery => keys!("battery"),
@@ -252,12 +263,25 @@ pub(crate) fn skin_layout<'s>(
     if m.screen == Screen::LastFm && ui.lastfm.approval.is_some() {
         return None;
     }
+    // So is Wi-Fi Share's address with its code, and the drawing of the player's buttons.
+    if (m.screen == Screen::SettingsLibrary && !ui.share.address.is_empty())
+        || crate::buttons_page::face(m).is_some()
+        || film_playing(m)
+    {
+        return None;
+    }
     let page = skin_page(ui, m, tracks);
     let empty = m.screen == Screen::Albums && ui.row_count(m, tracks) == 0;
     layout_keys(m, page.as_ref(), empty)
         .iter()
         .find_map(|k| skin.layout(k).map(|l| (*k, l)))
         .map(|(k, l)| (k, l, page))
+}
+
+/// A film on Now Playing: the picture on black, the same in every skin (Y2Reborn #131: a skin's
+/// Now Playing layout has no picture, and its palette would tint the film).
+fn film_playing(m: &AppModel) -> bool {
+    m.screen == Screen::NowPlaying && m.current().is_some_and(Track::is_video)
 }
 
 fn skinned(ui: &Ui, skin: &Skin, m: &AppModel, tracks: &[Track], has_art: bool) -> Vec<Quad> {
@@ -306,7 +330,9 @@ fn skinned(ui: &Ui, skin: &Skin, m: &AppModel, tracks: &[Track], has_art: bool) 
         }
         None => {
             native_screen(&mut c, ui, m, tracks, has_art, interactive);
-            skin::remap(&mut c, start, &skin.palette, ui.cover_accent());
+            if !film_playing(m) {
+                skin::remap(&mut c, start, &skin.palette, ui.cover_accent());
+            }
         }
     }
     skinned_overlays(&mut c, ui, skin, m, tracks);
@@ -702,6 +728,7 @@ pub fn screen_title(m: &AppModel) -> String {
         Screen::TrackInfo => "Song Info".into(),
         Screen::Settings => "Settings".into(),
         Screen::Wifi => "Wi-Fi".into(),
+        Screen::Radio if m.navigation.filter == crate::RADIO_INTERNET => "Internet Radio".into(),
         Screen::Radio => "Radio".into(),
         Screen::RadioStations | Screen::RadioCategories if !m.navigation.filter.is_empty() => {
             m.navigation.filter.clone()
@@ -736,10 +763,12 @@ pub fn screen_title(m: &AppModel) -> String {
         Screen::TimeZone => crate::time_zone::title(m).unwrap_or("Time Zone").into(),
         Screen::DateTime => "Date & Time".into(),
         Screen::HomeMenu => "Home Menu".into(),
+        Screen::SettingsLibrary if m.navigation.filter == crate::SHARE => "Wi-Fi Share".into(),
         Screen::SettingsLibrary => "Library".into(),
         Screen::SettingsDisplay => "Display".into(),
         Screen::Customize => crate::customize::title(&m.navigation.filter).into(),
         Screen::Audiobooks => "Audiobooks".into(),
+        Screen::Videos => "Videos".into(),
         Screen::Book => "Audiobook".into(),
         Screen::SettingsSystem => "Service".into(),
         Screen::Battery => "Battery".into(),

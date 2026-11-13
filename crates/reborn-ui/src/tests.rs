@@ -356,7 +356,7 @@ fn home_menu_switches_pin_and_unpin_from_customize() {
     ui.action(&mut m, &tracks, Action::Select);
     assert_eq!(m.screen, Screen::HomeMenu);
     // Every place Home can show, in Home's order (#52, #55): Music,
-    // Audiobooks (Beta 8.19), the Music lists, Playlists, Radio, Search.
+    // Audiobooks (Beta 8.19), Videos, the Music lists, Playlists, Radio, Search.
     let rows = ui.rows(&m, &tracks);
     let keys: Vec<_> = rows.iter().map(|r| r.key.as_str()).collect();
     assert_eq!(
@@ -364,6 +364,7 @@ fn home_menu_switches_pin_and_unpin_from_customize() {
         [
             "home_show:music",
             "home_audiobooks",
+            "home_show:videos",
             "home_pin:artists",
             "home_pin:albums",
             "home_pin:tracks",
@@ -375,26 +376,27 @@ fn home_menu_switches_pin_and_unpin_from_customize() {
         ]
     );
     assert_eq!(rows[1].kind, crate::RowKind::Toggle(true));
-    assert_eq!(rows[2].kind, crate::RowKind::Toggle(false));
-    assert_eq!(rows[8].kind, crate::RowKind::Toggle(true));
-    m.navigation.focus = 2;
+    assert_eq!(rows[2].kind, crate::RowKind::Toggle(true), "Videos");
+    assert_eq!(rows[3].kind, crate::RowKind::Toggle(false));
+    assert_eq!(rows[9].kind, crate::RowKind::Toggle(true));
+    m.navigation.focus = 3;
     assert_eq!(
         ui.action(&mut m, &tracks, Action::Select),
         Effect::SetHomePin("artists".into(), true)
     );
     m.settings.pin_home("artists", true);
-    assert_eq!(ui.rows(&m, &tracks)[2].kind, crate::RowKind::Toggle(true));
+    assert_eq!(ui.rows(&m, &tracks)[3].kind, crate::RowKind::Toggle(true));
     assert_eq!(
         ui.action(&mut m, &tracks, Action::Select),
         Effect::SetHomePin("artists".into(), false)
     );
-    m.navigation.focus = 8;
+    m.navigation.focus = 9;
     assert_eq!(
         ui.action(&mut m, &tracks, Action::Select),
         Effect::SetHomeShown("radio".into(), false)
     );
     m.settings.show_on_home("radio", false);
-    assert_eq!(ui.rows(&m, &tracks)[8].kind, crate::RowKind::Toggle(false));
+    assert_eq!(ui.rows(&m, &tracks)[9].kind, crate::RowKind::Toggle(false));
     assert_eq!(
         ui.action(&mut m, &tracks, Action::Select),
         Effect::SetHomeShown("radio".into(), true)
@@ -632,6 +634,49 @@ fn the_book_list_and_page_follow_progress_and_start_books() {
             .any(|r| r.key == format!("book:{key}") && r.secondary == "Michael Ende"),
         "{found:?}"
     );
+}
+
+/// Y2Reborn #27: the Audiobooks rows are kept between frames; the playing book's place still
+/// moves with the sound, and a long list scrolls fast like the library's.
+#[test]
+fn the_book_list_is_kept_and_the_playing_book_follows_the_sound() {
+    use reborn_core::books::{books, Listening};
+    let mut ui = radios();
+    let mut m = app(Screen::Audiobooks);
+    with_book(&mut m);
+    let tracks = m.library.tracks.clone();
+    let book = books(&tracks).remove(0);
+    let first = ui.rows(&m, &tracks);
+    assert_eq!(ui.rows(&m, &tracks), first, "the same rows again");
+    assert_eq!(ui.row_count(&m, &tracks), 1);
+    // Playing part two: the row follows the position without a new library or progress.
+    m.replace_queue(book.parts.iter().map(|&i| tracks[i].clone()).collect(), 1)
+        .unwrap();
+    m.book = Some(Listening::new(&book, &tracks, 1.0));
+    m.position_ms = 15_000;
+    let quarter = ui.rows(&m, &tracks)[0].secondary.clone();
+    m.position_ms = 45_000;
+    let three_quarters = ui.rows(&m, &tracks)[0].secondary.clone();
+    assert_eq!(quarter, "Chapter 2 of 3 · 41 %");
+    assert_eq!(three_quarters, "Chapter 2 of 3 · 58 %");
+    // A fast turn moves several books at once.
+    m.book = None;
+    for n in 0..40u32 {
+        let mut t = tracks[tracks.len() - 1].clone();
+        t.id = 1000 + i64::from(n);
+        t.album = format!("Book {n:02}");
+        t.path = format!("/data/music/Hörbücher/Book {n:02}/01.mp3").into();
+        m.library.tracks.push(t);
+    }
+    let tracks = m.library.tracks.clone();
+    m.navigation.focus = 0;
+    ui.model_action(&mut m, Action::WheelClockwise(8));
+    assert!(
+        m.navigation.focus > 1,
+        "accelerated: {}",
+        m.navigation.focus
+    );
+    assert_eq!(ui.row_count(&m, &tracks), 41);
 }
 
 #[test]
@@ -1621,7 +1666,7 @@ fn settings_has_eight_places_and_customize_three_pages_with_pickers() {
     select_key(&mut ui, &mut m, "customize");
     assert_eq!(
         keys(&ui, &m),
-        ["home_menu", "customize:browsing", "customize:wheel"]
+        ["home_menu", "customize:browsing", "customize:buttons"]
     );
     assert!(hint(&ui, &m).starts_with("Which places Home shows"));
 
@@ -1637,7 +1682,8 @@ fn settings_has_eight_places_and_customize_three_pages_with_pickers() {
             "Sort Albums",
             "Artist's Albums",
             "Artists List",
-            "Lists Wrap Around"
+            "Lists Wrap Around",
+            "FM Radio"
         ]
     );
     assert_eq!(row(&ui, &m, "album_view").kind, RowKind::Toggle(true));
@@ -1678,19 +1724,22 @@ fn settings_has_eight_places_and_customize_three_pages_with_pickers() {
         (Screen::Customize, "")
     );
 
-    select_key(&mut ui, &mut m, "customize:wheel");
+    select_key(&mut ui, &mut m, "customize:buttons");
     assert_eq!(
         labels(&ui, &m),
         [
-            "Wheel on Now Playing",
+            "Layout",
+            "In Menus",
+            "On Now Playing",
+            "Screen Off",
+            "Hold Time",
             "Wheel Click",
-            "Haptics",
-            "Buttons While Screen Off"
+            "Haptics"
         ]
     );
     assert_eq!(
-        select_key(&mut ui, &mut m, "now_playing_wheel"),
-        Effect::SetNowPlayingWheel(reborn_core::NowPlayingWheel::Seek)
+        row(&ui, &m, "customize:buttons:layouts").secondary,
+        "Reborn Default"
     );
     // #67, #77: a switch, Off by default.
     assert_eq!(row(&ui, &m, "wheel_click").kind, RowKind::Toggle(false));
@@ -1705,16 +1754,309 @@ fn settings_has_eight_places_and_customize_three_pages_with_pickers() {
         select_key(&mut ui, &mut m, "set:haptics:1"),
         Effect::SetHaptics(reborn_core::Haptics::Light)
     );
+    // A session saved on the older Wheel & Buttons page opens Buttons.
+    m.navigation.filter = "wheel".into();
+    assert_eq!(labels(&ui, &m)[0], "Layout");
+}
+
+fn labels(ui: &Ui, m: &AppModel) -> Vec<String> {
+    ui.rows(m, &m.library.tracks)
+        .into_iter()
+        .map(|r| r.label)
+        .collect()
+}
+fn row(ui: &Ui, m: &AppModel, key: &str) -> Item {
+    ui.rows(m, &m.library.tracks)
+        .into_iter()
+        .find(|r| r.key == key)
+        .unwrap_or_else(|| panic!("no row {key}"))
+}
+fn hint(ui: &Ui, m: &AppModel) -> String {
+    pages::page(ui, m, &m.library.tracks)
+        .status
+        .unwrap_or_default()
+}
+
+/// Customize > Buttons (Beta 9.3.29): a button changed on its face page stays a draft until Save;
+/// Save checks it, walks the menus with it and puts it on trial; Keep keeps it, Undo (or the
+/// clock) brings back the layout before.
+#[test]
+fn a_changed_button_is_saved_on_trial_and_kept_or_undone() {
+    use reborn_core::buttons::{ButtonSettings, Command, Control, Gesture, Layer};
+    let mut ui = radios();
+    let mut m = app(Screen::Customize);
+    m.navigation.filter = "buttons".into();
+    select_key(&mut ui, &mut m, "customize:buttons:menus");
+    assert_eq!(
+        labels(&ui, &m).len(),
+        9,
+        "one row per button and wheel direction"
+    );
+    assert!(
+        ui.button_context(&m).protected,
+        "the button pages answer as Reborn Default"
+    );
+    // Pressing Next on the face picks Next instead of skipping a song.
+    assert_eq!(ui.model_action(&mut m, Action::NextTrack), Effect::None);
+    assert_eq!(m.navigation.focus, 1);
+    let drawn = drawn_text(&ui.draw(&m, &m.library.tracks.clone(), false));
+    assert!(
+        drawn.contains("Select to change") && drawn.contains("Fast Forward"),
+        "{drawn}"
+    );
+    // Next, press → Shuffle On/Off.
+    select_key(&mut ui, &mut m, "customize:buttons:menus:next");
+    assert_eq!(labels(&ui, &m), ["Press", "Hold"]);
+    select_key(&mut ui, &mut m, "customize:buttons:menus:next:press");
+    assert_eq!(
+        row(&ui, &m, "btn_set:menus:next:press:next").kind,
+        RowKind::Check(true)
+    );
+    assert_eq!(
+        select_key(&mut ui, &mut m, "btn_set:menus:next:press:shuffle"),
+        Effect::None
+    );
+    assert_eq!(
+        m.navigation.filter, "buttons:menus:next",
+        "back on the button's page"
+    );
+    assert!(labels(&ui, &m).contains(&"Back to Reborn Default".to_string()));
+    ui.model_action(&mut m, Action::Back);
     ui.model_action(&mut m, Action::Back);
     assert_eq!(
-        row(&ui, &m, "choose:screen_off_buttons").secondary,
-        "Play Buttons"
+        row(&ui, &m, "customize:buttons:layouts").secondary,
+        "Reborn Default · Edited"
     );
-    select_key(&mut ui, &mut m, "choose:screen_off_buttons");
-    assert_eq!(m.navigation.focus, 1);
     assert_eq!(
-        select_key(&mut ui, &mut m, "set:screen_off_buttons:0"),
-        Effect::SetScreenOffButtons(reborn_core::ScreenOffButtons::Locked)
+        row(&ui, &m, "customize:buttons:menus").secondary,
+        "1 button changed"
+    );
+    // Nothing applies before Save.
+    assert_eq!(m.settings.buttons, ButtonSettings::default());
+    let Effect::SetButtons(saved) = select_key(&mut ui, &mut m, "btn_save") else {
+        panic!("Save stores the layout");
+    };
+    assert_eq!(
+        m.navigation.modal,
+        Some(Modal::Confirm(reborn_core::ConfirmAction::KeepButtons))
+    );
+    assert_eq!(saved.active_name(), "My Buttons");
+    assert_eq!(
+        saved
+            .layout()
+            .resolve(Layer::Menus, Control::Next, Gesture::Press),
+        Command::Shuffle
+    );
+    m.settings.buttons = *saved.clone();
+    assert!(
+        !ui.button_context(&m).protected,
+        "the sheet answers with the new buttons"
+    );
+    let sheet: Vec<String> = ui
+        .modal_rows_public(&m, &[])
+        .into_iter()
+        .map(|r| r.label)
+        .collect();
+    assert_eq!(sheet, ["Undo", "Keep"]);
+    // Undo: the layout before.
+    m.navigation.modal_focus = 0;
+    let Effect::SetButtons(back) = ui.model_action(&mut m, Action::Select) else {
+        panic!("Undo restores");
+    };
+    assert_eq!(*back, ButtonSettings::default());
+    m.settings.buttons = *back;
+    // Again, and Keep.
+    select_key(&mut ui, &mut m, "customize:buttons:menus");
+    select_key(&mut ui, &mut m, "customize:buttons:menus:next");
+    select_key(&mut ui, &mut m, "customize:buttons:menus:next:press");
+    select_key(&mut ui, &mut m, "btn_set:menus:next:press:shuffle");
+    ui.model_action(&mut m, Action::Back);
+    ui.model_action(&mut m, Action::Back);
+    let Effect::SetButtons(saved) = select_key(&mut ui, &mut m, "btn_save") else {
+        panic!("saved");
+    };
+    m.settings.buttons = *saved;
+    m.navigation.modal_focus = 1;
+    assert_eq!(ui.model_action(&mut m, Action::Select), Effect::None);
+    assert!(m.navigation.modal.is_none());
+    assert!(ui
+        .buttons_trial_expired(&mut m, Instant::now() + Duration::from_secs(60))
+        .is_none());
+    // A third save left alone: the clock brings the layout before back.
+    select_key(&mut ui, &mut m, "customize:buttons:screen_off");
+    select_key(&mut ui, &mut m, "customize:buttons:screen_off:select");
+    select_key(&mut ui, &mut m, "customize:buttons:screen_off:select:press");
+    // The dark offers only what is safe in a pocket.
+    assert!(!labels(&ui, &m).contains(&"Open Settings".to_string()));
+    select_key(
+        &mut ui,
+        &mut m,
+        "btn_set:screen_off:select:press:play_pause",
+    );
+    ui.model_action(&mut m, Action::Back);
+    ui.model_action(&mut m, Action::Back);
+    let before = m.settings.buttons.clone();
+    let Effect::SetButtons(saved) = select_key(&mut ui, &mut m, "btn_save") else {
+        panic!("saved");
+    };
+    assert_eq!(
+        saved.own.len(),
+        1,
+        "the own layout in use was updated, not copied"
+    );
+    m.settings.buttons = *saved;
+    assert!(
+        ui.buttons_trial_expired(&mut m, Instant::now()).is_none(),
+        "not yet"
+    );
+    let restored = ui.buttons_trial_expired(&mut m, Instant::now() + crate::buttons_page::TRIAL);
+    assert_eq!(restored, Some(before));
+    assert!(m.navigation.modal.is_none());
+}
+
+#[test]
+fn a_layout_that_locks_people_out_is_not_saved() {
+    let mut ui = radios();
+    let mut m = app(Screen::Customize);
+    m.navigation.filter = "buttons".into();
+    // Back loses both its press and its hold: nothing would go back in the menus.
+    for gesture in ["press", "hold"] {
+        select_key(&mut ui, &mut m, "customize:buttons:menus");
+        select_key(&mut ui, &mut m, "customize:buttons:menus:back");
+        select_key(
+            &mut ui,
+            &mut m,
+            &format!("customize:buttons:menus:back:{gesture}"),
+        );
+        select_key(
+            &mut ui,
+            &mut m,
+            &format!("btn_set:menus:back:{gesture}:nothing"),
+        );
+        ui.model_action(&mut m, Action::Back);
+        ui.model_action(&mut m, Action::Back);
+    }
+    assert_eq!(select_key(&mut ui, &mut m, "btn_save"), Effect::None);
+    assert!(m.navigation.modal.is_none());
+    assert!(
+        hint(&ui, &m).contains("Nothing goes back"),
+        "{}",
+        hint(&ui, &m)
+    );
+    // Discard: the draft is gone.
+    select_key(&mut ui, &mut m, "btn_discard");
+    assert!(!labels(&ui, &m).contains(&"Save Changes".to_string()));
+}
+
+#[test]
+fn the_save_walk_reaches_buttons_and_home_with_any_usable_layout() {
+    use reborn_core::buttons::{built_in, Command, Control, Gesture, Layer, Layout};
+    for (id, _, _, layout) in built_in() {
+        assert_eq!(crate::buttons_page::walk(&layout), Ok(()), "{id}");
+    }
+    // Navigation moved to other buttons entirely: the wheel is the volume, the four buttons
+    // scroll, select and go back.
+    let mut moved = Layout::default();
+    let changes = [
+        (Control::WheelForward, Command::VolumeUp),
+        (Control::WheelBack, Command::VolumeDown),
+        (Control::Next, Command::ScrollForward),
+        (Control::Previous, Command::ScrollBack),
+        (Control::Select, Command::PlayPause),
+        (Control::PlayPause, Command::Select),
+    ];
+    for (control, command) in changes {
+        moved.set(Layer::Menus, control, Gesture::Press, Some(command));
+    }
+    assert_eq!(moved.check(), Ok(()));
+    assert_eq!(crate::buttons_page::walk(&moved), Ok(()));
+}
+
+#[test]
+fn the_quick_menu_and_the_start_up_escape_bring_back_reborn_default() {
+    use reborn_core::buttons::{Command, REBORN_DEFAULT};
+    let mut ui = radios();
+    let mut m = app(Screen::Home);
+    m.settings.buttons.active = "pocket".into();
+    m.navigation.modal = Some(Modal::QuickMenu);
+    assert!(
+        ui.button_context(&m).protected,
+        "the Quick Menu answers as Reborn Default"
+    );
+    let rows = ui.quick_menu_rows(&m);
+    let at = rows
+        .iter()
+        .position(|r| r.key == "quick:buttons")
+        .expect("a Buttons tile");
+    assert_eq!(
+        (rows[at].label.as_str(), rows[at].secondary.as_str()),
+        ("Buttons", "Use Default")
+    );
+    m.navigation.modal_focus = at;
+    let Effect::SetButtons(back) = ui.model_action(&mut m, Action::Select) else {
+        panic!("Reborn Default");
+    };
+    assert_eq!(back.active, REBORN_DEFAULT);
+    m.settings.buttons = *back;
+    assert!(!ui
+        .quick_menu_rows(&m)
+        .iter()
+        .any(|r| r.key == "quick:buttons"));
+    // Back held at start: the router asks for Reborn Default, also in the dark.
+    m.settings.buttons.active = "pocket".into();
+    m.navigation.modal = None;
+    m.screen_off = true;
+    let Effect::SetButtons(back) = ui.model_action(&mut m, Action::Command(Command::RebornDefault))
+    else {
+        panic!("Reborn Default");
+    };
+    assert_eq!(back.active, REBORN_DEFAULT);
+}
+
+#[test]
+fn layout_commands_act_and_the_now_playing_wheel_follows_the_layout() {
+    use reborn_core::buttons::{Command, Control, Gesture, Layer};
+    let mut ui = radios();
+    let mut m = app(Screen::Home);
+    assert_eq!(
+        ui.model_action(&mut m, Action::Command(Command::OpenSettings)),
+        Effect::None
+    );
+    assert_eq!(m.screen, Screen::Settings);
+    assert_eq!(
+        ui.model_action(&mut m, Action::Command(Command::Shuffle)),
+        Effect::SetShuffle(reborn_core::ShuffleMode::Songs)
+    );
+    assert_eq!(
+        ui.model_action(&mut m, Action::Command(Command::SleepTimer)),
+        Effect::SetSleepTimer(reborn_core::SleepChoice::Minutes(15))
+    );
+    // In the dark only what is safe in a pocket acts.
+    m.screen_off = true;
+    assert_eq!(
+        ui.model_action(&mut m, Action::Command(Command::OpenMusic)),
+        Effect::None
+    );
+    assert_eq!(m.screen, Screen::Settings);
+    m.screen_off = false;
+    // Now Playing: the wheel is what the layout says (an injected wheel action too).
+    let mut np = app(Screen::NowPlaying);
+    assert_eq!(ui.button_context(&np).layer, Layer::NowPlaying);
+    assert_eq!(
+        ui.model_action(&mut np, Action::WheelClockwise(1)),
+        Effect::AdjustVolume(2)
+    );
+    let mut layout = np.settings.buttons.layout();
+    layout.set(
+        Layer::NowPlaying,
+        Control::WheelForward,
+        Gesture::Press,
+        Some(Command::SeekForward),
+    );
+    np.settings.buttons.save(layout);
+    assert_eq!(
+        ui.model_action(&mut np, Action::WheelClockwise(1)),
+        Effect::Seek(1)
     );
 }
 
@@ -3624,6 +3966,200 @@ fn radio_menu_lists_own_and_directory_sources_and_explains_wifi() {
     assert_eq!(page.hero.map(|h| h.title), Some("Loading Stations…".into()));
 }
 
+fn fm(khz: u32) -> reborn_core::RadioStation {
+    reborn_core::RadioStation {
+        name: format!("FM {}.{} MHz", khz / 1000, khz % 1000 / 100),
+        url: format!("fm:{khz}"),
+        ..Default::default()
+    }
+}
+
+#[test]
+fn wifi_share_is_a_page_of_library_that_stops_with_back() {
+    let mut ui = radios();
+    let mut m = app(Screen::SettingsLibrary);
+    let keys = |ui: &Ui, m: &AppModel| -> Vec<String> {
+        let rows = ui.rows(m, &m.library.tracks);
+        rows.into_iter().map(|r| r.key).collect()
+    };
+    assert_eq!(
+        keys(&ui, &m),
+        [
+            "scan_library",
+            "storage",
+            "wifi_share",
+            "lastfm",
+            "audiobookshelf"
+        ]
+    );
+    assert_eq!(select_key(&mut ui, &mut m, "wifi_share"), Effect::None);
+    assert_eq!(
+        (m.screen, m.navigation.filter.as_str()),
+        (Screen::SettingsLibrary, crate::SHARE)
+    );
+    assert_eq!(crate::screens::screen_title(&m), "Wi-Fi Share");
+    // Without Wi-Fi the page leads there; with it, it waits for the server, then shows the address.
+    ui.wifi.status = WifiStatus::Disconnected;
+    assert_eq!(keys(&ui, &m), ["radio_wifi"]);
+    ui.wifi.status = WifiStatus::Connected("Home".into());
+    assert!(keys(&ui, &m).is_empty());
+    ui.share.address = "http://192.168.1.23".into();
+    ui.share.code = "482913".into();
+    ui.share.received = 2;
+    let page = crate::pages::page(&ui, &m, &m.library.tracks.clone());
+    assert_eq!(page.hero.expect("address").title, "http://192.168.1.23");
+    assert_eq!(page.rows[0].secondary, "2 files received");
+    // Stop Sharing is Back: the runtime stops the server when the page is left.
+    assert_eq!(select_key(&mut ui, &mut m, "share_stop"), Effect::None);
+    assert_eq!(
+        (m.screen, m.navigation.filter.as_str()),
+        (Screen::SettingsLibrary, "")
+    );
+}
+
+#[test]
+fn radio_offers_fm_and_internet_where_the_player_has_fm() {
+    use crate::FmView;
+    let mut ui = radios();
+    ui.radio.online = true;
+    let mut m = app(Screen::Radio);
+    let keys = |ui: &Ui, m: &AppModel| -> Vec<String> {
+        ui.rows(m, &m.library.tracks)
+            .into_iter()
+            .map(|r| r.key)
+            .collect()
+    };
+    // No tuner, or FM switched off in Customize: Radio is the internet stations' menu itself.
+    assert!(!keys(&ui, &m).contains(&"radio_fm".to_owned()));
+    assert_eq!(keys(&ui, &m)[0], "radio_favorites");
+    for (view, detail) in [
+        (FmView::NeedsFirmware, "Needs the tuner firmware"),
+        (FmView::NotScanned, "Search for stations"),
+        (FmView::Scanning { progress: 40 }, "Searching… 40%"),
+        (FmView::Ready { stations: 3 }, "3 stations"),
+        (FmView::Ready { stations: 0 }, "No stations found"),
+    ] {
+        ui.radio.fm = view;
+        let rows = ui.rows(&m, &m.library.tracks);
+        let row = rows.iter().find(|r| r.key == "radio_fm").expect("FM row");
+        assert_eq!(row.label, "FM Radio");
+        assert_eq!(row.secondary, detail);
+        // With FM, Radio is the choice between its two kinds and nothing else.
+        assert_eq!(keys(&ui, &m), ["radio_fm", "radio_internet"]);
+    }
+    // FM needs no internet: offline, Wi-Fi is asked for below Internet Radio only.
+    ui.radio.online = false;
+    assert_eq!(keys(&ui, &m), ["radio_fm", "radio_internet"]);
+    assert_eq!(select_key(&mut ui, &mut m, "radio_internet"), Effect::None);
+    assert_eq!(
+        (m.screen, m.navigation.filter.as_str()),
+        (Screen::Radio, crate::RADIO_INTERNET)
+    );
+    assert_eq!(crate::screens::screen_title(&m), "Internet Radio");
+    assert_eq!(keys(&ui, &m)[..2], ["radio_wifi", "radio_favorites"]);
+    assert!(!keys(&ui, &m).contains(&"radio_fm".to_owned()));
+    // Back is Radio's choice again.
+    let tracks = m.library.tracks.clone();
+    ui.action(&mut m, &tracks, Action::Back);
+    assert_eq!(keys(&ui, &m), ["radio_fm", "radio_internet"]);
+    // The switch in Customize, and the row on the page of a search that found nothing.
+    select_key(&mut ui, &mut m, "radio_fm");
+    ui.radio.set_stations_in_order(vec![]);
+    ui.radio.loading = false;
+    assert_eq!(
+        select_key(&mut ui, &mut m, "radio_fm_hide"),
+        Effect::Radio(reborn_core::RadioRequest::FmShow(false))
+    );
+    m.screen = Screen::Customize;
+    m.navigation.filter = "browsing".into();
+    assert!(m.settings.fm_radio);
+    assert_eq!(
+        select_key(&mut ui, &mut m, "fm_radio"),
+        Effect::Radio(reborn_core::RadioRequest::FmShow(false))
+    );
+}
+
+#[test]
+fn fm_list_search_and_empty_pages() {
+    use crate::FmView;
+    use reborn_core::RadioRequest;
+    let mut ui = radios();
+    ui.radio.online = true;
+    ui.radio.fm = FmView::NotScanned;
+    let mut m = app(Screen::Radio);
+    assert_eq!(
+        select_key(&mut ui, &mut m, "radio_fm"),
+        Effect::Radio(RadioRequest::Fm)
+    );
+    assert_eq!(
+        (m.screen, m.navigation.filter.as_str()),
+        (Screen::RadioStations, "FM Radio")
+    );
+    // The app answers with no stations yet: one action, the antenna hint.
+    ui.radio.set_stations_in_order(vec![]);
+    ui.radio.loading = false;
+    let page = crate::pages::page(&ui, &m, &m.library.tracks.clone());
+    let hero = page.hero.expect("empty page");
+    assert_eq!(hero.title, "No FM Stations Yet");
+    assert!(hero.body.contains("antenna"));
+    assert_eq!(
+        page.rows.iter().map(|r| r.key.as_str()).collect::<Vec<_>>(),
+        ["radio_fm_scan"]
+    );
+    assert_eq!(
+        select_key(&mut ui, &mut m, "radio_fm_scan"),
+        Effect::Radio(RadioRequest::FmScan)
+    );
+    assert_eq!(ui.radio.fm, FmView::Scanning { progress: 0 });
+    let page = crate::pages::page(&ui, &m, &m.library.tracks.clone());
+    assert!(page
+        .hero
+        .expect("searching")
+        .title
+        .starts_with("Searching for Stations"));
+    assert_eq!(page.rows[0].key, "radio_fm_cancel");
+    assert_eq!(
+        select_key(&mut ui, &mut m, "radio_fm_cancel"),
+        Effect::Radio(RadioRequest::FmCancel)
+    );
+    // A search in this session that found nothing: say so, offer it again.
+    ui.radio.fm = FmView::Ready { stations: 0 };
+    let page = crate::pages::page(&ui, &m, &m.library.tracks.clone());
+    assert_eq!(page.hero.expect("none found").title, "No FM Stations Found");
+    assert_eq!(page.rows[0].label, "Search Again");
+    // Stations found: kept in frequency order, then Search Again.
+    ui.radio.fm = FmView::Ready { stations: 3 };
+    ui.radio
+        .set_stations_in_order(vec![fm(87_600), fm(98_100), fm(104_000)]);
+    let page = crate::pages::page(&ui, &m, &m.library.tracks.clone());
+    assert!(page.hero.is_none());
+    let labels: Vec<_> = page.rows.iter().map(|r| r.label.as_str()).collect();
+    assert_eq!(
+        labels,
+        ["FM 87.6 MHz", "FM 98.1 MHz", "FM 104.0 MHz", "Search Again"]
+    );
+    assert_eq!(page.rows[1].secondary, "");
+    ui.radio.favorites = vec![fm(98_100).key().to_owned()];
+    let page = crate::pages::page(&ui, &m, &m.library.tracks.clone());
+    assert_eq!(page.rows[1].secondary, "Favorite");
+    // Choosing a station plays it like any radio station.
+    m.navigation.focus = 1;
+    assert_eq!(
+        select_key(&mut ui, &mut m, "station:1"),
+        Effect::Radio(RadioRequest::Play(1))
+    );
+    assert_eq!(m.screen, Screen::NowPlaying);
+    // Without the tuner files: what to copy, no station rows.
+    ui.radio.fm = FmView::NeedsFirmware;
+    m.screen = Screen::RadioStations;
+    let page = crate::pages::page(&ui, &m, &m.library.tracks.clone());
+    assert_eq!(
+        page.hero.expect("firmware").title,
+        "FM Needs the Tuner Firmware"
+    );
+    assert!(fm(98_100).is_fm() && !station("x", "1").is_fm());
+}
+
 #[test]
 fn radio_lists_sort_a_to_z_and_the_song_splits_into_title_and_artist() {
     let mut ui = radios();
@@ -4580,8 +5116,8 @@ fn lastfm_settings_follow_the_account_and_the_sign_in() {
     assert_eq!(row(&ui, &m).secondary, "Off");
     m.settings.scrobble_log = true;
     assert_eq!(row(&ui, &m).secondary, "Log file");
-    // Library includes Audiobookshelf alongside the existing settings.
-    assert_eq!(ui.rows(&m, &m.library.tracks).len(), 4);
+    // Library includes Wi-Fi Share and Audiobookshelf alongside the existing settings.
+    assert_eq!(ui.rows(&m, &m.library.tracks).len(), 5);
     assert_eq!(select_key(&mut ui, &mut m, "lastfm"), Effect::None);
     assert_eq!(m.screen, Screen::LastFm);
     // A build without the app key: the log still works.
@@ -5297,6 +5833,35 @@ fn joined_genres_split_and_joined_artists_read_with_commas() {
     assert!(!rows.iter().any(|r| r.key == "track:1"));
 }
 
+#[test]
+fn a_song_tagged_pop_slash_rock_is_in_pop_and_in_rock() {
+    // Y2Reborn #124: Picard's "Pop/Rock" was a genre of its own.
+    let tagged = |screen| {
+        let mut m = app(screen);
+        for (t, genre) in m.library.tracks.iter_mut().zip(["Pop/Rock", "Pop", "Rock"]) {
+            t.genre = genre.into();
+        }
+        m
+    };
+    let ui = radios();
+    let m = tagged(Screen::Genres);
+    let rows = ui.rows(&m, &m.library.tracks);
+    let pop = rows.iter().find(|r| r.key == "genre:Pop").unwrap();
+    assert!(pop.secondary.ends_with("2 songs"), "{}", pop.secondary);
+    assert!(rows.iter().any(|r| r.key == "genre:Rock"));
+    assert!(!rows.iter().any(|r| r.key.contains('/')));
+    let mut m = tagged(Screen::Tracks);
+    m.navigation.filter = "genre:Rock".into();
+    let rows = ui.rows(&m, &m.library.tracks);
+    assert!(rows.iter().any(|r| r.key == "track:0"));
+    assert!(rows.iter().any(|r| r.key == "track:2"));
+    assert!(!rows.iter().any(|r| r.key == "track:1"));
+    // A place saved before the split still shows its songs.
+    m.navigation.filter = "genre:Pop/Rock".into();
+    let rows = ui.rows(&m, &m.library.tracks);
+    assert!(rows.iter().any(|r| r.key == "track:0"));
+}
+
 /// The search page rebuilt per keystroke on a 20 000-song library
 /// (`cargo test -p reborn-ui --release -- --ignored --nocapture search_page_speed`).
 #[test]
@@ -5870,7 +6435,7 @@ fn the_now_playing_wheel_seeks_when_customize_says_so() {
         ui.model_action(&mut m, Action::WheelClockwise(1)),
         Effect::AdjustVolume(_)
     ));
-    m.settings.now_playing_wheel = reborn_core::NowPlayingWheel::Seek;
+    m.settings.buttons.active = "wheel_seeks".into();
     // As holding Previous/Next: one step a detent, the player sizes it.
     assert_eq!(
         ui.model_action(&mut m, Action::WheelClockwise(3)),
@@ -6235,6 +6800,7 @@ fn a_folder_lists_its_folders_then_its_songs_by_file_name() {
     assert_eq!(
         labels,
         [
+            "Shuffle",
             "Alpha",
             "Clubland 28",
             "zeta",
@@ -6243,17 +6809,22 @@ fn a_folder_lists_its_folders_then_its_songs_by_file_name() {
         ]
     );
     assert_eq!(
-        rows[1].secondary, "3 songs",
+        rows[2].secondary, "3 songs",
         "counted when the folder opened"
     );
-    assert_eq!(rows[4].secondary, "Darren Styles");
+    assert_eq!(rows[5].secondary, "Darren Styles");
     // The compilation by its numbered files, numbers as numbers.
     select_key(&mut ui, &mut m, "folder:/data/music/Hardcore/Clubland 28");
     let rows = ui.rows(&m, &tracks);
     let labels: Vec<&str> = rows.iter().map(|r| r.label.as_str()).collect();
     assert_eq!(
         labels,
-        ["01 - Zoe - One", "2 - Bea - Two", "10 - Xan - Ten"]
+        [
+            "Shuffle",
+            "01 - Zoe - One",
+            "2 - Bea - Two",
+            "10 - Xan - Ten"
+        ]
     );
     // A song plays the folder in that order: Next is the row below.
     let (one, two, ten) = (
@@ -6289,10 +6860,19 @@ fn a_folder_lists_its_folders_then_its_songs_by_file_name() {
 fn playing_a_folder_follows_folders_order_and_offers_shuffle_albums() {
     let (mut ui, mut m) = folder_app("folder:/data/music");
     let tracks = m.library.tracks.clone();
-    assert_eq!(ui.rows(&m, &tracks)[0].label, "Hardcore");
+    assert_eq!(ui.rows(&m, &tracks)[1].label, "Hardcore");
     // A storage is named for what it is, not its mount folder.
     assert_eq!(crate::screens::screen_title(&m), "Internal Storage");
-    m.navigation.focus = 0;
+    // Its Shuffle row mixes everything in its folders.
+    let Effect::PlayCollection {
+        members, shuffle, ..
+    } = select_key(&mut ui, &mut m, "shuffle:collection")
+    else {
+        panic!("the folder shuffles");
+    };
+    assert_eq!((shuffle, members.len()), (ShuffleMode::Songs, 7));
+    let (mut ui, mut m) = folder_app("folder:/data/music");
+    m.navigation.focus = 1;
     let menu = menu_labels(&mut ui, &mut m);
     assert_eq!(menu[..3], ["Play", "Shuffle", "Shuffle Albums"]);
     let Effect::PlayCollection {
@@ -6319,7 +6899,7 @@ fn playing_a_folder_follows_folders_order_and_offers_shuffle_albums() {
         ]
     );
     let (mut ui, mut m) = folder_app("folder:/data/music");
-    m.navigation.focus = 0;
+    m.navigation.focus = 1;
     assert!(matches!(
         menu_select(&mut ui, &mut m, "group_shuffle_albums"),
         Effect::PlayCollection {
@@ -6657,7 +7237,7 @@ fn an_album_with_and_without_album_artist_is_listed_once() {
         [
             ("Discovery".into(), "Daft Punk".into()),
             ("Homework".into(), "Daft Punk".into()),
-            ("Now 50".into(), "Artist One".into()),
+            ("Now 50".into(), "Various Artists".into()),
         ]
     );
     // The artist page lists each of its albums once (#46).
@@ -7051,15 +7631,15 @@ fn home_menu_moves_a_place_and_home_follows_its_order() {
         m.navigation.modal.is_none(),
         "no menu: the place is carried"
     );
-    for _ in 0..9 {
+    for _ in 0..10 {
         ui.model_action(&mut m, Action::WheelClockwise(1));
     }
     assert_eq!(
-        keys(&ui, &m)[9],
+        keys(&ui, &m)[10],
         "home_show:music",
         "drawn at its new place"
     );
-    assert_eq!(m.navigation.focus, 9);
+    assert_eq!(m.navigation.focus, 10);
     let Effect::SetHomeOrder(order) = ui.model_action(&mut m, Action::Select) else {
         panic!("Select places it");
     };
@@ -7408,4 +7988,53 @@ fn holding_select_on_a_quick_menu_tile_opens_its_settings() {
     assert_eq!(m.navigation.modal, Some(Modal::QuickMenu));
     open(&mut ui, &mut m, "quick:wifi");
     assert_eq!(ui.model_action(&mut m, Action::Select), Effect::WifiPower);
+}
+
+#[test]
+fn films_have_their_own_place_and_never_stand_among_the_songs() {
+    let mut ui = radios();
+    let mut m = app(Screen::Home);
+    assert!(
+        !ui.rows(&m, &m.library.tracks)
+            .iter()
+            .any(|r| r.key == "videos"),
+        "no films, no Videos on Home"
+    );
+    m.library.tracks[0].codec = "h264/aac".into();
+    m.library.tracks[0].title = "Holiday".into();
+    m.library.tracks[0].duration_ms = 125_000;
+    let tracks = m.library.tracks.clone();
+    assert!(tracks[0].is_video() && !tracks[0].is_music());
+    let home = ui.rows(&m, &tracks);
+    m.navigation.focus = home.iter().position(|r| r.key == "videos").unwrap();
+    ui.action(&mut m, &tracks, Action::Select);
+    assert_eq!(m.screen, Screen::Videos);
+    let rows = ui.rows(&m, &tracks);
+    assert_eq!(rows.len(), 1);
+    assert_eq!(
+        (rows[0].label.as_str(), rows[0].key.as_str()),
+        ("Holiday", "track:0")
+    );
+    assert_eq!(rows[0].secondary, "2 min");
+    // Select plays the film at once and shows it, with the other films as
+    // its collection in the list's order: Next is the film below (#128).
+    let mut tracks = tracks;
+    tracks[2].codec = "h264/aac".into();
+    tracks[2].title = "Arrival".into();
+    m.library.tracks = tracks.clone();
+    let rows = ui.rows(&m, &tracks);
+    let keys: Vec<&str> = rows.iter().map(|r| r.key.as_str()).collect();
+    assert_eq!(keys, ["track:2", "track:0"]);
+    m.navigation.focus = 1;
+    match ui.action(&mut m, &tracks, Action::Select) {
+        Effect::PlayCollection {
+            selected, members, ..
+        } => assert_eq!((selected, members), (0, vec![2, 0])),
+        other => panic!("a film plays with the Videos list: {other:?}"),
+    }
+    assert_eq!(m.screen, Screen::NowPlaying);
+    // Songs does not list it.
+    let mut songs = app(Screen::Tracks);
+    songs.library.tracks = tracks.clone();
+    assert!(!ui.rows(&songs, &tracks).iter().any(|r| r.key == "track:0"));
 }

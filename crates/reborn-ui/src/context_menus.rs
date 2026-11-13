@@ -64,6 +64,9 @@ impl Ui {
                 }
                 Effect::None
             }
+            Some(Modal::Confirm(ConfirmAction::KeepButtons)) => {
+                self.keep_buttons(m, key == "confirm")
+            }
             Some(Modal::Confirm(confirm)) => {
                 if key == "cancel" {
                     Self::close_modal(m);
@@ -106,6 +109,7 @@ impl Ui {
                         Effect::Platform(PlatformTask::ReportEnable(key == "confirm"))
                     }
                     ConfirmAction::LoudVolume => Effect::AllowLoudVolume,
+                    ConfirmAction::KeepButtons => Effect::None,
                 }
             }
             Some(Modal::ContextMenu) => self.context_action(m, tracks, &key),

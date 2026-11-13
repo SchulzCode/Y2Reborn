@@ -78,6 +78,11 @@ impl Ui {
             (Some(t), None) => sleep_choice_label(t.choice, m.book_part().is_some()),
         };
         rows.push(Item::new("Sleep Timer", "quick:sleep").with_secondary(timer));
+        // A layout of one's own: one Select back to Reborn Default (the Quick Menu itself always
+        // answers as Reborn Default, and Power, which opens it, is in no layout).
+        if m.settings.buttons.active != reborn_core::buttons::REBORN_DEFAULT {
+            rows.push(Item::new("Buttons", "quick:buttons").with_secondary("Use Default"));
+        }
         // Not while the platform works (an update, a repair): it owns the restart.
         for (label, key) in [
             ("Restart", "quick:restart"),
@@ -119,11 +124,17 @@ impl Ui {
             Some("quick:wifi") => Screen::Wifi,
             Some("quick:bluetooth") => Screen::Bluetooth,
             Some("quick:brightness") => Screen::SettingsDisplay,
+            Some("quick:buttons") => Screen::Customize,
             _ => return true,
         };
         self.adjusting_brightness = false;
         Self::close_modal(m);
-        Self::go(m, screen, "");
+        let filter = if screen == Screen::Customize {
+            crate::buttons_page::BUTTONS
+        } else {
+            ""
+        };
+        Self::go(m, screen, filter);
         true
     }
 
@@ -136,6 +147,10 @@ impl Ui {
             }
             "quick:wifi" => Effect::WifiPower,
             "quick:bluetooth" => Effect::BluetoothPower,
+            "quick:buttons" => {
+                Self::close_modal(m);
+                self.run_command(m, &[], reborn_core::buttons::Command::RebornDefault)
+            }
             "quick:sleep" => {
                 Self::open_modal(m, Modal::SleepTimer);
                 Effect::None

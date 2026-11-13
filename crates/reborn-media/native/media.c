@@ -50,6 +50,9 @@
 #include <time.h>
 #include <unistd.h>
 #include "seek_index.h"
+/* video.c */
+int rb_video_codec(enum AVCodecID id);
+int rb_video_thumbnail(const char *path, uint8_t *rgba, int side);
 
 typedef struct {
   atomic_int cancelled;
@@ -182,6 +185,8 @@ typedef struct {
   char filter_description[1024];
   uint64_t open_us, probe_us;
   uint32_t info_runs;
+  /* A film: the file has a moving picture beside its sound (video.c reads it). */
+  char *video_path;
 } RbMedia;
 
 static const char *tag(RbMedia *m, const char *key) {
@@ -1009,6 +1014,7 @@ void rb_media_close(RbMedia *m) {
   if (m->file) fclose(m->file);
   if (m->stream_fd > 0) close(m->stream_fd);
   free(m->pending);
+  free(m->video_path);
   free(m);
 }
 
@@ -1086,22 +1092,24 @@ static int stream_fd_from_path(const char *path) {
   }
   return value > 2 && value <= 65535 ? (int)value : -1;
 }
-/* Video is refused, except a cover: an attached picture, or in MP4/M4B
- * beside audio a picture track (audiobook tools store the cover as a
- * one-frame video stream). Such a track is never read or decoded. */
-static int admit_streams(RbMedia *m) {
-  unsigned audio = 0;
+/* This membrane plays sound only: a picture track beside it is never read or
+ * decoded here (a film's pictures are video.c's, a one-frame track is how
+ * audiobook tools store a cover). A file with pictures and no sound is refused. */
+static int admit_streams(RbMedia *m, const char *path) {
+  unsigned audio = 0, film = 0;
   for (unsigned i = 0; i < m->f->nb_streams; i++)
     audio += m->f->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_AUDIO;
-  int mov = !strncmp(m->f->iformat->name, "mov,", 4);
   for (unsigned i = 0; i < m->f->nb_streams; i++) {
     AVStream *s = m->f->streams[i];
     if (s->codecpar->codec_type != AVMEDIA_TYPE_VIDEO ||
         (s->disposition & AV_DISPOSITION_ATTACHED_PIC))
       continue;
-    if (!mov || !audio) return AVERROR_INVALIDDATA;
+    if (!audio) return AVERROR_INVALIDDATA;
     s->discard = AVDISCARD_ALL;
+    /* More than a cover: a picture track with many pictures or a real frame rate. */
+    film |= s->nb_frames != 1 && rb_video_codec(s->codecpar->codec_id);
   }
+  if (film && path && !(m->video_path = strdup(path))) return AVERROR(ENOMEM);
   return 0;
 }
 static int open_stream(RbMedia *m, int fd) {
@@ -1123,13 +1131,14 @@ static int open_stream(RbMedia *m, int fd) {
   m->f->max_streams = 4;
   AVDictionary *options = NULL;
   av_dict_set(&options, "protocol_whitelist", "file", 0);
-  av_dict_set(&options, "format_whitelist", "mp3,aac,ogg,flac", 0);
+  /* wav: the FM tuner's capture arrives as a WAV stream (reborn_platform::fm). */
+  av_dict_set(&options, "format_whitelist", "mp3,aac,ogg,flac,wav", 0);
   uint64_t start = micros();
   int ret = avformat_open_input(&m->f, "", NULL, &options);
   m->open_us = micros() - start;
   av_dict_free(&options);
   if (ret < 0) return ret;
-  return admit_streams(m);
+  return admit_streams(m, NULL);
 }
 static int open_input(RbMedia *m, const char *path, RbCancel *cancel) {
   deadline(cancel);
@@ -1163,7 +1172,7 @@ static int open_input(RbMedia *m, const char *path, RbCancel *cancel) {
   m->f->max_streams = 16;
   AVDictionary *options = NULL;
   av_dict_set(&options, "protocol_whitelist", "file", 0);
-  av_dict_set(&options, "format_whitelist", "flac,mp3,mov,ogg,wav,aac,aiff,ape,wv", 0);
+  av_dict_set(&options, "format_whitelist", "flac,mp3,mov,ogg,wav,aac,aiff,ape,wv,matroska,avi", 0);
   uint64_t start = micros();
   int ret = avformat_open_input(&m->f, path, NULL, &options);
   m->open_us = micros() - start;
@@ -1172,7 +1181,7 @@ static int open_input(RbMedia *m, const char *path, RbCancel *cancel) {
    * report invalid data ("STSZ atom truncated", Y2Linux #84), which hid why. */
   if (m->io->error == AVERROR(EFBIG) || m->io->error == AVERROR_EXIT) return m->io->error;
   if (ret < 0) return ret;
-  return admit_streams(m);
+  return admit_streams(m, path);
 }
 static int stream_info(RbMedia *m) {
   /* Attached images do not supply audio properties. Discard them during
@@ -1237,6 +1246,16 @@ static void extract_metadata(RbMedia *m, RbMetadata *meta) {
   text(meta->date, sizeof(meta->date), alias(m, "date", "year"));
   text(meta->genre, sizeof(meta->genre), tag(m, "genre"));
   text(meta->codec, sizeof(meta->codec), avcodec_get_name(p->codec_id));
+  /* A film names both codecs, picture first ("h264/aac"): the library tells films by the "/". */
+  if (m->video_path)
+    for (unsigned i = 0; i < m->f->nb_streams; i++) {
+      AVCodecParameters *v = m->f->streams[i]->codecpar;
+      if (v->codec_type != AVMEDIA_TYPE_VIDEO || !rb_video_codec(v->codec_id)) continue;
+      snprintf(meta->codec, sizeof(meta->codec), "%s/%s", avcodec_get_name(v->codec_id),
+               avcodec_get_name(p->codec_id));
+      meta->artwork = 1;
+      break;
+    }
   meta->track = ordinal(alias(m, "track", "tracknumber"));
   meta->disc = ordinal(alias(m, "disc", "discnumber"));
   meta->rate = p->sample_rate;
@@ -1626,6 +1645,8 @@ int rb_media_art(RbMedia *m, uint8_t *out, int side) {
     error = r; /* A corrupt first cover must not hide a later valid cover. */
 
   }
+  /* A film without a cover of its own: one of its pictures. */
+  if (m->video_path) return rb_video_thumbnail(m->video_path, out, side);
   return error;
 }
 

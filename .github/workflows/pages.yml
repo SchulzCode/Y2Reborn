@@ -1,0 +1,41 @@
+# Publishes site/ as the project's website (GitHub Pages).
+name: Website
+
+on:
+  push:
+    branches: [main]
+    paths: ['site/**', '.github/workflows/pages.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: site
+      # "What's new" starts from this copy of the newest releases; the page asks GitHub again when it
+      # is opened. A failed download keeps the copy in the repository.
+      - name: Newest releases
+        run: |
+          curl -fsS 'https://api.github.com/repos/SchulzCode/Y2Linux/releases?per_page=8' \
+            | jq '[.[] | select(.draft | not) | {name, tag_name, published_at, html_url, body}]' \
+            > releases.tmp && mv releases.tmp site/releases.json || true
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - id: deployment
+        uses: actions/deploy-pages@v4

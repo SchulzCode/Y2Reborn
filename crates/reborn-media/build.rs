@@ -3,6 +3,7 @@ use std::{collections::BTreeSet, env, path::PathBuf};
 fn main() {
     for source in [
         "native/media.c",
+        "native/video.c",
         "native/seek_index.c",
         "native/seek_index.h",
     ] {
@@ -47,6 +48,7 @@ fn main() {
     let mut build = cc::Build::new();
     build
         .file("native/media.c")
+        .file("native/video.c")
         .file("native/seek_index.c")
         .flag("-std=c11")
         .flag("-fPIC")

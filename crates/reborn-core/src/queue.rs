@@ -37,6 +37,16 @@ pub fn shuffle_from<T>(items: &mut [T], from: usize, mut seed: u64) {
     }
 }
 
+/// Whether `tracks` play in their order even with Shuffle on (only a Shuffle
+/// row shuffles them): one album (Y2Reborn #113), or films, which follow the
+/// Videos list (Y2Reborn #128).
+pub fn keeps_order<'a>(tracks: impl IntoIterator<Item = &'a Track> + Clone) -> bool {
+    one_album(tracks.clone()) || {
+        let mut tracks = tracks.into_iter().peekable();
+        tracks.peek().is_some() && tracks.all(Track::is_video)
+    }
+}
+
 /// Whether `tracks` are one album as Shuffle Albums sees one (one album
 /// folder and one album tag, not empty) with one album artist. Such a queue
 /// plays in its order unless a Shuffle row asked for shuffle (Y2Reborn #113).
@@ -713,6 +723,25 @@ mod tests {
         discs[0].path = "/m/A/CD 1/01 x.mp3".into();
         discs[1].path = "/m/A/CD 2/01 x.mp3".into();
         assert!(one_album(&discs));
+    }
+
+    #[test]
+    fn films_keep_their_order_like_one_album() {
+        let mut films = [song(1), song(2)];
+        for film in &mut films {
+            film.codec = "h264/aac".into();
+        }
+        assert!(
+            keeps_order(&films),
+            "Y2Reborn #128: the Videos list's order"
+        );
+        assert!(keeps_order(&[album_song(1, "A", 1), album_song(2, "A", 2)]));
+        assert!(
+            !keeps_order(&[films[0].clone(), song(3)]),
+            "a film among songs"
+        );
+        assert!(!keeps_order(&[song(1), song(2)]));
+        assert!(!keeps_order(&[]));
     }
 
     #[test]

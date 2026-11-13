@@ -13,6 +13,10 @@ use std::{fs, path::PathBuf};
 
 #[path = "reborn_preview/audiobookshelf.rs"]
 mod preview_audiobookshelf;
+#[path = "preview/buttons.rs"]
+mod preview_buttons;
+#[path = "preview/radio.rs"]
+mod preview_radio;
 #[path = "../skins.rs"]
 mod skins;
 use preview_audiobookshelf::at;
@@ -1464,70 +1468,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         m.queue_entry_ids.clear();
     });
     // Internet radio (Beta 4)
-    let stations = || {
-        vec![
-            reborn_core::RadioStation {
-                uuid: "a".into(),
-                name: "Radio Swiss Jazz".into(),
-                url: "http://a/".into(),
-                country: "Switzerland".into(),
-                codec: "MP3".into(),
-                bitrate: 128,
-                tags: "jazz,smooth jazz,swiss".into(),
-                favicon: "http://a/logo.png".into(),
-                homepage: "https://www.radioswissjazz.ch".into(),
-                language: "german,english".into(),
-                countrycode: "CH".into(),
-                votes: 4210,
-                clicks: 2380,
-            },
-            reborn_core::RadioStation {
-                uuid: "b".into(),
-                name: "FIP".into(),
-                url: "http://b/".into(),
-                country: "France".into(),
-                codec: "AAC".into(),
-                bitrate: 192,
-                tags: "eclectic,jazz,world music".into(),
-                favicon: "http://b/logo.png".into(),
-                homepage: "https://www.radiofrance.fr/fip".into(),
-                language: "french".into(),
-                countrycode: "FR".into(),
-                votes: 9120,
-                clicks: 5021,
-            },
-            reborn_core::RadioStation {
-                uuid: "c".into(),
-                name: "SomaFM Groove Salad".into(),
-                url: "http://c/".into(),
-                country: "USA".into(),
-                codec: "MP3".into(),
-                bitrate: 128,
-                tags: "ambient,chillout".into(),
-                favicon: String::new(),
-                homepage: "https://somafm.com".into(),
-                language: "english".into(),
-                countrycode: "US".into(),
-                votes: 15400,
-                clicks: 3900,
-            },
-            reborn_core::RadioStation {
-                uuid: "d".into(),
-                name: "BBC World Service".into(),
-                url: "http://d/".into(),
-                country: "UK".into(),
-                codec: "MP3".into(),
-                bitrate: 56,
-                tags: "news".into(),
-                favicon: String::new(),
-                homepage: "https://www.bbc.co.uk/worldservice".into(),
-                language: "english".into(),
-                countrycode: "GB".into(),
-                votes: 7300,
-                clicks: 8800,
-            },
-        ]
-    };
+    let stations = preview_radio::stations;
     case!("60-radio", at(Screen::Radio, ""), move |ui, m| {
         ui.radio.online = true;
         ui.radio.favorites = vec!["a".into(), "b".into()];
@@ -1540,6 +1481,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ui.radio.favorites = vec!["a".into(), "b".into()];
         m.navigation.focus = 1;
     });
+    cases.extend(preview_radio::fm_cases(at));
     case!("61-radio-no-wifi", at(Screen::Radio, ""), |ui, _| ui
         .radio
         .online =
@@ -1870,7 +1812,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         at(Screen::Customize, ""),
         |_, m| {
             m.settings.wrap_around = reborn_core::WrapAround::Everywhere;
-            m.settings.screen_off_buttons = reborn_core::ScreenOffButtons::WheelAndButtons;
             m.navigation.focus = 1;
         }
     );
@@ -1882,14 +1823,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             m.navigation.focus = 1;
         }
     );
-    case!("51g-customize-wheel", at(Screen::Customize, "wheel"));
-    case!(
-        "51h-customize-picker",
-        at(Screen::Customize, "choose:screen_off_buttons"),
-        |_, m| {
-            m.navigation.focus = 1;
-        }
-    );
+    cases.extend(preview_buttons::cases(at));
     case!("51i-system", at(Screen::Update, ""));
     case!("51j-library", at(Screen::SettingsLibrary, ""));
     // The last rows of a long settings page: the list scrolls as Artists does.

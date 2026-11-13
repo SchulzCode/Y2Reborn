@@ -74,9 +74,10 @@ impl Counted {
 pub fn play_of(track: &Track) -> Option<Play> {
     let artist = track.artist.trim();
     let title = track.title.trim();
-    // Audiobooks are not scrobbled: they are not music listening.
+    // Audiobooks and films are not scrobbled: they are not music listening.
     if track.is_radio()
         || track.book
+        || track.is_video()
         || artist.is_empty()
         || title.is_empty()
         || title == track.filename

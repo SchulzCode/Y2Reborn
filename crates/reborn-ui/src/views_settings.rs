@@ -43,6 +43,12 @@ pub fn screen(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interacti
         Screen::LastFm if ui.lastfm.approval.is_some() => {
             sign_in_code(c, ui, &page, focus, interactive)
         }
+        Screen::SettingsLibrary if !ui.share.address.is_empty() => {
+            share_code(c, ui, &page, focus, interactive)
+        }
+        Screen::Customize if crate::buttons_page::face(m).is_some() => {
+            crate::views_buttons::face(c, ui, m, &page, focus, interactive)
+        }
         _ => group_page(c, ui, m, &page, focus, interactive, 38.),
     }
 }
@@ -63,8 +69,73 @@ fn sign_in_code(c: &mut Canvas, ui: &Ui, page: &Page, focus: usize, interactive:
         .code
         .clone()
         .or_else(|| crate::qr::encode(url.as_bytes()));
+    let lines = [
+        "1  Point your phone's",
+        "   camera at the code.",
+        "2  Allow Y2Reborn.",
+        "3  This page continues",
+        "   by itself.",
+    ];
+    let text = lines.map(|line| (line, Face::R13, color::MUTED));
+    code_page(
+        c,
+        code,
+        236.,
+        "Sign in to Last.fm",
+        &text,
+        page,
+        focus,
+        interactive,
+    );
+}
+
+/// Wi-Fi Share: the address as a QR code, the address and the code in letters beside it, Stop
+/// Sharing below.
+fn share_code(c: &mut Canvas, ui: &Ui, page: &Page, focus: usize, interactive: bool) {
+    let share = &ui.share;
+    let address = share.address.trim_start_matches("http://");
+    let spaced = format!(
+        "{} {}",
+        &share.code[..3.min(share.code.len())],
+        &share.code[3.min(share.code.len())..]
+    );
+    let activity = page.rows.first().map_or("", |row| row.secondary.as_str());
+    let text = [
+        ("Scan the code, or open", Face::R13, color::MUTED),
+        (address, Face::S17, color::TEXT),
+        ("on the same Wi-Fi.", Face::R13, color::MUTED),
+        ("", Face::R13, color::MUTED),
+        ("Then enter the code", Face::R13, color::MUTED),
+        (spaced.as_str(), Face::S25, color::ACCENT),
+        (activity, Face::R13, color::SUCCESS),
+    ];
+    let code = crate::qr::encode(share.address.as_bytes());
+    code_page(
+        c,
+        code,
+        208.,
+        "Copy music over Wi-Fi",
+        &text,
+        page,
+        focus,
+        interactive,
+    );
+}
+
+/// A QR code on the left (at most `room` wide: a short address has few, large modules, and the
+/// text starts at 240), a title and lines on the right, the page's first row as a button below.
+fn code_page(
+    c: &mut Canvas,
+    code: Option<crate::qr::Code>,
+    room: f32,
+    title: &str,
+    lines: &[(&str, Face, u32)],
+    page: &Page,
+    focus: usize,
+    interactive: bool,
+) {
     if let Some(code) = code {
-        let module = (236. / (code.size as f32 + 8.)).floor().max(2.);
+        let module = (room / (code.size as f32 + 8.)).floor().max(2.);
         let side = module * (code.size as f32 + 8.);
         let (x0, y0) = (24., 46.);
         // Near-black and near-white: a skin's palette remap changes pure
@@ -95,17 +166,15 @@ fn sign_in_code(c: &mut Canvas, ui: &Ui, page: &Page, focus: usize, interactive:
     }
     let tx = 240.;
     let mut y = 58.;
-    c.text(tx, y, "Sign in to Last.fm", Face::S17, color::TEXT);
+    c.text(tx, y, title, Face::S17, color::TEXT);
     y += 30.;
-    for line in [
-        "1  Point your phone's",
-        "   camera at the code.",
-        "2  Allow Y2Reborn.",
-        "3  This page continues",
-        "   by itself.",
-    ] {
-        c.text(tx, y, line, Face::R13, color::MUTED);
-        y += 20.;
+    for (line, face, tint) in lines {
+        let tall = matches!(face, Face::S25 | Face::S17);
+        if tall {
+            y += 6.;
+        }
+        c.text(tx, y, line, *face, *tint);
+        y += if tall { 26. } else { 20. };
     }
     let selected = interactive && focus == 0;
     if let Some(cancel) = page.rows.first() {

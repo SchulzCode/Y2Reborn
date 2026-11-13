@@ -320,6 +320,37 @@ impl Catalog {
         }
     }
 
+    /// Folders: the storages, or an opened folder (its Shuffle, its folders, its songs).
+    fn folder_rows(&mut self, m: &AppModel, tracks: &[Track]) {
+        let parent =
+            std::path::Path::new(m.navigation.filter.strip_prefix("folder:").unwrap_or(""));
+        if parent.as_os_str().is_empty() {
+            self.folder_roots(m, tracks);
+            return;
+        }
+        // A folder as a file manager shows it (Beta 8.39): its
+        // folders, then its songs, both by name with numbers in
+        // number order; songs by file name, not by title or artist.
+        self.folders.ensure(tracks);
+        let (folders, songs) = self.folders.listing(tracks, parent);
+        // Shuffle the folder with everything in its folders (a Reddit user, 2026-11-13;
+        // holding Select on the folder's row did it from the folder above).
+        if !songs.is_empty() || folders.iter().any(|(_, n)| *n > 0) {
+            self.push(Item::new("Shuffle", "shuffle:collection"));
+        }
+        for (child, songs) in folders {
+            let name = child
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            self.push(
+                Item::new(name, format!("folder:{}", child.display()))
+                    .with_secondary(crate::components::count(songs, "song", "songs")),
+            );
+        }
+        self.rows.extend(songs.into_iter().map(Row::FolderTrack));
+    }
+
     fn push(&mut self, item: Item) {
         self.rows.push(Row::Item(item));
     }
@@ -531,30 +562,7 @@ impl Catalog {
                     self.push(item);
                 }
             }
-            Screen::Folders => {
-                let parent =
-                    std::path::Path::new(m.navigation.filter.strip_prefix("folder:").unwrap_or(""));
-                if parent.as_os_str().is_empty() {
-                    self.folder_roots(m, tracks);
-                    return;
-                }
-                // A folder as a file manager shows it (Beta 8.39): its
-                // folders, then its songs, both by name with numbers in
-                // number order; songs by file name, not by title or artist.
-                self.folders.ensure(tracks);
-                let (folders, songs) = self.folders.listing(tracks, parent);
-                for (child, songs) in folders {
-                    let name = child
-                        .file_name()
-                        .map(|n| n.to_string_lossy().into_owned())
-                        .unwrap_or_default();
-                    self.push(
-                        Item::new(name, format!("folder:{}", child.display()))
-                            .with_secondary(crate::components::count(songs, "song", "songs")),
-                    );
-                }
-                self.rows.extend(songs.into_iter().map(Row::FolderTrack));
-            }
+            Screen::Folders => self.folder_rows(m, tracks),
             Screen::Tracks | Screen::Album | Screen::Artist => {
                 if matches!(m.screen, Screen::Album | Screen::Artist) {
                     self.push(Item::new("Play", "play:collection"));

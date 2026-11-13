@@ -29,7 +29,8 @@ MODELS = [
     "HIFIMAN Sundara", "HIFIMAN Edition XS", "Focal Clear", "Koss Porta Pro",
     # In-ear and earbuds
     "Apple AirPods Pro", "Apple EarPods", "Moondrop Aria", "Moondrop Chu", "Moondrop Chu 2",
-    "Moondrop Blessing 2", "Moondrop Starfield", "Truthear x Crinacle Zero", "Truthear Hexa",
+    "Moondrop Blessing 2", "Moondrop Starfield", "Truthear x Crinacle Zero",
+    "Truthear x Crinacle Zero Blue 2", "Truthear Hexa",
     "7Hz Salnotes Zero", "KZ ZSN Pro X", "Sennheiser IE 200", "Sennheiser IE 600",
     "Sennheiser IE 900", "Shure SE215", "Shure SE535", "Etymotic ER2XR", "Etymotic ER4XR",
     "Tin HiFi T2", "Simgot Audio EW200", "TANGZU Wan'er S.G", "Samsung Galaxy Buds2 Pro",

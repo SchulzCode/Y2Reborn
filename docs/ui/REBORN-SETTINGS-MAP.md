@@ -16,8 +16,8 @@
 3. **Does the page still fit one screen?** At most six rows on a page (the root holds eight). If a page
    would get a seventh, group related rows into a sub-page of their own with a name that says what is
    inside, rather than letting the page scroll.
-4. **Name it by what it does, show its value.** The row's label says what changes ("Buttons While Screen
-   Off", not "When Screen Off"); its value on the right says what it is now ("Play Buttons", not "On").
+4. **Name it by what it does, show its value.** The row's label says what changes ("Hold Time", not
+   "Timing"); its value on the right says what it is now ("Normal", "2 buttons changed", not "On").
 5. **Use the matching control.** On/off: a switch. Two named choices: Select steps them, the value shows
    which. Three or more: a picker page with a check mark on the current choice. A level or a time: a picker
    or a card with a slider.
@@ -53,12 +53,14 @@ Settings
 │  └ Output                  Headphone Jack / Bluetooth devices · Speaker · Headphone Level › · DAC Filter ›
 ├ Display                    Brightness card · Screen Off After ›
 ├ Skin                       the skins
-├ Customize                  Home Menu › · Browsing › · Wheel & Buttons ›
+├ Customize                  Home Menu › · Browsing › · Buttons ›
 │  ├ Home Menu               the places on Home and their order
 │  ├ Browsing                Cover Flow · Sort Albums · Artist's Albums › · Artists List
-│  │                         · Lists Wrap Around ›
-│  └ Wheel & Buttons         Wheel on Now Playing · Wheel Click · Haptics › · Buttons While Screen Off ›
-├ Library                    Scan for Music · Storage › · Last.fm ›
+│  │                         · Lists Wrap Around › · FM Radio
+│  └ Buttons                 Layout › · In Menus › · On Now Playing › · Screen Off › · Save/Discard
+│                            (or Delete This Layout) · Hold Time › · Wheel Click · Haptics ›
+│                            (each layer: the player drawn, a button's page, its command picker)
+├ Library                    Scan for Music · Storage › · Wi-Fi Share › · Last.fm ›
 └ System                     Software Update › · Time Zone › · Date & Time › · Error Reports ›
                              · Reset & Maintenance › · About ›
    (About › Version, tapped seven times: the service menu — codecs, Battery, Sleep, Diagnostics)
@@ -68,6 +70,16 @@ Software Update ends with **Update Notifications** (a toggle, off by default, Y2
 looks at the platform every two minutes while Wi-Fi is up, and when the platform's daily check has found a newer
 version the status bar says "Software update available" once for that version (not on Software Update itself, which
 shows it). The toggle is under every Software Update page that has a choice, not while a check or install runs.
+
+Browsing's **FM Radio** (a switch, on by default) decides whether Radio shows the player's own tuner. With it,
+Radio opens as a choice of **FM Radio** and **Internet Radio** (the internet stations' menu is `Screen::Radio`
+with the filter "Internet Radio"); without it, or on a player with no tuner, Radio is the internet stations'
+menu itself. The first Y2 revision has the tuner but receives nothing: the page of a search that found no
+station offers **Hide FM Radio**, which turns the switch off.
+
+Library's **Wi-Fi Share** is a page of `Screen::SettingsLibrary` (filter "share"): the address of the player's
+file browser as a QR code and in letters, and the six-digit code it asks for. Sharing runs exactly while that
+page is on screen; **Stop Sharing** is Back ([plan](REBORN-WIFI-SHARE.md)).
 
 Library's hint line names the audio the last scan left out because Reborn cannot play its type ("43 files can't
 be played here (WMA, DSD), so they aren't in your library.", Y2Reborn #104); without such files there is no line.

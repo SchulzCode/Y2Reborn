@@ -380,6 +380,45 @@ fn the_list_scrolls_by_the_skins_row_count() {
     assert_eq!(crate::focus_target_count(&quads), 1);
 }
 
+/// Y2Reborn #131: a film plays on Now Playing in every skin, as Reborn draws it: the picture on
+/// black, untinted, also in a skin with its own Now Playing layout.
+#[test]
+fn a_film_shows_its_picture_in_any_skin() {
+    let mut ui = skinned(classic());
+    let mut m = model(Screen::NowPlaying);
+    let mut film = library(1);
+    film[0].codec = "h264/aac".into();
+    m.replace_queue(film, 0).unwrap();
+    m.playback = PlaybackState::Playing;
+    ui.video = crate::views_videos::VideoPicture {
+        width: 480,
+        height: 270,
+        subtitle: String::new(),
+    };
+    let quads = ui.draw(&m, &[], false);
+    let picture: Vec<_> = quads
+        .iter()
+        .filter(|q| q.tex == reborn_graphics::Tex::Video)
+        .collect();
+    assert_eq!(picture.len(), 1, "the film's picture is drawn");
+    assert_eq!(
+        picture[0].color,
+        theme::color::TEXT,
+        "not tinted by the skin's palette"
+    );
+    assert!(
+        quads.iter().any(|q| q.color == 0x0000_00FF && q.w >= 480.),
+        "on black"
+    );
+    // A song still uses the skin's own Now Playing.
+    let mut song = model(Screen::NowPlaying);
+    song.replace_queue(library(1), 0).unwrap();
+    assert!(!ui
+        .draw(&song, &[], false)
+        .iter()
+        .any(|q| q.tex == reborn_graphics::Tex::Video));
+}
+
 #[test]
 fn screens_a_skin_leaves_out_are_drawn_by_reborn_in_its_palette() {
     let ui = skinned(compile_test(LIST).unwrap());

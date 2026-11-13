@@ -3,6 +3,7 @@
 pub mod art;
 pub mod audiobookshelf_ui;
 mod boot;
+mod buttons_page;
 mod canvas;
 mod catalog;
 pub mod charge;
@@ -43,6 +44,7 @@ mod time_zone;
 mod ui_state;
 mod up_next;
 mod views_books;
+mod views_buttons;
 mod views_coverflow;
 mod views_library;
 mod views_playing;
@@ -53,6 +55,7 @@ mod views_radio;
 mod views_search;
 mod views_settings;
 mod views_system;
+pub mod views_videos;
 
 use reborn_core::{
     platform::{ChargingState, LowBattery, UsbTransfer, WifiProblem},
@@ -314,6 +317,42 @@ pub struct LastFmView {
     pub busy: bool,
 }
 
+/// FM radio as the Radio screens show it. Hidden without a tuner and when the listener switched it
+/// off (Settings → Customize → Browsing → FM Radio).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum FmView {
+    #[default]
+    Hidden,
+    /// The tuner's two files from the owner's system.img are missing.
+    NeedsFirmware,
+    /// Tuner ready, no search yet.
+    NotScanned,
+    Scanning {
+        progress: u8,
+    },
+    Ready {
+        stations: usize,
+    },
+}
+
+/// The filter of `Screen::SettingsLibrary` that is the Wi-Fi Share page.
+pub const SHARE: &str = "share";
+
+/// Settings → Library → Wi-Fi Share as the player knows it: empty while it is not running.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ShareView {
+    /// What a browser opens (`http://192.168.1.23`), and the code it asks for.
+    pub address: String,
+    pub code: String,
+    /// Files received since sharing started, and whether one is arriving now.
+    pub received: u64,
+    pub busy: bool,
+    pub error: Option<String>,
+}
+
+/// The filter of `Screen::Radio` that shows the internet stations' menu below Radio's two kinds.
+pub const RADIO_INTERNET: &str = "Internet Radio";
+
 /// Internet radio lists as the player last received them.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct RadioView {
@@ -340,8 +379,15 @@ pub struct RadioView {
     /// The list starts with this many stations ranked by popularity (the
     /// directory's order); the rest follow A to Z.
     pub ranked: usize,
+    /// The player's own tuner.
+    pub fm: FmView,
 }
 impl RadioView {
+    /// A list kept in the given order (FM stations by frequency).
+    pub fn set_stations_in_order(&mut self, stations: Vec<reborn_core::RadioStation>) {
+        self.stations = stations;
+        self.ranked = 0;
+    }
     pub fn is_favorite(&self, station: &reborn_core::RadioStation) -> bool {
         self.favorites.iter().any(|k| k == station.key())
     }
@@ -414,6 +460,7 @@ pub struct Ui {
     pub radio: RadioView,
     pub audiobookshelf: audiobookshelf_ui::View,
     pub lastfm: LastFmView,
+    pub share: ShareView,
     pub pairing: Option<String>,
     pub pairing_focus: usize,
     /// The Brightness card follows the wheel until Select or Back.
@@ -455,6 +502,17 @@ pub struct Ui {
     last_step: Option<Instant>,
     /// The library's audiobooks, kept until the library changes.
     books: RefCell<Option<views_books::BookCache>>,
+    /// Customize > Buttons: the draft, the trial after Save, a refused save's reason.
+    buttons: buttons_page::ButtonsUi,
+    /// The Audiobooks rows, kept until the library, a book's progress, the chapters known or the
+    /// playing book change (Y2Reborn #27: rebuilt several times a frame they made the list crawl).
+    book_rows: RefCell<Option<views_books::BookRowsCache>>,
+    /// The playing film's picture and subtitle, as the app last uploaded them.
+    pub video: views_videos::VideoPicture,
+    /// A film's title and time line show until this moment (a button was pressed).
+    video_controls_until: Option<Instant>,
+    /// A film's pictures are arriving: the screen is drawn at the panel's rate.
+    pub film_running: bool,
     /// Taps on the version row; the service menu opens after a deliberate run.
     version_taps: u8,
     resident: HashSet<u64>,
@@ -586,6 +644,8 @@ const WHEEL_VOLUME_STEP: i8 = 2;
 const VERSION_TAPS: u8 = 7;
 /// How long the volume line stays, and how long it takes to fade at the end.
 const VOLUME_LINE: Duration = Duration::from_millis(1300);
+/// How long a film's title and time line stay after a button.
+const VIDEO_CONTROLS: Duration = Duration::from_secs(3);
 const VOLUME_FADE: Duration = Duration::from_millis(300);
 /// The Power hold: it starts when the input layer reports the long press and
 /// fills the ring over this long; releasing before the end cancels it.
@@ -636,6 +696,7 @@ fn route(key: &str) -> Option<Screen> {
         "display" => Screen::SettingsDisplay,
         "customize" => Screen::Customize,
         "audiobooks" => Screen::Audiobooks,
+        "videos" => Screen::Videos,
         "home_menu" => Screen::HomeMenu,
         "system" => Screen::SettingsSystem,
         "battery" => Screen::Battery,
@@ -710,6 +771,7 @@ fn confirm_action(name: &str) -> Option<ConfirmAction> {
 pub(crate) fn confirm_is_danger(action: ConfirmAction) -> bool {
     !matches!(action, ConfirmAction::Platform(task)
         if !matches!(task, PlatformTask::InternalStorageSetup | PlatformTask::SdRepair))
+        && action != ConfirmAction::KeepButtons
 }
 
 fn confirm_label(action: ConfirmAction) -> &'static str {
@@ -732,6 +794,7 @@ fn confirm_label(action: ConfirmAction) -> &'static str {
         ConfirmAction::Platform(PlatformTask::ReportNewId) => "New ID",
         ConfirmAction::ReportsQuestion => "Send Reports",
         ConfirmAction::LoudVolume => "Raise Volume",
+        ConfirmAction::KeepButtons => "Keep",
         ConfirmAction::Platform(_) => "Run",
     }
 }
@@ -804,6 +867,10 @@ fn confirm_copy(action: ConfirmAction) -> (&'static str, &'static str) {
             "Help Improve Y2Linux?",
             "If something goes wrong, the player can send a report over Wi-Fi: logs and technical details, never your music, names or accounts. Change it in About & Updates.",
         ),
+        ConfirmAction::KeepButtons => (
+            "Keep These Buttons?",
+            "Choose Keep with the new buttons. Otherwise the old ones come back in 15 seconds.",
+        ),
         ConfirmAction::LoudVolume => (
             "Raise the Volume?",
             "Listening at high volume for a long time can damage your hearing. This is asked again after 20 hours of loud listening.",
@@ -815,7 +882,7 @@ fn confirm_copy(action: ConfirmAction) -> (&'static str, &'static str) {
     }
 }
 
-fn next_repeat(mode: RepeatMode) -> RepeatMode {
+pub(crate) fn next_repeat(mode: RepeatMode) -> RepeatMode {
     match mode {
         RepeatMode::Off => RepeatMode::All,
         RepeatMode::All => RepeatMode::Track,
@@ -1063,7 +1130,7 @@ pub(crate) fn speed_label(speed: f32) -> String {
     s.trim_end_matches('0').trim_end_matches('.').to_owned()
 }
 
-fn repeat_label(mode: RepeatMode) -> &'static str {
+pub(crate) fn repeat_label(mode: RepeatMode) -> &'static str {
     match mode {
         RepeatMode::Off => "Off",
         RepeatMode::Track => "One",

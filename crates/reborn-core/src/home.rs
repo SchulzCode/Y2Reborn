@@ -1,11 +1,30 @@
 //! Home's places and the order the listener gave them (Customize > Home Menu, Y2Reborn #53), and the
 //! order of the Playlists list (#33). Now Playing stays first and Settings last.
-use crate::{Settings, HOME_HIDEABLE, HOME_PINNABLE};
+use crate::{Settings, Track};
+
+/// The Music lists that can be pinned to Home, in Home's order: (key, label).
+pub const HOME_PINNABLE: [(&str, &str); 5] = [
+    ("artists", "Artists"),
+    ("albums", "Albums"),
+    ("tracks", "Songs"),
+    ("genres", "Genres"),
+    ("folders", "Folders"),
+];
+/// Home's own places that can be taken off Home, in Home's order: (key,
+/// label). Music stands first, the others after the pinned lists.
+pub const HOME_HIDEABLE: [(&str, &str); 5] = [
+    ("music", "Music"),
+    ("videos", "Videos"),
+    ("playlists", "Playlists"),
+    ("radio", "Radio"),
+    ("search", "Search"),
+];
 
 /// Every place Home can show between Now Playing and Settings, in the standard order: (key, label).
-pub const HOME_PLACES: [(&str, &str); 10] = [
+pub const HOME_PLACES: [(&str, &str); 11] = [
     ("music", "Music"),
     ("audiobooks", "Audiobooks"),
+    ("videos", "Videos"),
     ("artists", "Artists"),
     ("albums", "Albums"),
     ("tracks", "Songs"),
@@ -41,6 +60,13 @@ pub fn moved<T: Clone>(items: &[T], from: usize, to: usize) -> Vec<T> {
 }
 
 impl Settings {
+    /// What the library holds that has a place of its own on Home: (audiobooks, films).
+    pub fn home_shelves(&self, tracks: &[Track]) -> (bool, bool) {
+        (
+            self.audiobooks_on_home && tracks.iter().any(|t| t.book && t.online),
+            tracks.iter().any(|t| t.online && t.is_video()),
+        )
+    }
     /// Home's places in the listener's order (all of them, shown or not).
     pub fn home_places(&self) -> Vec<(&'static str, &'static str)> {
         ordered(&HOME_PLACES, &self.home_order, |(key, _)| key)
@@ -48,11 +74,14 @@ impl Settings {
             .copied()
             .collect()
     }
-    /// Whether a place stands on Home: Audiobooks once the library holds a book (`has_books`), a
-    /// Music list once pinned, Home's own places unless hidden.
-    pub fn home_place_shown(&self, key: &str, has_books: bool) -> bool {
+    /// Whether a place stands on Home: Audiobooks once the library holds a book (`has_books`),
+    /// Videos once it holds a film (`has_videos`) and unless hidden, a Music list once pinned,
+    /// Home's own places unless hidden.
+    pub fn home_place_shown(&self, key: &str, has_books: bool, has_videos: bool) -> bool {
         if key == "audiobooks" {
             self.audiobooks_on_home && has_books
+        } else if key == "videos" {
+            has_videos && self.home_shows(key)
         } else if HOME_PINNABLE.iter().any(|(k, _)| *k == key) {
             self.home_pins.iter().any(|p| p == key)
         } else {
@@ -82,6 +111,7 @@ mod tests {
                 "radio",
                 "music",
                 "audiobooks",
+                "videos",
                 "artists",
                 "albums",
                 "tracks",
@@ -98,15 +128,20 @@ mod tests {
     #[test]
     fn home_shows_its_own_places_unless_hidden_and_music_lists_once_pinned() {
         let mut s = Settings::default();
-        assert!(s.home_place_shown("radio", false));
-        assert!(!s.home_place_shown("albums", false));
+        assert!(s.home_place_shown("radio", false, false));
+        assert!(!s.home_place_shown("albums", false, false));
         assert!(
-            !s.home_place_shown("audiobooks", false),
+            !s.home_place_shown("audiobooks", false, false),
             "no books, no Audiobooks"
         );
+        assert!(
+            !s.home_place_shown("videos", false, false),
+            "no films, no Videos"
+        );
+        assert!(s.home_place_shown("videos", false, true));
         s.pin_home("albums", true);
         s.show_on_home("radio", false);
-        assert!(s.home_place_shown("albums", false));
-        assert!(!s.home_place_shown("radio", false));
+        assert!(s.home_place_shown("albums", false, false));
+        assert!(!s.home_place_shown("radio", false, false));
     }
 }

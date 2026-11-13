@@ -18,15 +18,30 @@ const RADIUS: f32 = 22.;
 const TILE_RADIUS: f32 = 16.;
 const TILE_FILL: u32 = 0xFFFFFF14;
 
-fn tile(key: &str) -> (f32, f32, f32, f32) {
+/// `four`: the bottom row has four tiles (the Buttons tile, while a layout other than Reborn
+/// Default is in use), in the rows' order: Sleep Timer, Buttons, Restart, Power Off.
+fn tile(key: &str, four: bool) -> (f32, f32, f32, f32) {
+    let bottom = |i: f32| {
+        if four {
+            (44. + i * 100.5, 234., 90.5, 80.)
+        } else {
+            (44. + i.min(2.) * 134., 234., 124., 80.)
+        }
+    };
     match key {
         "quick:wifi" => (44., 82., 192., 88.),
         "quick:bluetooth" => (244., 82., 192., 88.),
         "quick:brightness" => (44., 180., 392., 44.),
-        "quick:sleep" => (44., 234., 124., 80.),
-        "quick:restart" => (178., 234., 124., 80.),
-        _ => (312., 234., 124., 80.),
+        "quick:sleep" => bottom(0.),
+        "quick:buttons" => bottom(1.),
+        "quick:restart" => bottom(if four { 2. } else { 1. }),
+        _ => bottom(if four { 3. } else { 2. }),
     }
+}
+
+/// Whether the bottom row has the Buttons tile.
+fn four(m: &AppModel) -> bool {
+    m.settings.buttons.active != reborn_core::buttons::REBORN_DEFAULT
 }
 
 /// A value easing toward `target` (at once in previews and tests).
@@ -85,13 +100,13 @@ pub(crate) fn draw(c: &mut Canvas, ui: &Ui, m: &AppModel) {
     c.text_mid_right(px + pw - 20., py + 24., &line, face, color::MUTED);
     let rows = ui.quick_menu_rows(m);
     let focus = m.navigation.modal_focus.min(rows.len().saturating_sub(1));
-    focus_frame(c, ui, rows.get(focus));
+    focus_frame(c, ui, rows.get(focus), four(m));
     for (i, row) in rows.iter().enumerate() {
         let at = c.draw.len();
         match row.key.as_str() {
             "quick:wifi" | "quick:bluetooth" => radio_tile(c, ui, row),
             "quick:brightness" => brightness(c, ui, m, row),
-            _ => action_tile(c, ui, row),
+            _ => action_tile(c, ui, row, four(m)),
         }
         // The tiles appear one after another as the panel grows in.
         let entrance = ((shown - i as f32 * 0.06) / 0.7).clamp(0., 1.);
@@ -109,11 +124,11 @@ pub(crate) fn draw(c: &mut Canvas, ui: &Ui, m: &AppModel) {
 }
 
 /// The frame around the focused tile, gliding to the next one.
-fn focus_frame(c: &mut Canvas, ui: &Ui, row: Option<&Item>) {
+fn focus_frame(c: &mut Canvas, ui: &Ui, row: Option<&Item>, four: bool) {
     let Some(row) = row else {
         return;
     };
-    let (x, y, w, h) = tile(&row.key);
+    let (x, y, w, h) = tile(&row.key, four);
     let glide = |key: &str, to: f32| eased(ui, key, None, to, motion::QUICK, 0.3);
     let (x, y) = (glide("quick.fx", x), glide("quick.fy", y));
     let (w, h) = (glide("quick.fw", w), glide("quick.fh", h));
@@ -143,7 +158,7 @@ fn focus_frame(c: &mut Canvas, ui: &Ui, row: Option<&Item>) {
 
 /// Wi-Fi or Bluetooth: the tile fills with the accent while the radio is on.
 fn radio_tile(c: &mut Canvas, ui: &Ui, row: &Item) {
-    let (x, y, w, h) = tile(&row.key);
+    let (x, y, w, h) = tile(&row.key, false);
     let powered = if row.key == "quick:wifi" {
         ui.wifi.powered
     } else {
@@ -198,7 +213,7 @@ fn radio_tile(c: &mut Canvas, ui: &Ui, row: &Item) {
 
 /// The brightness slider: the sun grows with the level, the fill glides to it.
 fn brightness(c: &mut Canvas, ui: &Ui, m: &AppModel, row: &Item) {
-    let (x, y, w, h) = tile(&row.key);
+    let (x, y, w, h) = tile(&row.key, false);
     c.rrect(x, y, w, h, TILE_RADIUS, TILE_FILL);
     let min = f32::from(reborn_core::BRIGHTNESS_MIN);
     let target = ((f32::from(m.settings.brightness) - min) / (100. - min)).clamp(0., 1.);
@@ -213,12 +228,13 @@ fn brightness(c: &mut Canvas, ui: &Ui, m: &AppModel, row: &Item) {
 }
 
 /// Sleep Timer, Restart and Power Off; Power Off carries the turn-off ring while Power is held.
-fn action_tile(c: &mut Canvas, ui: &Ui, row: &Item) {
-    let (x, y, w, _) = tile(&row.key);
+fn action_tile(c: &mut Canvas, ui: &Ui, row: &Item, four: bool) {
+    let (x, y, w, _) = tile(&row.key, four);
     c.rrect(x, y, w, 80., TILE_RADIUS, TILE_FILL);
     let (icon, tint) = match row.key.as_str() {
         "quick:sleep" => (Icon::Moon, color::TEXT),
         "quick:restart" => (Icon::Refresh, color::TEXT),
+        "quick:buttons" => (Icon::Sliders, color::TEXT),
         _ => (Icon::Power, color::DANGER),
     };
     let ink = if row.enabled { color::TEXT } else { color::DIM };

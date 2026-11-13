@@ -68,6 +68,25 @@ impl Ui {
             Effect::Radio(request)
         };
         match key {
+            "radio_internet" => {
+                Self::go(m, Screen::Radio, crate::RADIO_INTERNET);
+                Effect::None
+            }
+            "radio_fm" => list(m, self, "FM Radio", RadioRequest::Fm),
+            "radio_fm_scan" => {
+                self.radio.fm = crate::FmView::Scanning { progress: 0 };
+                self.radio.last_request = Some(RadioRequest::Fm);
+                if m.screen != Screen::RadioStations {
+                    Self::go(m, Screen::RadioStations, "FM Radio");
+                }
+                Effect::Radio(RadioRequest::FmScan)
+            }
+            "radio_fm_cancel" => Effect::Radio(RadioRequest::FmCancel),
+            "radio_fm_hide" => {
+                Self::back(m);
+                self.flash("FM Radio is hidden. Settings → Customize → Browsing brings it back.");
+                Effect::Radio(RadioRequest::FmShow(false))
+            }
             "radio_favorites" => list(m, self, "Favorites", RadioRequest::Favorites),
             "radio_own" => list(m, self, "My Stations", RadioRequest::Own),
             "radio_popular" => list(m, self, "Popular", RadioRequest::Popular),
@@ -233,16 +252,22 @@ impl Ui {
             k if k.starts_with("set:") => crate::customize::chosen(m, k)?,
             "wrap_around" => Effect::SetWrapAround(m.settings.wrap_around.next()),
             "home_audiobooks" => Effect::SetAudiobooksOnHome(!m.settings.audiobooks_on_home),
-            "screen_off_buttons" => {
-                Effect::SetScreenOffButtons(m.settings.screen_off_buttons.next())
-            }
+            k if k.starts_with("btn_") => self.button_select(m, k)?,
             "haptics" => Effect::SetHaptics(m.settings.haptics.next()),
             "wheel_click" => Effect::SetWheelClick(m.settings.wheel_click.next()),
+            "wifi_share" => {
+                Self::go(m, Screen::SettingsLibrary, crate::SHARE);
+                Effect::None
+            }
+            "share_stop" => {
+                Self::back(m);
+                Effect::None
+            }
+            "fm_radio" => Effect::Radio(reborn_core::RadioRequest::FmShow(!m.settings.fm_radio)),
             "speaker" => Effect::SetSpeaker(!m.settings.speaker),
             "album_view" => Effect::SetAlbumView(m.settings.album_view.next()),
             "album_order" => Effect::SetAlbumOrder(m.settings.album_order.next()),
             "artists_list" => Effect::SetArtistsList(m.settings.artists_list.next()),
-            "now_playing_wheel" => Effect::SetNowPlayingWheel(m.settings.now_playing_wheel.next()),
             "crossfade" => Effect::SetCrossfade(match m.settings.crossfade_ms {
                 0 => 3_000,
                 3_000 => 6_000,
@@ -284,7 +309,19 @@ impl Ui {
         if tracks.get(index).is_none() {
             return Effect::None;
         }
-        let effect = self.play_effect(m, tracks, index);
+        // A film plays with the Videos list as its collection: Next and
+        // Previous go to the film below and above, not to a song (#128).
+        let effect = if m.screen == Screen::Videos {
+            Effect::PlayCollection {
+                selected: index,
+                members: self.filtered_indices(m, tracks),
+                shuffle: ShuffleMode::Off,
+                source: source_label(m),
+                origin: page_origin(m),
+            }
+        } else {
+            self.play_effect(m, tracks, index)
+        };
         Self::go(m, Screen::NowPlaying, "");
         effect
     }
@@ -295,7 +332,13 @@ impl Ui {
         tracks: &[Track],
         shuffle: ShuffleMode,
     ) -> Effect {
-        let members = self.filtered_indices(m, tracks);
+        // A folder's Shuffle takes the songs in its folders too, in the order Folders shows them.
+        let members = match m.navigation.filter.clone() {
+            folder if m.screen == Screen::Folders && folder.starts_with("folder:") => {
+                self.group_members(m, tracks, &folder)
+            }
+            _ => self.filtered_indices(m, tracks),
+        };
         let Some(&index) = members.first() else {
             return Effect::None;
         };
@@ -325,6 +368,9 @@ impl Ui {
                 return c.search_songs.clone();
             }
             return c.rows.iter().filter_map(catalog::Row::track).collect();
+        }
+        if m.screen == Screen::Videos {
+            return crate::views_videos::films(tracks);
         }
         tracks
             .iter()

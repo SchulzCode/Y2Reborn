@@ -1,7 +1,9 @@
 #![forbid(unsafe_code)]
 pub mod benchmark;
+mod files;
 #[cfg(test)]
 mod platform_tests;
+pub use files::supported;
 pub mod unplayable;
 use reborn_core::{MediaSource, Source, Track};
 use reborn_media::{Cancel, MediaFile};
@@ -28,6 +30,11 @@ pub const SCHEMA_VERSION: i64 = 1;
 /// read as the album artist; 5: the year (Y2Reborn #66). Every older row re-reads
 /// its tags once, in the background at the scanner's usual speed.
 const METADATA_REVISION: i64 = 5;
+/// Which files a walk takes (1: films too). A quick scan trusts a volume's folder records only
+/// when they were written under the same rules: `VOLUME_REVISION` is kept with them, so the
+/// first scan after this changes walks every folder once and finds the files left out before.
+const WALK_REVISION: i64 = 1;
+const VOLUME_REVISION: i64 = METADATA_REVISION | WALK_REVISION << 16;
 pub const MAX_LIBRARY_TRACKS: usize = 250_000;
 pub const CATALOG_PAGE_SIZE: usize = 512;
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -473,7 +480,7 @@ fn folders(c: &Connection, source: &str, free: u64) -> Result<Option<Vec<Folder>
         )
         .optional()
         .map_err(err)?;
-    if volume != Some((free as i64, METADATA_REVISION)) {
+    if volume != Some((free as i64, VOLUME_REVISION)) {
         return Ok(None);
     }
     let mut q = c
@@ -545,7 +552,7 @@ fn save_folders(
         }
         tx.execute(
             "INSERT INTO scan_volumes VALUES(?1,?2,?3)",
-            params![source, free as i64, METADATA_REVISION],
+            params![source, free as i64, VOLUME_REVISION],
         )
         .map_err(err)?;
     }
@@ -1196,36 +1203,6 @@ impl Database {
         rx.recv_timeout(timeout)
             .map_err(|e| format!("database shutdown: {e}"))?
     }
-}
-/// Audio files the library reads. macOS writes an AppleDouble companion
-/// `._name.mp3` next to every file it copies to a FAT card; those hold
-/// Finder metadata, not audio.
-pub fn supported(path: &Path) -> bool {
-    if path
-        .file_name()
-        .is_some_and(|n| n.as_encoded_bytes().starts_with(b"._"))
-    {
-        return false;
-    }
-    path.extension().is_some_and(|e| {
-        matches!(
-            e.to_string_lossy().to_ascii_lowercase().as_str(),
-            "flac"
-                | "mp3"
-                | "aac"
-                | "m4a"
-                | "m4b"
-                | "ogg"
-                | "oga"
-                | "opus"
-                | "wav"
-                | "aiff"
-                | "aif"
-                | "aifc"
-                | "ape"
-                | "wv"
-        )
-    })
 }
 /// Folders macOS keeps on removable media (search index, change log, bin).
 /// They never hold the owner's music and are often unreadable.
@@ -2302,7 +2279,9 @@ mod tests {
         assert!(supported(Path::new("a.oga")));
         assert!(supported(Path::new("a.AIFC")));
         // Video containers stay out: a music video would fail every scan.
-        assert!(!supported(Path::new("clip.mp4")));
+        assert!(supported(Path::new("clip.mp4")));
+        assert!(supported(Path::new("Film.MKV")));
+        assert!(!supported(Path::new("notes.txt")));
         assert!(!supported(Path::new("a.txt")));
         assert!(!supported(Path::new("/media/sd/Album/._01 Song.mp3")));
         assert!(supported(Path::new("/media/sd/Album/_01 Song.mp3")));

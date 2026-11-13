@@ -14,8 +14,9 @@ impl Ui {
             | Screen::Search => self.catalog_rows(m, tracks),
             Screen::Queue => self.queue_rows(m, tracks),
             Screen::Playlists | Screen::Playlist => self.playlist_rows(m, tracks),
-            Screen::Audiobooks => views_books::book_rows(self, m, tracks),
+            Screen::Audiobooks => self.with_book_rows(m, tracks, <[Item]>::to_vec),
             Screen::Book => views_books::page_rows(self, m, tracks),
+            Screen::Videos => views_videos::rows(tracks),
             Screen::Diagnostics => diagnostics::root(m),
             Screen::DiagnosticSection => diagnostics::section_rows(m, &m.navigation.filter),
             Screen::ValueDetail => vec![Item::new("Back", "back")],
@@ -87,6 +88,8 @@ impl Ui {
             self.up_next(m, tracks).len()
         } else if matches!(m.screen, Screen::Playlists | Screen::Playlist) {
             self.with_playlist_rows(m, tracks, <[Item]>::len)
+        } else if m.screen == Screen::Audiobooks {
+            self.with_book_rows(m, tracks, <[Item]>::len)
         } else {
             self.rows(m, tracks).len()
         }
@@ -104,6 +107,7 @@ impl Ui {
                     | Screen::TimeZone
                     | Screen::Audiobooks
                     | Screen::Book
+                    | Screen::Videos
             )
     }
 
@@ -140,6 +144,8 @@ impl Ui {
             self.up_next_item(m, tracks, &self.up_next(m, tracks), index)
         } else if matches!(m.screen, Screen::Playlists | Screen::Playlist) {
             self.with_playlist_rows(m, tracks, |rows| rows.get(index).cloned())
+        } else if m.screen == Screen::Audiobooks {
+            self.with_book_rows(m, tracks, |rows| rows.get(index).cloned())
         } else {
             self.rows(m, tracks).get(index).cloned()
         }
@@ -157,6 +163,10 @@ impl Ui {
                 .collect()
         } else if matches!(m.screen, Screen::Playlists | Screen::Playlist) {
             self.with_playlist_rows(m, tracks, |rows| {
+                rows.iter().skip(offset).take(count).cloned().collect()
+            })
+        } else if m.screen == Screen::Audiobooks {
+            self.with_book_rows(m, tracks, |rows| {
                 rows.iter().skip(offset).take(count).cloned().collect()
             })
         } else {
@@ -506,6 +516,9 @@ impl Ui {
                 if action == ConfirmAction::ReportsQuestion {
                     // A real answer either way, so the question is not asked again.
                     rows[0] = Item::new("No Thanks", "decline");
+                }
+                if action == ConfirmAction::KeepButtons {
+                    rows[0] = Item::new("Undo", "cancel");
                 }
                 if let ConfirmAction::Platform(task) = action {
                     let u = &m.platform.snapshot.update;

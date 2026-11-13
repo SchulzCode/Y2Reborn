@@ -2,18 +2,25 @@
 mod audiobookshelf;
 pub use audiobookshelf::AudiobookshelfRequest;
 pub mod albums;
+pub use buttons::{NowPlayingWheel, ScreenOffButtons};
 pub mod books;
 pub use books::BookStart;
+pub mod buttons;
 pub mod clock;
 mod countries;
 pub mod eq;
 pub mod home;
+pub use home::{HOME_HIDEABLE, HOME_PINNABLE};
+mod names;
 pub mod platform;
 pub mod playlist;
 pub mod queue;
+mod radio;
 pub mod scrobble;
 pub mod sort;
 mod zones;
+pub use names::{joined_names, split_artists, split_genres};
+pub use radio::{RadioRequest, RadioStation};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
@@ -465,74 +472,6 @@ pub struct Track {
 /// The largest left/right balance in dB (Settings > Sound > Balance).
 pub const MAX_BALANCE: i8 = 10;
 
-/// The names in an artist tag (#38, #40): a multi-value tag comes joined by
-/// ";" ("Calvin Harris;Kelis"), and a guest follows "feat.", "ft." or
-/// "featuring". "&" and "," stay, as in "Simon & Garfunkel". An empty tag
-/// is one unknown artist.
-pub fn split_artists(tag: &str) -> Vec<&str> {
-    const GUEST: [&str; 5] = [" featuring ", " feat. ", " feat ", " ft. ", " ft "];
-    let mut names: Vec<&str> = Vec::new();
-    for mut rest in tag.split(';') {
-        loop {
-            // ASCII markers, so every match starts and ends on a char boundary.
-            let guest = GUEST
-                .iter()
-                .filter_map(|guest| {
-                    rest.as_bytes()
-                        .windows(guest.len())
-                        .position(|w| w.eq_ignore_ascii_case(guest.as_bytes()))
-                        .map(|at| (at, guest.len()))
-                })
-                .min();
-            let (name, next) = match guest {
-                Some((at, len)) => (&rest[..at], Some(&rest[at + len..])),
-                None => (rest, None),
-            };
-            let name = name.trim();
-            if !name.is_empty() && !names.contains(&name) {
-                names.push(name);
-            }
-            match next {
-                Some(next) => rest = next,
-                None => break,
-            }
-        }
-    }
-    if names.is_empty() {
-        names.push(tag.trim());
-    }
-    names
-}
-
-/// The genres in a genre tag (#40): a multi-value tag comes joined by ";",
-/// as artists do. An empty tag is one "No Genre".
-pub fn split_genres(tag: &str) -> Vec<&str> {
-    let mut names: Vec<&str> = Vec::new();
-    for name in tag.split(';').map(str::trim) {
-        if !name.is_empty() && !names.contains(&name) {
-            names.push(name);
-        }
-    }
-    if names.is_empty() {
-        names.push("");
-    }
-    names
-}
-
-/// A tag of names joined by ";" as people read it (#40):
-/// "Lauryn Hill;Mary J. Blige" shows as "Lauryn Hill, Mary J. Blige".
-pub fn joined_names(tag: &str) -> std::borrow::Cow<'_, str> {
-    if !tag.contains(';') {
-        return tag.into();
-    }
-    let names: Vec<&str> = tag
-        .split(';')
-        .map(str::trim)
-        .filter(|name| !name.is_empty())
-        .collect();
-    names.join(", ").into()
-}
-
 /// `Track::source_id` of an internet radio station in the queue.
 pub const RADIO_SOURCE: &str = "radio";
 impl Track {
@@ -541,10 +480,15 @@ impl Track {
     pub fn is_radio(&self) -> bool {
         self.source_id == RADIO_SOURCE
     }
-    /// Shown in the music lists, counts and search: available and not part
-    /// of an audiobook (books have their own place).
+    /// Shown in the music lists, counts and search: available, not part of
+    /// an audiobook and not a film (books and videos have their own places).
     pub fn is_music(&self) -> bool {
-        self.online && !self.book
+        self.online && !self.book && !self.is_video()
+    }
+    /// A film: a file with moving pictures beside its sound. The scan names
+    /// both codecs for one, picture first ("h264/aac"); a song has one codec.
+    pub fn is_video(&self) -> bool {
+        self.codec.contains('/')
     }
     /// The Album Artist tag the file carries (Last.fm gets this), not the
     /// album's the lists group it under (#45).
@@ -573,111 +517,6 @@ impl Track {
             bitrate: u64::from(station.bitrate) * 1000,
             online: true,
             ..Default::default()
-        }
-    }
-}
-
-/// An internet radio station from the community directory or an owner's
-/// own playlist.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct RadioStation {
-    /// radio-browser station UUID; empty for the owner's own playlists.
-    #[serde(default)]
-    pub uuid: String,
-    pub name: String,
-    pub url: String,
-    #[serde(default)]
-    pub country: String,
-    #[serde(default)]
-    pub codec: String,
-    #[serde(default)]
-    pub bitrate: u32,
-    #[serde(default)]
-    pub tags: String,
-    /// The station's logo (an http(s) picture address from the directory).
-    #[serde(default)]
-    pub favicon: String,
-    #[serde(default)]
-    pub homepage: String,
-    /// Languages as the directory names them ("german,english").
-    #[serde(default)]
-    pub language: String,
-    #[serde(default)]
-    pub countrycode: String,
-    /// Directory votes and plays (its popularity).
-    #[serde(default)]
-    pub votes: u32,
-    #[serde(default)]
-    pub clicks: u32,
-}
-impl RadioStation {
-    /// The station's genres from its tags, capitalised, at most `n`.
-    pub fn genres(&self, n: usize) -> Vec<String> {
-        let mut out: Vec<String> = vec![];
-        for tag in self
-            .tags
-            .split(',')
-            .map(str::trim)
-            .filter(|t| !t.is_empty())
-        {
-            let name = capitalise(tag);
-            if !out.iter().any(|o| o.eq_ignore_ascii_case(&name)) {
-                out.push(name);
-            }
-            if out.len() == n {
-                break;
-            }
-        }
-        out
-    }
-    /// "AAC · 128 kbps", "MP3", or empty.
-    pub fn format(&self) -> String {
-        match (self.codec.is_empty(), self.bitrate) {
-            (false, b) if b > 0 => format!("{} · {b} kbps", self.codec),
-            (false, _) => self.codec.clone(),
-            (true, b) if b > 0 => format!("{b} kbps"),
-            _ => String::new(),
-        }
-    }
-    /// Languages, capitalised ("German, English").
-    pub fn languages(&self) -> String {
-        self.language
-            .split(',')
-            .map(str::trim)
-            .filter(|l| !l.is_empty())
-            .take(3)
-            .map(capitalise)
-            .collect::<Vec<_>>()
-            .join(", ")
-    }
-    /// The logo's thumbnail identity (never equal to a cover's: top bit set),
-    /// or `None` without a logo address.
-    pub fn logo_key(&self) -> Option<u64> {
-        (!self.favicon.is_empty()).then(|| logo_key(&self.favicon))
-    }
-    /// One line under the station name: "Germany · MP3 128 kbps · jazz".
-    pub fn summary(&self) -> String {
-        let mut parts = vec![];
-        if !self.country.is_empty() {
-            parts.push(self.country.clone());
-        }
-        match (self.codec.is_empty(), self.bitrate) {
-            (false, b) if b > 0 => parts.push(format!("{} {b} kbps", self.codec)),
-            (false, _) => parts.push(self.codec.clone()),
-            (true, b) if b > 0 => parts.push(format!("{b} kbps")),
-            _ => {}
-        }
-        if let Some(tag) = self.tags.split(',').map(str::trim).find(|t| !t.is_empty()) {
-            parts.push(tag.to_owned());
-        }
-        parts.join(" · ")
-    }
-    /// Identity for favorites: the directory UUID, else the stream URL.
-    pub fn key(&self) -> &str {
-        if self.uuid.is_empty() {
-            &self.url
-        } else {
-            &self.uuid
         }
     }
 }
@@ -732,30 +571,6 @@ pub enum PlaylistRequest {
     },
     Duplicate(std::path::PathBuf),
     Delete(std::path::PathBuf),
-}
-
-/// What the Radio screens ask the player for.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum RadioRequest {
-    Favorites,
-    Own,
-    Popular,
-    Countries,
-    Genres,
-    Country {
-        code: String,
-        name: String,
-    },
-    Genre(String),
-    Search(String),
-    /// Play the station at this index of the list on screen.
-    Play(usize),
-    ToggleFavorite(usize),
-    /// Add or remove the station playing now.
-    ToggleFavoriteCurrent,
-    /// Play, or add or remove, the station Station Info shows.
-    PlayStation(Box<RadioStation>),
-    ToggleFavoriteStation(Box<RadioStation>),
 }
 
 /// Settings > Last.fm requests. A password lives only in `Login` on its way
@@ -820,6 +635,8 @@ pub enum Action {
     PowerHold,
     /// Power was released (or the press cancelled) after `PowerHold`.
     PowerHoldCancel,
+    /// A button layout's command that has no action of its own (Customize > Buttons).
+    Command(buttons::Command),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -904,6 +721,8 @@ pub enum Screen {
     Audiobooks,
     /// One audiobook (`navigation.filter` is its key): buttons and chapters.
     Book,
+    /// The library's films (video files), each opened on Now Playing.
+    Videos,
     SettingsSystem,
     Battery,
     Sleep,
@@ -1010,6 +829,8 @@ pub enum ConfirmAction {
     ReportsQuestion,
     /// Wired volume above the safe level (hearing warning).
     LoudVolume,
+    /// A new button layout: kept only when chosen with its own buttons.
+    KeepButtons,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1166,6 +987,9 @@ pub struct Settings {
     /// What the wheel and its buttons do while the screen is off (Beta 8.18).
     #[serde(default)]
     pub screen_off_buttons: ScreenOffButtons,
+    /// The button layouts and the one in use (Customize > Buttons, Beta 9.3.29).
+    #[serde(default)]
+    pub buttons: buttons::ButtonSettings,
     /// A tick of the vibration motor on each button press (#28).
     #[serde(default)]
     pub haptics: Haptics,
@@ -1226,6 +1050,10 @@ pub struct Settings {
     /// (Y2Reborn #97). Off unless the listener turns it on: the player does not nag.
     #[serde(default)]
     pub update_notifications: bool,
+    /// Radio shows FM Radio (the player's own tuner). On unless the listener turns it off: the
+    /// first Y2 revision has the tuner but cannot receive, and there the entry is only in the way.
+    #[serde(default = "default_true")]
+    pub fm_radio: bool,
     /// The version the last such notice named: each version is announced once, not after every
     /// restart or Wi-Fi connection.
     #[serde(default)]
@@ -1255,22 +1083,6 @@ pub struct Settings {
     pub eq_profile_on: bool,
 }
 
-/// The Music lists that can be pinned to Home, in Home's order: (key, label).
-pub const HOME_PINNABLE: [(&str, &str); 5] = [
-    ("artists", "Artists"),
-    ("albums", "Albums"),
-    ("tracks", "Songs"),
-    ("genres", "Genres"),
-    ("folders", "Folders"),
-];
-/// Home's own places that can be taken off Home, in Home's order: (key,
-/// label). Music stands first, the others after the pinned lists.
-pub const HOME_HIDEABLE: [(&str, &str); 4] = [
-    ("music", "Music"),
-    ("playlists", "Playlists"),
-    ("radio", "Radio"),
-    ("search", "Search"),
-];
 /// How Albums and Audiobooks show their covers: Customize > Cover Flow.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
@@ -1317,30 +1129,6 @@ impl AlbumOrder {
         match self {
             Self::Title => Self::Artist,
             Self::Artist => Self::Title,
-        }
-    }
-}
-/// What the wheel does on Now Playing: Customize > Now Playing Wheel. The
-/// volume buttons always change the volume.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum NowPlayingWheel {
-    #[default]
-    Volume,
-    /// It moves through the song as holding Previous/Next does.
-    Seek,
-}
-impl NowPlayingWheel {
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Volume => "Volume",
-            Self::Seek => "Seek",
-        }
-    }
-    pub fn next(self) -> Self {
-        match self {
-            Self::Volume => Self::Seek,
-            Self::Seek => Self::Volume,
         }
     }
 }
@@ -1473,36 +1261,6 @@ impl WrapAround {
         }
     }
 }
-/// What the wheel, its centre and its four buttons do while the screen is
-/// off. Power, the volume keys and headphone controls always work.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum ScreenOffButtons {
-    /// Nothing: safe in a pocket.
-    Locked,
-    /// Play/Pause, Previous and Next (held: seek); the wheel and centre rest.
-    #[default]
-    Buttons,
-    /// Also the wheel (volume) and the centre (play/pause), like Now Playing.
-    WheelAndButtons,
-}
-impl ScreenOffButtons {
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Locked => "Locked",
-            Self::Buttons => "Buttons",
-            Self::WheelAndButtons => "Wheel + Buttons",
-        }
-    }
-    /// The next choice, as one press on its row steps through them.
-    pub fn next(self) -> Self {
-        match self {
-            Self::Locked => Self::Buttons,
-            Self::Buttons => Self::WheelAndButtons,
-            Self::WheelAndButtons => Self::Locked,
-        }
-    }
-}
 /// The vibration motor's tick on the wheel and buttons (#28). Off until
 /// chosen: an update does not start buzzing on its own.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -1608,6 +1366,7 @@ impl Default for Settings {
             artists_list: ArtistsList::All,
             wrap_around: WrapAround::Menus,
             screen_off_buttons: ScreenOffButtons::Buttons,
+            buttons: Default::default(),
             haptics: Haptics::Off,
             wheel_click: WheelClick::Off,
             speaker: true,
@@ -1626,6 +1385,7 @@ impl Default for Settings {
             lastfm_now_playing: true,
             internal_setup_asked: false,
             update_notifications: false,
+            fm_radio: true,
             update_announced: String::new(),
             hp_level: HpLevel::Low,
             volume_scale: VOLUME_SCALE,
@@ -1961,10 +1721,9 @@ pub enum Effect {
     SetAlbumView(AlbumView),
     SetAlbumOrder(AlbumOrder),
     SetArtistAlbums(ArtistAlbums),
-    SetNowPlayingWheel(NowPlayingWheel),
+    SetButtons(Box<buttons::ButtonSettings>),
     SetArtistsList(ArtistsList),
     SetWrapAround(WrapAround),
-    SetScreenOffButtons(ScreenOffButtons),
     SetHaptics(Haptics),
     SetWheelClick(WheelClick),
     SetSpeaker(bool),
@@ -2300,6 +2059,8 @@ impl AppModel {
             }
             Err(_) => serde_json::from_slice::<Self>(&bytes)?,
         };
+        let (wheel, dark) = (m.settings.now_playing_wheel, m.settings.screen_off_buttons);
+        m.settings.buttons.migrate(wheel, dark);
         if m.settings.codec_revision < CODEC_REVISION {
             if m.settings.codec_preference == CodecPreference::Sbc {
                 m.settings.codec_preference = CodecPreference::Auto;
@@ -2876,62 +2637,5 @@ mod queue_window_tests {
         assert_eq!(restored.queue.len(), MAX_QUEUE);
         assert_eq!(restored.current().unwrap().id, 6_000);
         assert_eq!(restored.queue_entry_ids.len(), MAX_QUEUE);
-    }
-}
-
-#[cfg(test)]
-mod artist_split_tests {
-    use super::{joined_names, split_artists, split_genres};
-
-    #[test]
-    fn joined_genres_split_and_joined_names_read_with_commas() {
-        assert_eq!(split_genres("Jazz;R&B"), ["Jazz", "R&B"]);
-        assert_eq!(split_genres(" Jazz ; Soul;Jazz"), ["Jazz", "Soul"]);
-        assert_eq!(split_genres("Rock/Pop"), ["Rock/Pop"]);
-        assert_eq!(split_genres(""), [""], "one No Genre");
-        assert_eq!(split_genres(";"), [""]);
-        assert_eq!(
-            joined_names("Lauryn Hill;Mary J. Blige"),
-            "Lauryn Hill, Mary J. Blige"
-        );
-        assert_eq!(joined_names("A; B ;"), "A, B");
-        assert_eq!(joined_names("Simon & Garfunkel"), "Simon & Garfunkel");
-        assert!(matches!(
-            joined_names("Kelis"),
-            std::borrow::Cow::Borrowed("Kelis")
-        ));
-    }
-
-    #[test]
-    fn joined_tags_and_guests_split_but_band_names_stay() {
-        assert_eq!(
-            split_artists("Calvin Harris;Kelis"),
-            ["Calvin Harris", "Kelis"]
-        );
-        assert_eq!(
-            split_artists("Calvin Harris; Dillon Francis ;Dizzee Rascal"),
-            ["Calvin Harris", "Dillon Francis", "Dizzee Rascal"]
-        );
-        assert_eq!(
-            split_artists("Calvin Harris Feat. Kelis"),
-            ["Calvin Harris", "Kelis"]
-        );
-        assert_eq!(
-            split_artists("Daft Punk ft. Pharrell Williams featuring Nile Rodgers"),
-            ["Daft Punk", "Pharrell Williams", "Nile Rodgers"]
-        );
-        assert_eq!(split_artists("Simon & Garfunkel"), ["Simon & Garfunkel"]);
-        assert_eq!(split_artists("Earth, Wind & Fire"), ["Earth, Wind & Fire"]);
-        assert_eq!(
-            split_artists("Soft Cell"),
-            ["Soft Cell"],
-            "\"ft\" only as a word"
-        );
-        assert_eq!(split_artists("Kelis;Kelis"), ["Kelis"]);
-        assert_eq!(split_artists(""), [""], "one unknown artist");
-        assert_eq!(
-            split_artists("宇多田ヒカル feat. 椎名林檎"),
-            ["宇多田ヒカル", "椎名林檎"]
-        );
     }
 }

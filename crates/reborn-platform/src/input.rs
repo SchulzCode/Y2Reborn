@@ -1,6 +1,9 @@
 #![forbid(unsafe_code)]
 
-use reborn_core::{Action, NormalizedInput, PhysicalControl, ScreenOffButtons};
+use reborn_core::{
+    buttons::{ButtonContext, Command, Control, Gesture, Layer, Layout},
+    Action, NormalizedInput, NowPlayingWheel, PhysicalControl, ScreenOffButtons,
+};
 use std::{
     collections::{HashMap, HashSet},
     fs::{self, File, OpenOptions},
@@ -230,6 +233,8 @@ pub struct InputManager {
     wheel: HashMap<String, WheelCadence>,
     dropping: HashSet<String>,
     epoch: Instant,
+    /// How long a press of a button other than Power must last to be a hold (Customize > Buttons).
+    hold: Duration,
 }
 
 impl InputManager {
@@ -291,6 +296,7 @@ impl InputManager {
             wheel: HashMap::new(),
             dropping: HashSet::new(),
             epoch: Instant::now(),
+            hold: LONG_PRESS,
         }
     }
 
@@ -304,6 +310,7 @@ impl InputManager {
             wheel: HashMap::new(),
             dropping: HashSet::new(),
             epoch: Instant::now(),
+            hold: LONG_PRESS,
         }
     }
 
@@ -318,6 +325,19 @@ impl InputManager {
 
     pub fn finish_capture(&mut self) -> Option<InputCapture> {
         self.capture.take()
+    }
+
+    /// The hold time of every button but Power, whose hold stays the one people know.
+    pub fn set_hold(&mut self, hold: Duration) {
+        self.hold = hold;
+    }
+
+    fn hold_for(&self, control: PhysicalControl) -> Duration {
+        if control == PhysicalControl::Power {
+            LONG_PRESS
+        } else {
+            self.hold
+        }
     }
 
     pub fn reset_wheel(&mut self) {
@@ -705,7 +725,10 @@ impl InputManager {
                         .map(Duration::from_micros)
                         .unwrap_or_else(|| now.saturating_duration_since(state.started));
                     long = state.long_emitted;
-                    if !state.long_emitted && held >= LONG_PRESS && is_long_press_control(control) {
+                    if !state.long_emitted
+                        && held >= self.hold_for(control)
+                        && is_long_press_control(control)
+                    {
                         long = true;
                         out.push(InputEvent {
                             device: device.to_owned(),
@@ -750,13 +773,21 @@ impl InputManager {
 
     fn tick_ready(&mut self, now: Instant, blocked: &HashSet<String>) -> Vec<InputEvent> {
         let mut events = vec![];
+        let hold = self.hold;
+        let hold_for = |control| {
+            if control == PhysicalControl::Power {
+                LONG_PRESS
+            } else {
+                hold
+            }
+        };
         for (key, state) in &mut self.pressed {
             if blocked.contains(&key.0) {
                 continue;
             }
             let control = key.1;
             let held = now.saturating_duration_since(state.started);
-            if !state.long_emitted && held >= LONG_PRESS && is_long_press_control(control) {
+            if !state.long_emitted && held >= hold_for(control) && is_long_press_control(control) {
                 state.long_emitted = true;
                 state.last_repeat = now;
                 events.push(InputEvent {
@@ -815,42 +846,34 @@ fn record_timestamp_us(prefix: &[u8]) -> Option<u64> {
     (micros < 1_000_000).then(|| seconds.saturating_mul(1_000_000).saturating_add(micros))
 }
 
+/// Every button can be held and repeats while held: a button layout may give any of them a hold
+/// or a repeating command (Customize > Buttons). The router decides what they mean.
 fn is_long_press_control(control: PhysicalControl) -> bool {
-    matches!(
+    !matches!(
         control,
-        PhysicalControl::Select
-            | PhysicalControl::Back
-            | PhysicalControl::Previous
-            | PhysicalControl::Next
-            | PhysicalControl::PlayPause
-            | PhysicalControl::Power
+        PhysicalControl::WheelClockwise | PhysicalControl::WheelCounterClockwise
     )
 }
 
 fn is_repeat_control(control: PhysicalControl) -> bool {
-    matches!(
-        control,
-        PhysicalControl::VolumeUp
-            | PhysicalControl::VolumeDown
-            | PhysicalControl::Previous
-            | PhysicalControl::Next
-    )
+    is_long_press_control(control) && control != PhysicalControl::Power
 }
 
 /// The second boundary translates normalized physical events into product
-/// actions and owns screen-off policy. It never sees a Linux key code.
+/// actions through the button layout in use (Customize > Buttons). It owns the
+/// dark: a button pressed with the screen off answers as the layout's Screen
+/// Off layer until it is released, even when the screen wakes meanwhile. Power
+/// is not in any layout. It never sees a Linux key code.
 #[derive(Default)]
 pub struct ActionRouter {
-    long_pressed: HashSet<PhysicalControl>,
-    dark_navigation: HashSet<PhysicalControl>,
+    /// Buttons down now: the layer and layout they were pressed in, and how far they got.
+    held: HashMap<PhysicalControl, Held>,
+    power_long: bool,
     power_started_on: Option<bool>,
     screen_on: Option<bool>,
     precise_wheel: bool,
-    /// The on-screen keyboard is open: the wheel's four buttons are arrow keys.
-    keyboard: bool,
-    /// The open keyboard has a list to browse (the library search): the
-    /// wheel turns reach it.
-    keyboard_wheel: bool,
+    /// The screen's layer and layout, the keyboard and protected pages (`set_context`).
+    context: ButtonContext,
     /// Buttons pressed as arrow keys; their hold and release belong to the
     /// keyboard even when it closed meanwhile.
     keyboard_held: HashSet<PhysicalControl>,
@@ -859,11 +882,36 @@ pub struct ActionRouter {
     /// Back was pressed as the Up arrow on the library search's keys: held,
     /// it leaves the search even when that press folded the keys (#51).
     keyboard_search_back: bool,
-    /// What the wheel and its buttons do while the screen is off (a setting).
-    screen_off_buttons: ScreenOffButtons,
+    /// The start-up escape: Back held this long in the first minute brings back Reborn Default.
+    born: Option<Instant>,
+    escaped: bool,
 }
 
+/// A button that is down.
+#[derive(Clone, Copy, Debug)]
+struct Held {
+    layer: Layer,
+    /// Pressed on a page that answers as Reborn Default.
+    protected: bool,
+    since: Instant,
+    long: bool,
+    /// Its press command acted when it went down and repeats while held (no hold command).
+    at_once: bool,
+}
+
+/// Back held this long in the first `ESCAPE_WINDOW` after start: Reborn Default.
+const ESCAPE_HOLD: Duration = Duration::from_secs(5);
+const ESCAPE_WINDOW: Duration = Duration::from_secs(60);
+
 impl ActionRouter {
+    /// The router of a starting Reborn: the start-up escape is open for its first minute.
+    pub fn new() -> Self {
+        Self {
+            born: Some(Instant::now()),
+            ..Self::default()
+        }
+    }
+
     /// The on-screen keyboard opened or closed. While it is open Back,
     /// Play/Pause, Previous and Next move the focus (up, down, left, right)
     /// as soon as they are pressed; holding Back cancels, holding Previous
@@ -874,37 +922,52 @@ impl ActionRouter {
     /// results at the press; holding that Back still leaves the search: it
     /// goes Back (from the results to the keys) and then Home (Cancel).
     pub fn set_keyboard(&mut self, open: bool) {
-        self.keyboard = open;
+        self.context.keyboard = open;
     }
 
     /// The open keyboard's page has results to browse (the library search,
     /// Beta 8.32): its wheel turns are wheel turns. The buttons stay arrows.
     pub fn set_keyboard_wheel(&mut self, browses: bool) {
-        self.keyboard_wheel = browses;
+        self.context.keyboard_wheel = browses;
     }
 
-    /// The setting for the wheel and its buttons while the screen is off.
+    /// What the screen shows, for the layout to answer in (`Ui::button_context`).
+    pub fn set_context(&mut self, context: ButtonContext) {
+        self.context = context;
+    }
+
+    /// The older setting for the dark, as a layout over Reborn Default (tests of the dark).
     pub fn set_screen_off_buttons(&mut self, mode: ScreenOffButtons) {
-        self.screen_off_buttons = mode;
-    }
-
-    /// A button that does nothing while the screen is off: its press, hold
-    /// and release are all swallowed, even when the screen wakes meanwhile.
-    fn rests_in_the_dark(&self, control: PhysicalControl) -> bool {
-        use PhysicalControl::*;
-        match self.screen_off_buttons {
-            ScreenOffButtons::Locked => {
-                matches!(control, Select | Back | Previous | Next | PlayPause)
-            }
-            ScreenOffButtons::Buttons => matches!(control, Select | Back),
-            ScreenOffButtons::WheelAndButtons => control == Back,
-        }
+        self.context.layout = Layout::from_settings(NowPlayingWheel::Volume, mode);
     }
 
     /// A screen transition inside an already-decoded batch must not carry
     /// invisible wheel cadence into the newly visible UI.
     pub fn begin_batch(&mut self) {
         self.precise_wheel = false;
+    }
+
+    fn layer(&self, screen_on: bool) -> Layer {
+        if screen_on {
+            self.context.layer
+        } else {
+            Layer::ScreenOff
+        }
+    }
+
+    /// The command of a control: a protected page answers as Reborn Default (the dark never does).
+    fn command(
+        &self,
+        layer: Layer,
+        protected: bool,
+        control: Control,
+        gesture: Gesture,
+    ) -> Command {
+        if protected && layer != Layer::ScreenOff {
+            Layout::default().resolve(Layer::Menus, control, gesture)
+        } else {
+            self.context.layout.resolve(layer, control, gesture)
+        }
     }
 
     pub fn route(&mut self, event: &InputEvent, screen_on: bool) -> Vec<Action> {
@@ -916,135 +979,174 @@ impl ActionRouter {
             return actions;
         }
         match event.input {
-            NormalizedInput::WheelClockwise(steps) if screen_on => {
-                vec![Action::WheelClockwise(if self.precise_wheel {
-                    1
-                } else {
-                    steps
-                })]
+            NormalizedInput::WheelClockwise(steps) => {
+                self.wheel(Control::WheelForward, steps, screen_on)
             }
-            NormalizedInput::WheelCounterClockwise(steps) if screen_on => {
-                vec![Action::WheelCounterClockwise(if self.precise_wheel {
-                    1
-                } else {
-                    steps
-                })]
+            NormalizedInput::WheelCounterClockwise(steps) => {
+                self.wheel(Control::WheelBack, steps, screen_on)
             }
-            // In the dark the wheel is volume, one step a detent, if allowed.
-            NormalizedInput::WheelClockwise(_)
-                if self.screen_off_buttons == ScreenOffButtons::WheelAndButtons =>
-            {
+            NormalizedInput::Press(PhysicalControl::Power)
+            | NormalizedInput::LongPress(PhysicalControl::Power)
+            | NormalizedInput::Release(PhysicalControl::Power)
+            | NormalizedInput::Cancel(PhysicalControl::Power)
+            | NormalizedInput::Repeat(PhysicalControl::Power) => self.power(event.input, screen_on),
+            NormalizedInput::Press(button) => {
+                let Some(control) = Control::of_button(button) else {
+                    return vec![];
+                };
+                let held = self.press(button, control, screen_on);
+                if held.at_once {
+                    self.command(held.layer, held.protected, control, Gesture::Press)
+                        .actions(1)
+                } else {
+                    vec![]
+                }
+            }
+            NormalizedInput::Repeat(button) => {
+                let Some(control) = Control::of_button(button) else {
+                    return vec![];
+                };
+                let held = self.known(button, control, screen_on);
+                if button == PhysicalControl::Back
+                    && !self.escaped
+                    && self.born.is_some_and(|born| {
+                        held.since.saturating_duration_since(born) < ESCAPE_WINDOW
+                    })
+                    && held.since.elapsed() >= ESCAPE_HOLD
+                {
+                    self.escaped = true;
+                    return vec![Action::Command(Command::RebornDefault)];
+                }
+                let gesture = if held.at_once {
+                    Gesture::Press
+                } else if held.long {
+                    Gesture::Hold
+                } else {
+                    return vec![];
+                };
+                let command = self.command(held.layer, held.protected, control, gesture);
+                if command.repeats() {
+                    command.actions(1)
+                } else {
+                    vec![]
+                }
+            }
+            NormalizedInput::LongPress(button) => {
+                let Some(control) = Control::of_button(button) else {
+                    return vec![];
+                };
+                let mut held = self.known(button, control, screen_on);
+                held.long = true;
+                self.held.insert(button, held);
+                if held.at_once {
+                    return vec![];
+                }
+                self.command(held.layer, held.protected, control, Gesture::Hold)
+                    .actions(1)
+            }
+            NormalizedInput::Release(button) => {
+                let Some(control) = Control::of_button(button) else {
+                    return vec![];
+                };
+                let held = self.known(button, control, screen_on);
+                self.held.remove(&button);
+                if held.at_once || held.long {
+                    return vec![];
+                }
+                self.command(held.layer, held.protected, control, Gesture::Press)
+                    .actions(1)
+            }
+            NormalizedInput::Cancel(button) => {
+                self.held.remove(&button);
+                vec![]
+            }
+        }
+    }
+
+    /// A button goes down: the layer and layout it answers in until it is released.
+    fn press(&mut self, button: PhysicalControl, control: Control, screen_on: bool) -> Held {
+        let layer = self.layer(screen_on);
+        let protected = self.context.protected;
+        let press = self.command(layer, protected, control, Gesture::Press);
+        let hold = self.command(layer, protected, control, Gesture::Hold);
+        let held = Held {
+            layer,
+            protected,
+            since: Instant::now(),
+            long: false,
+            at_once: hold == Command::Nothing && press.repeats(),
+        };
+        self.held.insert(button, held);
+        held
+    }
+
+    /// The button as it went down; one whose press was not seen (held through a reset) counts as
+    /// pressed now.
+    fn known(&mut self, button: PhysicalControl, control: Control, screen_on: bool) -> Held {
+        match self.held.get(&button) {
+            Some(held) => *held,
+            None => self.press(button, control, screen_on),
+        }
+    }
+
+    /// A turn of the wheel. Scrolling keeps the turn's speed (one step at a time just after the
+    /// screen changed); any other command acts once per turn record.
+    fn wheel(&mut self, control: Control, steps: u8, screen_on: bool) -> Vec<Action> {
+        let layer = self.layer(screen_on);
+        let command = self.command(layer, self.context.protected, control, Gesture::Press);
+        match command {
+            // Scrolling needs the screen.
+            Command::ScrollForward | Command::ScrollBack if !screen_on => vec![],
+            Command::ScrollForward | Command::ScrollBack => {
+                command.actions(if self.precise_wheel { 1 } else { steps })
+            }
+            // A station has no place to move to: its wheel stays the volume.
+            Command::SeekForward if layer == Layer::NowPlaying && self.context.station => {
                 vec![Action::VolumeUp]
             }
-            NormalizedInput::WheelCounterClockwise(_)
-                if self.screen_off_buttons == ScreenOffButtons::WheelAndButtons =>
-            {
+            Command::SeekBack if layer == Layer::NowPlaying && self.context.station => {
                 vec![Action::VolumeDown]
             }
-            NormalizedInput::WheelClockwise(_) | NormalizedInput::WheelCounterClockwise(_) => {
+            command => command.actions(1),
+        }
+    }
+
+    /// Power is in no layout: short sleeps or wakes, held opens the Quick Menu (and turns off).
+    fn power(&mut self, input: NormalizedInput, screen_on: bool) -> Vec<Action> {
+        match input {
+            NormalizedInput::Press(_) => {
+                self.power_started_on = Some(screen_on);
                 vec![]
             }
-            NormalizedInput::Press(control) => {
-                if control == PhysicalControl::Power {
-                    self.power_started_on = Some(screen_on);
-                }
-                if !screen_on && self.rests_in_the_dark(control) {
-                    self.dark_navigation.insert(control);
-                }
-                match control {
-                    PhysicalControl::VolumeUp => vec![Action::VolumeUp],
-                    PhysicalControl::VolumeDown => vec![Action::VolumeDown],
-                    _ => vec![],
-                }
-            }
-            NormalizedInput::Repeat(control) => match control {
-                PhysicalControl::VolumeUp => vec![Action::VolumeUp],
-                PhysicalControl::VolumeDown => vec![Action::VolumeDown],
-                _ if self.dark_navigation.contains(&control) => vec![],
-                PhysicalControl::Previous if self.long_pressed.contains(&control) => {
-                    vec![Action::SeekBackward]
-                }
-                PhysicalControl::Next if self.long_pressed.contains(&control) => {
-                    vec![Action::SeekForward]
-                }
-                _ => vec![],
-            },
-            NormalizedInput::LongPress(control) => {
-                self.long_pressed.insert(control);
-                if self.dark_navigation.contains(&control)
-                    || (!screen_on
-                        && !matches!(
-                            control,
-                            PhysicalControl::Previous
-                                | PhysicalControl::Next
-                                | PhysicalControl::Power
-                        ))
-                {
-                    return vec![];
-                }
-                match control {
-                    PhysicalControl::Select => vec![Action::ContextMenu],
-                    PhysicalControl::Back => vec![Action::Home],
-                    PhysicalControl::Previous => vec![Action::SeekBackward],
-                    PhysicalControl::Next => vec![Action::SeekForward],
-                    PhysicalControl::PlayPause => vec![Action::ShowNowPlaying],
-                    PhysicalControl::Power if screen_on => vec![Action::PowerHold],
-                    PhysicalControl::Power => vec![Action::ScreenWake, Action::PowerHold],
-                    _ => vec![],
-                }
-            }
-            NormalizedInput::Cancel(control) => {
-                let held = self.long_pressed.remove(&control);
-                self.dark_navigation.remove(&control);
-                if control == PhysicalControl::Power {
-                    self.power_started_on = None;
-                    if held {
-                        return vec![Action::PowerHoldCancel];
-                    }
-                }
-                vec![]
-            }
-            NormalizedInput::Release(control) => {
-                let power_started_on = if control == PhysicalControl::Power {
-                    self.power_started_on.take()
+            NormalizedInput::LongPress(_) => {
+                self.power_long = true;
+                if screen_on {
+                    vec![Action::PowerHold]
                 } else {
-                    None
-                };
-                if self.dark_navigation.remove(&control) {
-                    self.long_pressed.remove(&control);
-                    return vec![];
-                }
-                if self.long_pressed.remove(&control) {
-                    return if control == PhysicalControl::Power {
-                        vec![Action::PowerHoldCancel]
-                    } else {
-                        vec![]
-                    };
-                }
-                match control {
-                    PhysicalControl::Select if screen_on => vec![Action::Select],
-                    // The centre plays and pauses in the dark, as on Now Playing.
-                    PhysicalControl::Select
-                        if self.screen_off_buttons == ScreenOffButtons::WheelAndButtons =>
-                    {
-                        vec![Action::PlayPause]
-                    }
-                    PhysicalControl::Back if screen_on => vec![Action::Back],
-                    PhysicalControl::Previous => vec![Action::PreviousTrack],
-                    PhysicalControl::Next => vec![Action::NextTrack],
-                    PhysicalControl::PlayPause => vec![Action::PlayPause],
-                    PhysicalControl::Power => {
-                        if power_started_on.is_some_and(|started| started != screen_on) {
-                            vec![]
-                        } else if screen_on {
-                            vec![Action::PowerShort]
-                        } else {
-                            vec![Action::ScreenWake]
-                        }
-                    }
-                    _ => vec![],
+                    vec![Action::ScreenWake, Action::PowerHold]
                 }
             }
+            NormalizedInput::Cancel(_) => {
+                self.power_started_on = None;
+                if std::mem::take(&mut self.power_long) {
+                    vec![Action::PowerHoldCancel]
+                } else {
+                    vec![]
+                }
+            }
+            NormalizedInput::Release(_) => {
+                let started_on = self.power_started_on.take();
+                if std::mem::take(&mut self.power_long) {
+                    vec![Action::PowerHoldCancel]
+                } else if started_on.is_some_and(|started| started != screen_on) {
+                    vec![]
+                } else if screen_on {
+                    vec![Action::PowerShort]
+                } else {
+                    vec![Action::ScreenWake]
+                }
+            }
+            _ => vec![],
         }
     }
 
@@ -1057,19 +1159,22 @@ impl ActionRouter {
             _ => None,
         };
         match input {
-            NormalizedInput::Press(control) if self.keyboard && screen_on => {
+            NormalizedInput::Press(control) if self.context.keyboard && screen_on => {
                 let action = arrow(control)?;
                 self.keyboard_held.insert(control);
                 self.keyboard_repeat = 0;
                 if control == PhysicalControl::Back {
-                    self.keyboard_search_back = self.keyboard_wheel;
+                    self.keyboard_search_back = self.context.keyboard_wheel;
                 }
                 Some(vec![action])
             }
             NormalizedInput::Repeat(control) if self.keyboard_held.contains(&control) => {
-                self.keyboard_repeat += 1;
-                Some(match arrow(control) {
-                    Some(action) if self.keyboard && self.keyboard_repeat.is_multiple_of(2) => {
+                let moves = matches!(control, PhysicalControl::Previous | PhysicalControl::Next);
+                self.keyboard_repeat += u32::from(moves);
+                Some(match arrow(control).filter(|_| moves) {
+                    Some(action)
+                        if self.context.keyboard && self.keyboard_repeat.is_multiple_of(2) =>
+                    {
                         vec![action]
                     }
                     _ => vec![],
@@ -1077,7 +1182,7 @@ impl ActionRouter {
             }
             NormalizedInput::LongPress(control) if self.keyboard_held.contains(&control) => {
                 Some(match control {
-                    PhysicalControl::Back if self.keyboard => vec![Action::Home],
+                    PhysicalControl::Back if self.context.keyboard => vec![Action::Home],
                     // The press folded the search's keys into its results.
                     PhysicalControl::Back if self.keyboard_search_back && screen_on => {
                         vec![Action::Back, Action::Home]
@@ -1091,7 +1196,7 @@ impl ActionRouter {
                 Some(vec![])
             }
             NormalizedInput::WheelClockwise(_) | NormalizedInput::WheelCounterClockwise(_)
-                if self.keyboard && !self.keyboard_wheel =>
+                if self.context.keyboard && !self.context.keyboard_wheel =>
             {
                 Some(vec![])
             }
@@ -1101,8 +1206,8 @@ impl ActionRouter {
 
     pub fn reset(&mut self) {
         self.keyboard_held.clear();
-        self.long_pressed.clear();
-        self.dark_navigation.clear();
+        self.held.clear();
+        self.power_long = false;
         self.power_started_on = None;
         self.screen_on = None;
         self.precise_wheel = false;
@@ -2472,6 +2577,222 @@ mod tests {
         assert!(input.poll().is_empty());
         assert!(input
             .tick(Instant::now() + Duration::from_secs(60))
+            .is_empty());
+    }
+
+    fn button(input: NormalizedInput) -> InputEvent {
+        InputEvent {
+            device: NAVIGATION_BUTTONS.into(),
+            kernel_mono_us: None,
+            input,
+        }
+    }
+
+    fn tap(router: &mut ActionRouter, control: PhysicalControl, screen_on: bool) -> Vec<Action> {
+        let mut out = router.route(&button(NormalizedInput::Press(control)), screen_on);
+        out.extend(router.route(&button(NormalizedInput::Release(control)), screen_on));
+        out
+    }
+
+    fn layout(changes: &[(Layer, Control, Gesture, Command)]) -> Layout {
+        let mut layout = Layout::default();
+        for &(layer, control, gesture, command) in changes {
+            layout.set(layer, control, gesture, Some(command));
+        }
+        layout
+    }
+
+    #[test]
+    fn a_layout_moves_commands_between_buttons_and_holds() {
+        use PhysicalControl as P;
+        let mut router = ActionRouter::default();
+        router.set_context(ButtonContext {
+            layout: layout(&[
+                (
+                    Layer::Menus,
+                    Control::Select,
+                    Gesture::Press,
+                    Command::PlayPause,
+                ),
+                (
+                    Layer::Menus,
+                    Control::PlayPause,
+                    Gesture::Press,
+                    Command::Select,
+                ),
+                (
+                    Layer::Menus,
+                    Control::Select,
+                    Gesture::Hold,
+                    Command::VolumeUp,
+                ),
+                (
+                    Layer::Menus,
+                    Control::VolumeDown,
+                    Gesture::Hold,
+                    Command::Shuffle,
+                ),
+            ]),
+            ..ButtonContext::default()
+        });
+        assert_eq!(tap(&mut router, P::Select, true), [Action::PlayPause]);
+        assert_eq!(tap(&mut router, P::PlayPause, true), [Action::Select]);
+        // A repeating hold: at the hold and on every repeat, never the press.
+        assert!(router
+            .route(&button(NormalizedInput::Press(P::Select)), true)
+            .is_empty());
+        assert_eq!(
+            router.route(&button(NormalizedInput::LongPress(P::Select)), true),
+            [Action::VolumeUp]
+        );
+        assert_eq!(
+            router.route(&button(NormalizedInput::Repeat(P::Select)), true),
+            [Action::VolumeUp]
+        );
+        assert!(router
+            .route(&button(NormalizedInput::Release(P::Select)), true)
+            .is_empty());
+        // Volume − with a hold: its press waits for the release, the hold is Shuffle once.
+        assert!(router
+            .route(&button(NormalizedInput::Press(P::VolumeDown)), true)
+            .is_empty());
+        assert_eq!(
+            router.route(&button(NormalizedInput::LongPress(P::VolumeDown)), true),
+            [Action::Command(Command::Shuffle)]
+        );
+        assert!(router
+            .route(&button(NormalizedInput::Repeat(P::VolumeDown)), true)
+            .is_empty());
+        assert!(router
+            .route(&button(NormalizedInput::Release(P::VolumeDown)), true)
+            .is_empty());
+        assert_eq!(tap(&mut router, P::VolumeDown, true), [Action::VolumeDown]);
+    }
+
+    #[test]
+    fn protected_pages_answer_as_reborn_default_and_the_dark_never_does() {
+        use PhysicalControl as P;
+        let mut router = ActionRouter::default();
+        let swapped = layout(&[
+            (Layer::Menus, Control::Back, Gesture::Press, Command::Next),
+            (Layer::Menus, Control::Next, Gesture::Press, Command::Back),
+            (
+                Layer::ScreenOff,
+                Control::Back,
+                Gesture::Press,
+                Command::PlayPause,
+            ),
+        ]);
+        router.set_context(ButtonContext {
+            layout: swapped.clone(),
+            protected: true,
+            ..ButtonContext::default()
+        });
+        assert_eq!(tap(&mut router, P::Back, true), [Action::Back]);
+        assert_eq!(tap(&mut router, P::Back, false), [Action::PlayPause]);
+        // Pressed on a protected page, released after it closed: still Reborn Default.
+        assert!(router
+            .route(&button(NormalizedInput::Press(P::Back)), true)
+            .is_empty());
+        router.set_context(ButtonContext {
+            layout: swapped,
+            ..ButtonContext::default()
+        });
+        assert_eq!(
+            router.route(&button(NormalizedInput::Release(P::Back)), true),
+            [Action::Back]
+        );
+        assert_eq!(tap(&mut router, P::Back, true), [Action::NextTrack]);
+    }
+
+    #[test]
+    fn now_playing_has_its_own_wheel_and_a_station_keeps_the_volume() {
+        let wheel = |router: &mut ActionRouter, steps: u8| {
+            router.begin_batch();
+            router.route(
+                &InputEvent {
+                    device: CLICK_WHEEL.into(),
+                    kernel_mono_us: None,
+                    input: NormalizedInput::WheelClockwise(steps),
+                },
+                true,
+            )
+        };
+        let mut router = ActionRouter::default();
+        let _ = wheel(&mut router, 1);
+        assert_eq!(
+            wheel(&mut router, 3),
+            [Action::WheelClockwise(3)],
+            "menus scroll at speed"
+        );
+        router.set_context(ButtonContext {
+            layer: Layer::NowPlaying,
+            ..ButtonContext::default()
+        });
+        assert_eq!(
+            wheel(&mut router, 3),
+            [Action::VolumeUp],
+            "one step a record"
+        );
+        let seeks = layout(&[(
+            Layer::NowPlaying,
+            Control::WheelForward,
+            Gesture::Press,
+            Command::SeekForward,
+        )]);
+        router.set_context(ButtonContext {
+            layout: seeks.clone(),
+            layer: Layer::NowPlaying,
+            ..ButtonContext::default()
+        });
+        assert_eq!(wheel(&mut router, 1), [Action::SeekForward]);
+        router.set_context(ButtonContext {
+            layout: seeks,
+            layer: Layer::NowPlaying,
+            station: true,
+            ..ButtonContext::default()
+        });
+        assert_eq!(wheel(&mut router, 1), [Action::VolumeUp]);
+    }
+
+    #[test]
+    fn back_held_five_seconds_in_the_first_minute_brings_back_reborn_default_once() {
+        use PhysicalControl as P;
+        let mut router = ActionRouter::default();
+        router.born = Some(Instant::now());
+        assert!(router
+            .route(&button(NormalizedInput::Press(P::Back)), true)
+            .is_empty());
+        // Pretend the press began five seconds ago.
+        if let Some(h) = router.held.get_mut(&P::Back) {
+            h.since = Instant::now() - ESCAPE_HOLD;
+        }
+        router.born = router.held.get(&P::Back).map(|h| h.since);
+        assert_eq!(
+            router.route(&button(NormalizedInput::Repeat(P::Back)), true),
+            [Action::Command(Command::RebornDefault)]
+        );
+        assert!(router
+            .route(&button(NormalizedInput::Repeat(P::Back)), true)
+            .is_empty());
+        // After the first minute a long hold of Back is only Home.
+        let mut late = ActionRouter::default();
+        late.born = Some(Instant::now() - ESCAPE_WINDOW - ESCAPE_HOLD);
+        let _ = late.route(&button(NormalizedInput::Press(P::Back)), true);
+        if let Some(h) = late.held.get_mut(&P::Back) {
+            h.since = Instant::now() - ESCAPE_HOLD;
+        }
+        assert!(late
+            .route(&button(NormalizedInput::Repeat(P::Back)), true)
+            .is_empty());
+        // A router made without a start (tests, a restarted loop) has no escape.
+        let mut none = ActionRouter::default();
+        let _ = none.route(&button(NormalizedInput::Press(P::Back)), true);
+        if let Some(h) = none.held.get_mut(&P::Back) {
+            h.since = Instant::now() - ESCAPE_HOLD;
+        }
+        assert!(none
+            .route(&button(NormalizedInput::Repeat(P::Back)), true)
             .is_empty());
     }
 }

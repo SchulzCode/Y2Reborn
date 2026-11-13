@@ -18,11 +18,10 @@ use std::{collections::BTreeMap, path::Path};
 pub type Counts = BTreeMap<String, u64>;
 
 /// Audio types without a decoder in Reborn's FFmpeg (`y2_production_defconfig`), as file name
-/// endings. `.mp4` is here too: the library leaves it out on purpose (a video makes every scan
-/// incomplete), but a listener can still have copied songs as .mp4.
+/// endings.
 const KINDS: &[&str] = &[
     "wma", "dsf", "dff", "mka", "mpc", "tta", "tak", "caf", "ac3", "dts", "mp2", "amr", "m4p",
-    "aa", "aax", "ra", "mid", "midi", "mp4",
+    "aa", "aax", "ra", "mid", "midi",
 ];
 
 /// The type of an audio file the library cannot play, None for anything else (pictures, text,
@@ -101,7 +100,11 @@ mod tests {
     fn audio_without_a_decoder_is_named_and_everything_else_is_not() {
         assert_eq!(kind(Path::new("/m/a/01 Song.WMA")), Some("wma"));
         assert_eq!(kind(Path::new("/m/a/track.dsf")), Some("dsf"));
-        assert_eq!(kind(Path::new("/m/a/video.mp4")), Some("mp4"));
+        assert_eq!(
+            kind(Path::new("/m/a/video.mp4")),
+            None,
+            "a film is read, not left out"
+        );
         for other in [
             "/m/a/01.flac",
             "/m/a/cover.jpg",

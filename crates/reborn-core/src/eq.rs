@@ -439,7 +439,7 @@ Filter 10: ON PK Fc 5332 Hz Gain -1.1 dB Q 5.75
             );
             count += 1;
         }
-        assert_eq!(count, 47);
+        assert_eq!(count, 48);
     }
 
     fn shipped(file: &str) -> EqProfile {

@@ -17,6 +17,19 @@ use reborn_core::{
 /// address and length).
 pub(crate) type BookCache = ((usize, usize), Vec<Book>);
 
+/// What the Audiobooks rows were made from: the library, every book's
+/// progress, how many files' chapters are known and the playing book.
+#[derive(PartialEq)]
+pub(crate) struct RowsStamp {
+    library: (usize, usize),
+    shelf: books::Shelf,
+    chapters: usize,
+    playing: Option<String>,
+}
+
+/// The Audiobooks rows with what they were made from.
+pub(crate) type BookRowsCache = (RowsStamp, Vec<Item>);
+
 /// A length for people: "9 h 41 min", "41 min", "40 s".
 pub fn length(ms: u64) -> String {
     let minutes = ms / 60_000;
@@ -33,19 +46,57 @@ pub fn length(ms: u64) -> String {
 impl Ui {
     /// Every book in the library (cached until the library changes).
     pub(crate) fn books(&self, tracks: &[Track]) -> Vec<Book> {
-        let stamp = (tracks.as_ptr() as usize, tracks.len());
-        let mut cache = self.books.borrow_mut();
-        match &*cache {
-            Some((seen, books)) if *seen == stamp => books.clone(),
-            _ => {
-                let books = books::books(tracks);
-                *cache = Some((stamp, books.clone()));
-                books
-            }
-        }
+        self.with_books(tracks, <[Book]>::to_vec)
     }
     pub(crate) fn book(&self, tracks: &[Track], key: &str) -> Option<Book> {
-        self.books(tracks).into_iter().find(|b| b.key == key)
+        self.with_books(tracks, |books| books.iter().find(|b| b.key == key).cloned())
+    }
+    fn with_books<R>(&self, tracks: &[Track], read: impl FnOnce(&[Book]) -> R) -> R {
+        let stamp = crate::library_stamp(tracks);
+        let mut cache = self.books.borrow_mut();
+        let books = match cache.take() {
+            Some((seen, books)) if seen == stamp => books,
+            _ => books::books(tracks),
+        };
+        let result = read(&books);
+        *cache = Some((stamp, books));
+        result
+    }
+
+    /// The Audiobooks rows, built again only when what they show changed; the
+    /// playing book's place moves with the sound, so its row is refreshed.
+    pub(crate) fn with_book_rows<R>(
+        &self,
+        m: &AppModel,
+        tracks: &[Track],
+        read: impl FnOnce(&[Item]) -> R,
+    ) -> R {
+        let playing = m.book.as_ref().map(|l| l.key.clone());
+        let fresh = matches!(&*self.book_rows.borrow(), Some((s, _))
+            if s.library == crate::library_stamp(tracks)
+                && s.shelf == m.library.shelf
+                && s.chapters == m.library.chapters.len()
+                && s.playing == playing);
+        if !fresh {
+            let stamp = RowsStamp {
+                library: crate::library_stamp(tracks),
+                shelf: m.library.shelf.clone(),
+                chapters: m.library.chapters.len(),
+                playing: playing.clone(),
+            };
+            *self.book_rows.borrow_mut() = Some((stamp, book_rows(self, m, tracks)));
+        } else if let Some(key) = playing {
+            let mut cache = self.book_rows.borrow_mut();
+            let wanted = format!("book:{key}");
+            let row = cache
+                .as_mut()
+                .and_then(|(_, rows)| rows.iter_mut().find(|r| r.key == wanted));
+            if let (Some(row), Some(book)) = (row, self.book(tracks, &key)) {
+                row.secondary = status(m, tracks, &book);
+            }
+        }
+        let cache = self.book_rows.borrow();
+        read(cache.as_ref().map_or(&[][..], |(_, rows)| rows.as_slice()))
     }
 }
 

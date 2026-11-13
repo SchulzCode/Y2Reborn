@@ -435,7 +435,7 @@ pub(crate) fn run() -> Result<(), String> {
         Instant::now() - Duration::from_secs(1),
     );
     let monitor: Option<(Instant, SyncSender<Response>, u64, Vec<Value>)> = None;
-    let action_router = input::ActionRouter::default();
+    let action_router = input::ActionRouter::new();
     let input_screen_off = rt.model.screen_off;
     let last_sd = storage::sd_present();
     let usb_refresh = storage::TransferRefresh::default();
@@ -833,8 +833,7 @@ impl MainLoop {
         ) {
             self.observation_pending = None;
         }
-        rt.receive_chapters();
-        rt.sleep_timer_tick();
+        rt.background_ticks();
         let mut logo = None;
         if let Some(worker) = &mut rt.thumbs {
             // Upload finished thumbnails (a few per pass, so a burst never
@@ -1266,17 +1265,13 @@ impl MainLoop {
                     None,
                     json!({"device":event.device,"input":event.input}),
                 );
-                // Per event: an action earlier in this batch may have opened
-                // or closed the keyboard.
-                self.action_router.set_keyboard(rt.ui.keyboard.is_some());
-                self.action_router.set_keyboard_wheel(
-                    rt.ui
-                        .keyboard
-                        .as_ref()
-                        .is_some_and(reborn_ui::keyboard::Keyboard::live),
-                );
+                // Per event: an action earlier in this batch may have opened the keyboard or
+                // changed the screen, and so the layout's layer (Customize > Buttons).
                 self.action_router
-                    .set_screen_off_buttons(rt.model.settings.screen_off_buttons);
+                    .set_context(rt.ui.button_context(&rt.model));
+                input.set_hold(Duration::from_millis(
+                    rt.model.settings.buttons.hold.millis(),
+                ));
                 let lit = !rt.model.screen_off;
                 let seek_run = rt.seek_run;
                 let actions = self.action_router.route(&event, !rt.model.screen_off);

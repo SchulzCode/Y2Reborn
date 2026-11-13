@@ -12,6 +12,10 @@ impl Runtime {
             ui.radio.error = None;
         };
         match request {
+            RadioRequest::Fm
+            | RadioRequest::FmScan
+            | RadioRequest::FmCancel
+            | RadioRequest::FmShow(_) => return self.fm_request(request),
             RadioRequest::Favorites => local(&mut self.ui, self.radio_favorites.clone()),
             RadioRequest::Own => {
                 let stations = own_stations(&self.storage_roots());
@@ -129,7 +133,7 @@ impl Runtime {
         self.dirty.mark_render();
     }
     pub(crate) fn play_radio(&mut self, station: reborn_core::RadioStation) -> Result<(), String> {
-        if self.ui.wifi.status == WifiStatus::Disconnected {
+        if !station.is_fm() && self.ui.wifi.status == WifiStatus::Disconnected {
             return Err("Connect to Wi-Fi to listen to radio".into());
         }
         self.save_book();
@@ -253,6 +257,9 @@ impl Runtime {
     /// The live line under a playing station: its announced song, or how the
     /// connection is doing.
     pub(crate) fn radio_tick(&mut self) {
+        if self.fm_tick() {
+            return;
+        }
         let radio = self.model.current().is_some_and(Track::is_radio);
         if !radio {
             if self.ui.radio.now.take().is_some() {

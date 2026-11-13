@@ -76,7 +76,20 @@ impl Ui {
             self.fast_scroll_until = None;
             changed = true;
         }
+        if self.video_controls_until.is_some_and(|until| now >= until) {
+            self.video_controls_until = None;
+            changed = true;
+        }
         changed
+    }
+
+    /// A film's title and time line are on screen (a button was pressed a moment ago).
+    pub fn video_controls_shown(&self) -> bool {
+        self.video_controls_until.is_some()
+    }
+    /// A button was pressed while a film shows: its title and time line appear for a while.
+    pub(crate) fn show_video_controls(&mut self) {
+        self.video_controls_until = Some(Instant::now() + VIDEO_CONTROLS);
     }
 
     /// Whether something on screen changes with time (a fade, a ring), so the
@@ -85,7 +98,7 @@ impl Ui {
         self.volume_until.is_some()
             || self.power_hold.is_some()
             || self.spinning
-            || self.gliding()
+            || self.in_motion()
             || glyph_cache::pending()
     }
 
@@ -93,6 +106,13 @@ impl Ui {
     /// the cover's flight, and (Beta 7.2) every eased value on its way, a
     /// screen sliding in and the playing wave. Spinners stay at the calm rate.
     pub fn gliding(&self) -> bool {
+        // A film's pictures come at their own times: the loop looks for one at the panel's
+        // rate, but only a new picture is a reason to draw (`in_motion` leaves films out).
+        self.film_running || self.in_motion()
+    }
+
+    /// Something eased or gliding is on its way and needs the next frame drawn.
+    fn in_motion(&self) -> bool {
         self.flow.borrow().moving()
             || self.transition_progress().is_some()
             || (self.ui_motion

@@ -1058,7 +1058,7 @@ pub(crate) fn remap(c: &mut Canvas, start: usize, p: &Palette, accent: u32) {
     for q in &mut c.draw[start..] {
         if matches!(
             q.tex,
-            Tex::Art | Tex::CollectionArt | Tex::Thumb(_) | Tex::Skin
+            Tex::Art | Tex::CollectionArt | Tex::Thumb(_) | Tex::Skin | Tex::Video
         ) {
             continue;
         }

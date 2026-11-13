@@ -103,7 +103,7 @@ static int wait_flip(int fd, struct flip *f) {
 static _Thread_local char last_error[256];
 const char *rb_graphics_error(void) { return last_error; }
 /* Texture slots; keep in step with reborn-graphics/src/native.rs. */
-#define RB_TEXTURES 10
+#define RB_TEXTURES 11
 #define RB_SKIN_MAX 1024
 /* Runtime glyph page edge; keep in step with GLYPH_PAGE in glyphs.rs. */
 #define RB_GLYPHS 1024
@@ -348,6 +348,9 @@ static int gl_setup(RbGraphics *g, const uint8_t *const font_pages[3],
    * so a UI that never shows such text holds no video memory for it. */
   g->tex[9] = texture(1, 1, white);
   g->tex_w[9] = g->tex_h[9] = 1;
+  /* The playing film's picture (rb_graphics_video); one texel until a film plays. */
+  g->tex[10] = texture(1, 1, white);
+  g->tex_w[10] = g->tex_h[10] = 1;
   for (int i = 5; i < RB_TEXTURES; i++) {
     glBindTexture(GL_TEXTURE_2D, g->tex[i]);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
@@ -646,6 +649,23 @@ int rb_graphics_art(RbGraphics *g, const uint8_t *p, int w, int h,
     return -EIO;
   g->tex_w[tex] = w;
   g->tex_h[tex] = h;
+  return 0;
+}
+/* The playing film's current picture: w x h RGBA, at most the screen's size. A picture of the
+ * size already held replaces the texels in place; 1 x 1 gives the memory back. */
+int rb_graphics_video(RbGraphics *g, const uint8_t *p, int w, int h) {
+  if (!p || w < 1 || h < 1 || w > 512 || h > 512)
+    return -EINVAL;
+  glBindTexture(GL_TEXTURE_2D, g->tex[10]);
+  glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+  if (w == g->tex_w[10] && h == g->tex_h[10])
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, p);
+  else
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, p);
+  if (glGetError() != GL_NO_ERROR)
+    return -EIO;
+  g->tex_w[10] = w;
+  g->tex_h[10] = h;
   return 0;
 }
 /* Replace the skin atlas (w x h RGBA, at most RB_SKIN_MAX square); a 1x1

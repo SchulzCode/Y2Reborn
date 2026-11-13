@@ -37,3 +37,17 @@ fn screen_off_wakes_less_but_stays_responsive() {
         Duration::from_secs(1)
     );
 }
+
+#[test]
+fn a_film_between_two_pictures_is_looked_at_again_shortly_without_spinning() {
+    // Nothing to draw yet (not dirty) and the frame gap long over: the loop waits a moment.
+    assert_eq!(
+        main_loop_interval(false, false, true, true, Duration::from_millis(40)),
+        Duration::from_millis(5)
+    );
+    // A new picture (dirty) is drawn at once.
+    assert_eq!(
+        main_loop_interval(false, true, true, true, Duration::from_millis(40)),
+        Duration::ZERO
+    );
+}

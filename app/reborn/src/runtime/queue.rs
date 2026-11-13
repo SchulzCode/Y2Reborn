@@ -120,11 +120,11 @@ impl Runtime {
             .ok_or("selected track is not in the playback collection")?;
         // A Shuffle row says how; a song or Play follows the setting, except
         // that one album plays in its order (Y2Reborn #113, #63: its own
-        // Shuffle row shuffles it).
+        // Shuffle row shuffles it), and so do films (the Videos list, #128).
         let force_shuffle = shuffle != ShuffleMode::Off;
         let mode = if force_shuffle {
             shuffle
-        } else if reborn_core::queue::one_album(members.iter().map(|&m| &tracks[m])) {
+        } else if reborn_core::queue::keeps_order(members.iter().map(|&m| &tracks[m])) {
             ShuffleMode::Off
         } else {
             self.model.settings.shuffle_mode()

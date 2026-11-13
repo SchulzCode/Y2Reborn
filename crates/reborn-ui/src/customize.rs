@@ -1,28 +1,47 @@
 //! Settings > Customize: how Reborn behaves, in three short pages (owner, 9.2.10): what Home shows
-//! (Home Menu), how the library lists look and end (Browsing) and how the wheel and buttons answer
-//! (Wheel & Buttons). They are Customize with the navigation filter naming the page, so a session
+//! (Home Menu), how the library lists look and end (Browsing) and what the buttons do (Buttons,
+//! with its own pages in `buttons_page`). They are Customize with the navigation filter naming the page, so a session
 //! saved here reads in older versions. A setting with three or more choices opens a picker
 //! ("choose:<setting>"); on/off is a switch; two named choices step on Select. The line under each
 //! page says what the setting in focus does.
+use crate::buttons_page::{parse, ButtonPage};
 use crate::pages::{home_summary, row, Page};
-use crate::RowKind;
+use crate::{RowKind, Ui};
 use reborn_core::{
-    AlbumOrder, AlbumView, AppModel, ArtistAlbums, ArtistsList, Effect, Haptics, ScreenOffButtons,
-    WheelClick, WrapAround,
+    AlbumOrder, AlbumView, AppModel, ArtistAlbums, ArtistsList, Effect, Haptics, WheelClick,
+    WrapAround,
 };
 
 /// The navigation filters of Customize's pages.
 pub(crate) const BROWSING: &str = "browsing";
+/// Buttons' filter before Beta 9.3.29 (Wheel & Buttons): a saved session still opens it.
 pub(crate) const WHEEL: &str = "wheel";
 /// A picker's filter, and its rows' keys: "choose:<setting>", "set:<setting>:<index>".
 const CHOOSE: &str = "choose:";
 const SET: &str = "set:";
 
 /// The page Customize shows for its navigation filter.
-pub(crate) fn page(m: &AppModel) -> Page {
+pub(crate) fn page(ui: &Ui, m: &AppModel) -> Page {
     let filter = m.navigation.filter.as_str();
     if let Some(setting) = filter.strip_prefix(CHOOSE) {
         return picker(m, setting);
+    }
+    match parse(filter) {
+        Some(ButtonPage::Main) => {
+            let mut page = ui.button_page(m, ButtonPage::Main);
+            page.rows.extend([
+                row("Wheel Click", "wheel_click", "")
+                    .with_kind(RowKind::Toggle(m.settings.wheel_click == WheelClick::On)),
+                row("Haptics", "choose:haptics", current(m, "haptics")).with_kind(RowKind::Chevron),
+            ]);
+            let focused = page.rows.get(m.navigation.focus).map(|r| r.key.as_str());
+            if let Some(line) = focused.and_then(hint) {
+                page.status = Some(line.into());
+            }
+            return page;
+        }
+        Some(button_page) => return ui.button_page(m, button_page),
+        None => {}
     }
     let rows = match filter {
         BROWSING => vec![
@@ -51,27 +70,17 @@ pub(crate) fn page(m: &AppModel) -> Page {
                 current(m, "wrap_around"),
             )
             .with_kind(RowKind::Chevron),
-        ],
-        WHEEL => vec![
-            row(
-                "Wheel on Now Playing",
-                "now_playing_wheel",
-                m.settings.now_playing_wheel.label(),
-            ),
-            row("Wheel Click", "wheel_click", "")
-                .with_kind(RowKind::Toggle(m.settings.wheel_click == WheelClick::On)),
-            row("Haptics", "choose:haptics", current(m, "haptics")).with_kind(RowKind::Chevron),
-            row(
-                "Buttons While Screen Off",
-                "choose:screen_off_buttons",
-                current(m, "screen_off_buttons"),
-            )
-            .with_kind(RowKind::Chevron),
+            row("FM Radio", "fm_radio", "").with_kind(RowKind::Toggle(m.settings.fm_radio)),
         ],
         _ => vec![
             row("Home Menu", "home_menu", home_summary(m)).with_kind(RowKind::Chevron),
             row("Browsing", "customize:browsing", "").with_kind(RowKind::Chevron),
-            row("Wheel & Buttons", "customize:wheel", "").with_kind(RowKind::Chevron),
+            row(
+                "Buttons",
+                "customize:buttons",
+                m.settings.buttons.active_name(),
+            )
+            .with_kind(RowKind::Chevron),
         ],
     };
     let mut page = Page::rows(rows);
@@ -81,15 +90,18 @@ pub(crate) fn page(m: &AppModel) -> Page {
 }
 
 /// The title of a Customize page.
-pub(crate) fn title(filter: &str) -> &'static str {
+pub(crate) fn title(filter: &str) -> String {
+    if let Some(page) = parse(filter) {
+        return crate::buttons_page::title(page);
+    }
     match filter {
         BROWSING => "Browsing",
-        WHEEL => "Wheel & Buttons",
         f => f
             .strip_prefix(CHOOSE)
             .and_then(|setting| choices(&AppModel::default(), setting))
             .map_or("Customize", |(name, _)| name),
     }
+    .into()
 }
 
 /// What the setting behind a row does, in one line.
@@ -97,7 +109,7 @@ fn hint(key: &str) -> Option<&'static str> {
     Some(match key {
         "home_menu" => "Which places Home shows, and in which order.",
         "customize:browsing" => "How albums and artists are listed, and how lists end.",
-        "customize:wheel" => "What the wheel and buttons do, and how they answer.",
+        "customize:buttons" => "What each button does, in layouts you can go back from.",
         "album_view" => "Albums and audiobooks as covers sliding past, or as a list.",
         "album_order" => "Albums A to Z by title, or each artist's albums together.",
         "choose:artist_albums" => {
@@ -105,12 +117,9 @@ fn hint(key: &str) -> Option<&'static str> {
         }
         "artists_list" => "Everyone who sings on a song, or only each album's artist.",
         "choose:wrap_around" => "Whether a list goes on at the top after its last row.",
-        "now_playing_wheel" => "What turning the wheel does on Now Playing.",
+        "fm_radio" => "Whether Radio shows FM. Turn it off on a player that receives no FM.",
         "wheel_click" => "A soft tick on each wheel step while no music plays.",
         "choose:haptics" => "A short buzz on each button press.",
-        "choose:screen_off_buttons" => {
-            "What still works with the screen off. Power and volume always do."
-        }
         _ => return None,
     })
 }
@@ -211,35 +220,6 @@ fn choices(m: &AppModel, setting: &str) -> Option<(&'static str, Vec<Choice>)> {
             .map(|(v, name, meaning)| choice(name, meaning, s.haptics == v, Effect::SetHaptics(v)))
             .into(),
         ),
-        "screen_off_buttons" => (
-            "Buttons While Screen Off",
-            [
-                (
-                    ScreenOffButtons::Locked,
-                    "Locked",
-                    "Nothing works: safe in a pocket.",
-                ),
-                (
-                    ScreenOffButtons::Buttons,
-                    "Play Buttons",
-                    "Play/Pause, Previous and Next work; the wheel rests.",
-                ),
-                (
-                    ScreenOffButtons::WheelAndButtons,
-                    "Play Buttons and Wheel",
-                    "The wheel changes the volume too, as on Now Playing.",
-                ),
-            ]
-            .map(|(v, name, meaning)| {
-                choice(
-                    name,
-                    meaning,
-                    s.screen_off_buttons == v,
-                    Effect::SetScreenOffButtons(v),
-                )
-            })
-            .into(),
-        ),
         _ => return None,
     })
 }
@@ -270,7 +250,13 @@ fn picker(m: &AppModel, setting: &str) -> Page {
 }
 
 /// Where a picker opens: on the current choice.
-pub(crate) fn picker_focus(m: &AppModel, key: &str) -> usize {
+pub(crate) fn picker_focus(ui: &Ui, m: &AppModel, key: &str) -> usize {
+    if let Some(filter) = key
+        .strip_prefix("customize:")
+        .filter(|f| parse(f).is_some())
+    {
+        return ui.button_page_focus(m, filter);
+    }
     let setting = key.strip_prefix(CHOOSE).unwrap_or(key);
     choices(m, setting)
         .and_then(|(_, all)| all.iter().position(|c| c.chosen))

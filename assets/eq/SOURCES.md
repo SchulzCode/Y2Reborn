@@ -37,6 +37,7 @@ named; each profile corrects that headphone toward AutoEq's default target.
 | Moondrop Blessing 2 | oratory1990 | results/oratory1990/in-ear/Moondrop Blessing 2 |
 | Moondrop Starfield | oratory1990 | results/oratory1990/in-ear/Moondrop Starfield |
 | Truthear x Crinacle Zero | oratory1990 | results/oratory1990/in-ear/Truthear x Crinacle Zero |
+| Truthear x Crinacle Zero Blue 2 | Kazi | results/Kazi/in-ear/Truthear x Crinacle Zero Blue 2 |
 | Truthear Hexa | oratory1990 | results/oratory1990/in-ear/Truthear Hexa |
 | 7Hz Salnotes Zero | oratory1990 | results/oratory1990/in-ear/7Hz Salnotes Zero |
 | KZ ZSN Pro X | oratory1990 | results/oratory1990/in-ear/KZ ZSN Pro X |

@@ -771,7 +771,13 @@ fn folder_list(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interact
                 );
             }
             None => {
-                c.icon(Icon::Folder, 36., y + 25., 24., 0x6EA0FFFF);
+                // The folder's Shuffle row (9.3.30) is no folder.
+                let icon = if row.key == "shuffle:collection" {
+                    Icon::Shuffle
+                } else {
+                    Icon::Folder
+                };
+                c.icon(icon, 36., y + 25., 24., 0x6EA0FFFF);
                 c.text_mid(64., y + 25., 310., &row.label, Face::R15, color::TEXT);
                 // Counted once when the folder opened, not every frame.
                 c.text_mid_right(WIDTH - 36., y + 25., &row.secondary, Face::R11, color::DIM);

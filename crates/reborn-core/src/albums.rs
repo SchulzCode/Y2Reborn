@@ -1,22 +1,29 @@
 //! One album, one album artist (#45, #46): songs of an album where some lack
 //! the Album Artist tag, or spell it with other capitals or spaces, are
-//! listed as one album. Applied to the songs when the library loads; the
-//! library file keeps every song's own tags.
+//! listed as one album; an album whose songs name different album artists, or
+//! none while different artists sing, is one "Various Artists" album; two
+//! albums of the same title without the tag stay apart when their artists
+//! differ; a song without an album title files under its own artist (a
+//! Reddit user's 720 albums, 2026-11-13). Applied to the songs when the
+//! library loads; the library file keeps every song's own tags.
 use crate::Track;
 use std::{collections::HashMap, path::Path};
 
-/// Within one folder of one storage, the songs of one album title share its
-/// album artist: an empty tag takes the one the others carry, and spellings
-/// that differ only in capitals or spaces become the most common one. Only
-/// when the album's songs name exactly one album artist; a compilation
-/// without the tag, or an album naming two, stays as it is (falling back to
-/// the song's artist would split a compilation into one album per song).
-/// A song whose album artist changed keeps its own in `own_album_artist`.
+/// The album artist of a compilation (the name players and taggers use).
+pub const VARIOUS_ARTISTS: &str = "Various Artists";
+
+/// Within one folder of one storage, the songs of one album title share one
+/// album artist (`album_artist`). A song whose album artist changed keeps its
+/// own in `own_album_artist` (Last.fm sends that one).
 pub fn unify_album_artists(tracks: &mut [Track]) {
     let mut albums: HashMap<(&str, Option<&Path>, &str), Vec<usize>> = HashMap::new();
+    let mut untitled = vec![];
     for (i, t) in tracks.iter().enumerate() {
-        // Songs without an album title are no album to keep together.
-        if t.album.trim().is_empty() || t.is_radio() {
+        if t.is_radio() {
+            continue;
+        }
+        if t.album.trim().is_empty() {
+            untitled.push(i);
             continue;
         }
         albums
@@ -24,11 +31,20 @@ pub fn unify_album_artists(tracks: &mut [Track]) {
             .or_default()
             .push(i);
     }
-    let albums: Vec<Vec<usize>> = albums.into_values().filter(|s| s.len() > 1).collect();
-    for songs in albums {
-        let Some(name) = album_artist(tracks, &songs) else {
-            continue;
-        };
+    let mut changes: Vec<(Vec<usize>, String)> = albums
+        .into_values()
+        .filter_map(|songs| album_artist(tracks, &songs).map(|name| (songs, name)))
+        .collect();
+    // Without an album title: no album to keep together, but not one mix of everyone's songs
+    // either: each under its own artist.
+    for i in untitled {
+        if tracks[i].album_artist.trim().is_empty() {
+            if let Some(artist) = first_artist(&tracks[i]) {
+                changes.push((vec![i], artist));
+            }
+        }
+    }
+    for (songs, name) in changes {
         for i in songs {
             let t = &mut tracks[i];
             if t.album_artist != name {
@@ -39,8 +55,18 @@ pub fn unify_album_artists(tracks: &mut [Track]) {
     }
 }
 
-/// The one album artist these songs name, in its most common spelling (the
-/// first seen on a tie), or None when they name none or more than one.
+/// The song's first artist, if it names one.
+fn first_artist(t: &Track) -> Option<String> {
+    t.artists()
+        .first()
+        .map(|a| a.trim().to_owned())
+        .filter(|a| !a.is_empty())
+}
+
+/// The one album artist of these songs: the one they name, in its most common
+/// spelling (the first seen on a tie); Various Artists when they name more
+/// than one; when they name none, the one artist who sings them all, else
+/// Various Artists. None when nothing is known.
 fn album_artist(tracks: &[Track], songs: &[usize]) -> Option<String> {
     let mut folded: Option<String> = None;
     let mut spellings: Vec<(&str, usize)> = Vec::new();
@@ -51,7 +77,7 @@ fn album_artist(tracks: &[Track], songs: &[usize]) -> Option<String> {
         }
         let key = fold(name);
         match &folded {
-            Some(seen) if *seen != key => return None,
+            Some(seen) if *seen != key => return Some(VARIOUS_ARTISTS.into()),
             Some(_) => {}
             None => folded = Some(key),
         }
@@ -59,6 +85,18 @@ fn album_artist(tracks: &[Track], songs: &[usize]) -> Option<String> {
             Some((_, n)) => *n += 1,
             None => spellings.push((name, 1)),
         }
+    }
+    if spellings.is_empty() {
+        let artists: Vec<String> = songs
+            .iter()
+            .filter_map(|&i| first_artist(&tracks[i]))
+            .collect();
+        let first = artists.first()?;
+        return Some(if artists.iter().all(|a| fold(a) == fold(first)) {
+            first.clone()
+        } else {
+            VARIOUS_ARTISTS.into()
+        });
     }
     let mut best: Option<(&str, usize)> = None;
     for (name, n) in spellings {
@@ -119,16 +157,56 @@ mod tests {
     }
 
     #[test]
-    fn a_compilation_without_album_artist_stays_as_it_is() {
+    fn a_compilation_without_album_artist_is_one_various_artists_album() {
         let mut tracks = vec![
             song("Now 50", "A", "Artist One", "Now 50", ""),
             song("Now 50", "B", "Artist Two", "Now 50", ""),
             song("Now 50", "C", "Artist Three", "Now 50", ""),
         ];
         unify_album_artists(&mut tracks);
-        assert!(tracks
-            .iter()
-            .all(|t| t.album_artist.is_empty() && t.own_album_artist.is_none()));
+        assert!(tracks.iter().all(|t| t.album_artist == VARIOUS_ARTISTS));
+        assert_eq!(
+            tracks[0].tagged_album_artist(),
+            "",
+            "Last.fm gets the song's own tag"
+        );
+    }
+
+    #[test]
+    fn songs_naming_different_album_artists_become_one_album() {
+        // Downloaded songs often carry each song's artist as Album Artist.
+        let mut tracks = vec![
+            song("Mix", "A", "Artist One", "Summer Mix", "Artist One"),
+            song("Mix", "B", "Artist Two", "Summer Mix", "Artist Two"),
+            song("Mix", "C", "Artist Two", "Summer Mix", ""),
+        ];
+        unify_album_artists(&mut tracks);
+        assert!(tracks.iter().all(|t| t.album_artist == VARIOUS_ARTISTS));
+    }
+
+    #[test]
+    fn same_titled_albums_without_the_tag_stay_apart_and_untitled_songs_file_by_artist() {
+        let mut tracks = vec![
+            song("Queen/Hits", "A", "Queen", "Greatest Hits", ""),
+            song("Queen/Hits", "B", "Queen", "Greatest Hits", ""),
+            song("ABBA/Hits", "C", "ABBA", "Greatest Hits", ""),
+            song("Loose", "D", "Artist One", "", ""),
+            song("Loose", "E", "Artist Two feat. X", "", ""),
+        ];
+        unify_album_artists(&mut tracks);
+        let artists: Vec<&str> = tracks.iter().map(|t| t.album_artist.as_str()).collect();
+        assert_eq!(artists[..3], ["Queen", "Queen", "ABBA"]);
+        assert_eq!(artists[3], "Artist One");
+        assert_eq!(artists[4], tracks[4].artists()[0]);
+        // Once more (the next library publish) changes nothing.
+        let key = |t: &[Track]| -> Vec<(String, Option<String>)> {
+            t.iter()
+                .map(|t| (t.album_artist.clone(), t.own_album_artist.clone()))
+                .collect()
+        };
+        let before = key(&tracks);
+        unify_album_artists(&mut tracks);
+        assert_eq!(key(&tracks), before);
     }
 
     #[test]
@@ -145,9 +223,10 @@ mod tests {
     }
 
     #[test]
-    fn two_album_artists_other_folders_and_loose_songs_stay_apart() {
+    fn two_album_artists_join_and_other_folders_and_loose_songs_stay_apart() {
         let mut tracks = vec![
-            // Two different album artists: left alone.
+            // Two different album artists on one record: one Various Artists album (it was two
+            // albums before 9.3.30, and so a library of downloaded songs had hundreds).
             song("Split", "1", "X", "Split EP", "X"),
             song("Split", "2", "Y", "Split EP", "Y"),
             song("Split", "3", "Z", "Split EP", ""),
@@ -155,14 +234,18 @@ mod tests {
             song("Greatest/A", "1", "A", "Greatest Hits", "A"),
             song("Greatest/B", "1", "B", "Greatest Hits", ""),
             song("Greatest/B", "2", "B", "Greatest Hits", ""),
-            // Songs without an album title.
+            // Songs without an album title: each under its own artist.
             song("Loose", "1", "L", "", "L"),
             song("Loose", "2", "M", "", ""),
         ];
-        let before: Vec<String> = tracks.iter().map(|t| t.album_artist.clone()).collect();
         unify_album_artists(&mut tracks);
-        let after: Vec<String> = tracks.iter().map(|t| t.album_artist.clone()).collect();
-        assert_eq!(before, after);
-        assert!(tracks.iter().all(|t| t.own_album_artist.is_none()));
+        let after: Vec<&str> = tracks.iter().map(|t| t.album_artist.as_str()).collect();
+        let various = VARIOUS_ARTISTS;
+        assert_eq!(after, [various, various, various, "A", "B", "B", "L", "M"]);
+        assert_eq!(
+            tracks[3].own_album_artist, None,
+            "a tag that was right stays"
+        );
+        assert_eq!(tracks[4].own_album_artist.as_deref(), Some(""));
     }
 }

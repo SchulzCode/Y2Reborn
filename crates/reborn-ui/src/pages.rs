@@ -3,6 +3,8 @@
 //! A page is an optional hero message (empty, off, error or progress state),
 //! a few static facts, and the interactive rows the wheel moves through.
 //! Engineering detail is never placed here; it belongs to `diagnostics`.
+mod library;
+mod radio;
 use crate::{
     components::output_label, BluetoothDeviceView, Item, NetworkView, RowKind, Ui, WifiStatus,
 };
@@ -59,12 +61,12 @@ impl Page {
 /// pinned, and Home's own places unless taken off (#52, #55). Now Playing stays first, Settings
 /// last.
 pub(crate) fn home_rows(s: &Settings, tracks: &[Track]) -> Vec<Item> {
-    let has_books = s.audiobooks_on_home && tracks.iter().any(|t| t.book && t.online);
+    let (has_books, has_videos) = s.home_shelves(tracks);
     let mut rows = vec![row("Now Playing", "now_playing", "")];
     rows.extend(
         s.home_places()
             .into_iter()
-            .filter(|(key, _)| s.home_place_shown(key, has_books))
+            .filter(|(key, _)| s.home_place_shown(key, has_books, has_videos))
             .map(|(key, label)| row(label, key, "")),
     );
     rows.push(row("Settings", "settings", ""));
@@ -181,10 +183,10 @@ pub fn page(ui: &Ui, m: &AppModel, tracks: &[Track]) -> Page {
         Screen::TrackInfo => track_info(m, tracks),
         Screen::Settings => settings(ui, m, tracks),
         Screen::Wifi => radio_firmware(m, "Wi-Fi").unwrap_or_else(|| wifi(ui)),
-        Screen::Radio => radio_menu(ui),
-        Screen::RadioStations => radio_stations(ui),
-        Screen::RadioCategories => radio_categories(ui),
-        Screen::RadioInfo => radio_info(ui),
+        Screen::Radio => radio::radio_menu(ui, m.navigation.filter == crate::RADIO_INTERNET),
+        Screen::RadioStations => radio::radio_stations(ui),
+        Screen::RadioCategories => radio::radio_categories(ui),
+        Screen::RadioInfo => radio::radio_info(ui),
         Screen::Audiobookshelf | Screen::AudiobookshelfLibraries
         | Screen::AudiobookshelfBooks | Screen::AudiobookshelfBook => {
             crate::audiobookshelf_ui::page(ui, m.screen)
@@ -209,7 +211,7 @@ pub fn page(ui: &Ui, m: &AppModel, tracks: &[Track]) -> Page {
             row("Crossfade", "crossfade", crate::crossfade_label(m.settings.crossfade_ms))
                 .with_kind(RowKind::Chevron),
         ]),
-        Screen::SettingsLibrary => library(ui, m, tracks),
+        Screen::SettingsLibrary => library::page(ui, m, tracks),
         Screen::SettingsDisplay => {
             let mut rows = vec![];
             if m.platform.brightness_available {
@@ -229,7 +231,7 @@ pub fn page(ui: &Ui, m: &AppModel, tracks: &[Track]) -> Page {
             );
             Page::rows(rows)
         }
-        Screen::Customize => crate::customize::page(m),
+        Screen::Customize => crate::customize::page(ui, m),
         Screen::TimeZone => Page::rows(crate::time_zone::rows(ui, m)),
         Screen::DateTime => {
             let mut page = Page::rows(crate::date_time::rows(ui, m));
@@ -635,174 +637,6 @@ fn radio_firmware(m: &AppModel, radio: &str) -> Option<Page> {
     })
 }
 
-/// Internet radio: the station on air, then the owner's lists, then the
-/// community directory. Without Wi-Fi a first row leads to Wi-Fi; favorites
-/// and own lists stay usable.
-fn radio_menu(ui: &Ui) -> Page {
-    let r = &ui.radio;
-    let favorites = match r.favorites.len() {
-        0 => "No stations yet".to_owned(),
-        n => crate::components::count(n, "station", "stations"),
-    };
-    let mut rows = vec![];
-    if let Some(now) = &r.now {
-        rows.push(row(&now.name, "radio_now", "On Air"));
-    }
-    if !r.online {
-        rows.push(row(
-            "Connect to Wi-Fi",
-            "radio_wifi",
-            "Radio needs the internet",
-        ));
-    }
-    rows.extend([
-        row("Favorites", "radio_favorites", favorites),
-        row("Popular", "radio_popular", "Most listened worldwide"),
-        row(
-            "Countries",
-            "radio_countries",
-            "Stations from every country",
-        ),
-        row("Genres", "radio_genres", "Jazz, rock, news and more"),
-        row("Search", "radio_search", "Find a station by name"),
-        row("My Stations", "radio_own", "Your .m3u and .pls lists"),
-    ]);
-    Page::rows(rows)
-}
-
-/// One station's details; its actions are the rows.
-fn radio_info(ui: &Ui) -> Page {
-    let Some(station) = &ui.radio.info else {
-        return Page::hero("No Station", "Choose a station first.").with_rows(radio_back());
-    };
-    let playing = ui
-        .radio
-        .now
-        .as_ref()
-        .is_some_and(|now| now.key() == station.key());
-    // Skins show the station as a page: its name, the directory's facts and
-    // the two actions (Reborn's own Station Info draws these itself).
-    let mut state = vec![];
-    if playing {
-        state.push("On Air");
-    }
-    if ui.radio.is_favorite(station) {
-        state.push("Favorite");
-    }
-    let facts = crate::views_radio::station_facts(station)
-        .into_iter()
-        .map(|(label, value)| (label.to_owned(), value))
-        .collect();
-    Page {
-        hero: Some(Hero {
-            title: station.name.clone(),
-            body: state.join(" · "),
-        }),
-        facts,
-        ..Page::rows(vec![
-            row(
-                if playing { "Now Playing" } else { "Play" },
-                if playing {
-                    "radio_now"
-                } else {
-                    "radio_info_play"
-                },
-                "",
-            ),
-            row(
-                if ui.radio.is_favorite(station) {
-                    "Remove from Favorites"
-                } else {
-                    "Add to Favorites"
-                },
-                "radio_info_favorite",
-                "",
-            ),
-        ])
-    }
-}
-
-fn radio_back() -> Vec<Item> {
-    vec![row("Back to Radio", "radio_back", "")]
-}
-
-fn radio_stations(ui: &Ui) -> Page {
-    let r = &ui.radio;
-    if r.loading {
-        return Page::hero("Loading Stations…", "Asking the station directory.")
-            .with_rows(radio_back());
-    }
-    if let Some(error) = &r.error {
-        return Page::hero("Couldn't Load Stations", error).with_rows(vec![row(
-            "Try Again",
-            "radio_retry",
-            "",
-        )]);
-    }
-    if r.stations.is_empty() {
-        return match r.last_request {
-            Some(reborn_core::RadioRequest::Favorites) => Page::hero(
-                "No Favorites Yet",
-                "Hold Select on a station, or on Now Playing, and choose Add to Favorites.",
-            ),
-            Some(reborn_core::RadioRequest::Own) => Page::hero(
-                "No Stations of Your Own",
-                "Copy .m3u or .pls station lists into a folder named Radio on Internal Storage or the SD card.",
-            ),
-            _ => Page::hero("No Stations Found", "Try another name, country or genre."),
-        }
-        .with_rows(radio_back());
-    }
-    Page::rows(
-        r.stations
-            .iter()
-            .enumerate()
-            .map(|(i, s)| {
-                let mut detail = crate::views_radio::station_detail(s);
-                if r.is_favorite(s) {
-                    detail = if detail.is_empty() {
-                        "Favorite".into()
-                    } else {
-                        format!("Favorite · {detail}")
-                    };
-                }
-                row(&s.name, &format!("station:{i}"), detail)
-            })
-            .collect(),
-    )
-}
-
-fn radio_categories(ui: &Ui) -> Page {
-    let r = &ui.radio;
-    if r.loading {
-        return Page::hero("Loading…", "Asking the station directory.").with_rows(radio_back());
-    }
-    if r.categories.is_empty() && r.error.is_none() {
-        return Page::hero("Nothing Here", "The directory sent an empty list.")
-            .with_rows(radio_back());
-    }
-    if let Some(error) = &r.error {
-        return Page::hero("Couldn't Load the List", error).with_rows(vec![row(
-            "Try Again",
-            "radio_retry",
-            "",
-        )]);
-    }
-    Page::rows(
-        r.categories
-            .iter()
-            .enumerate()
-            .map(|(i, c)| {
-                row(
-                    &c.name,
-                    &format!("category:{i}"),
-                    format!("{} stations", c.stations),
-                )
-            })
-            .collect(),
-    )
-}
-
 fn wifi(ui: &Ui) -> Page {
     let w = &ui.wifi;
     if !w.available {
@@ -975,9 +809,13 @@ fn bluetooth(ui: &Ui, m: &AppModel) -> Page {
         Some(problem.clone())
     } else {
         match b.scan {
-            reborn_core::RadioScan::Starting | reborn_core::RadioScan::Scanning => {
-                Some("Searching… Put your headphones in pairing mode.".into())
-            }
+            // A search also leaves the player visible for 2 minutes (y2-radiod), for a car
+            // that pairs from its side (Y2Linux #116).
+            reborn_core::RadioScan::Starting | reborn_core::RadioScan::Scanning => Some(
+                "Searching… Put your headphones in pairing mode. A car can find this player \
+                 as Y2Linux for 2 minutes."
+                    .into(),
+            ),
             reborn_core::RadioScan::Complete { found: 0 } => {
                 Some("No devices found. Put your headphones in pairing mode.".into())
             }
@@ -1033,44 +871,6 @@ fn pc_transfer(m: &AppModel) -> Page {
         None => page,
     }
     .with_rows(vec![Item::new("Scan for Music", "scan_library")])
-}
-
-/// Settings > Library: your music, where it is kept, and where your listening goes (owner,
-/// 9.2.10: Scan for Music sat in Storage, Last.fm at the top).
-fn library(ui: &Ui, m: &AppModel, tracks: &[Track]) -> Page {
-    // Short enough for the value column; the root row counts the songs too.
-    let scan = if m.library.scanning {
-        "Scanning…".to_owned()
-    } else if m.library.error.is_some() {
-        "Last scan interrupted".to_owned()
-    } else {
-        crate::components::count(ui.library_counts(m, tracks)[2], "song", "songs")
-    };
-    let storage = free_text(&m.platform.snapshot.storage.internal)
-        .map(|t| t.split(" free").next().unwrap_or("").to_owned() + " free")
-        .unwrap_or_default();
-    let last = m.library.last_scan.as_ref().filter(|_| !m.library.scanning);
-    Page {
-        status: last.and_then(crate::components::left_out_note),
-        ..Page::rows(vec![
-            disabled(
-                row("Scan for Music", "scan_library", scan),
-                !m.library.scanning,
-            ),
-            row("Storage", "storage", storage).with_kind(RowKind::Chevron),
-            row("Last.fm", "lastfm", lastfm_summary(ui, m)).with_kind(RowKind::Chevron),
-            row("Audiobookshelf", "audiobookshelf", "").with_kind(RowKind::Chevron),
-        ])
-    }
-}
-
-/// Last.fm's row: the account, the log file, or Off.
-fn lastfm_summary(ui: &Ui, m: &AppModel) -> String {
-    match &ui.lastfm.user {
-        Some(user) => user.clone(),
-        None if m.settings.scrobble_log => "Log file".to_owned(),
-        None => "Off".to_owned(),
-    }
 }
 
 /// The hidden service menu: everything an owner or developer needs that a

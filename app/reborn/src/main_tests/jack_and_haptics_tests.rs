@@ -32,8 +32,9 @@ fn unplugged_headphones_pause_and_say_so() {
 }
 
 /// #28: a tick per press and per seek step of a held Previous/Next on a
-/// lit screen; none for the wheel (also its Now Playing seek), a hold
-/// that seeks nothing (a station) or in the dark.
+/// lit screen; none for the wheel (also its Now Playing seek) or a hold
+/// that seeks nothing (a station). In the dark (Customize > Buttons): one tick
+/// when a button acted, none for its repeats, the volume or Power.
 #[test]
 fn haptics_tick_for_presses_and_held_seek_steps_only() {
     let next = PhysicalControl::Next;
@@ -50,9 +51,32 @@ fn haptics_tick_for_presses_and_held_seek_steps_only() {
     ] {
         assert!(input_ticks(true, held, &[Action::SeekForward], true));
         assert!(!input_ticks(true, held, &[Action::SeekForward], false));
-        assert!(!input_ticks(false, held, &[Action::SeekForward], true));
         assert!(!input_ticks(true, held, &[], false));
     }
+    let dark_hold = NormalizedInput::LongPress(next);
+    assert!(input_ticks(false, dark_hold, &[Action::SeekForward], true));
+    assert!(!input_ticks(
+        false,
+        NormalizedInput::Repeat(next),
+        &[Action::SeekForward],
+        true
+    ));
+    assert!(input_ticks(
+        false,
+        NormalizedInput::Release(next),
+        &[Action::NextTrack],
+        false
+    ));
+    assert!(!input_ticks(
+        false,
+        NormalizedInput::Release(next),
+        &[],
+        false
+    ));
+    let volume = NormalizedInput::Release(PhysicalControl::VolumeUp);
+    assert!(!input_ticks(false, volume, &[Action::VolumeUp], false));
+    let power = NormalizedInput::Release(PhysicalControl::Power);
+    assert!(!input_ticks(false, power, &[Action::ScreenWake], false));
     let back = NormalizedInput::Repeat(PhysicalControl::Previous);
     assert!(input_ticks(true, back, &[Action::SeekBackward], true));
     let wheel = NormalizedInput::WheelClockwise(1);

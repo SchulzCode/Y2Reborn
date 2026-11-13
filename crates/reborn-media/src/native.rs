@@ -4,6 +4,7 @@
 //! stereo PCM stream after an FFmpeg FLTP filter graph and one final
 //! libswresample conversion. Rust owns cancellation, worker scheduling and
 //! observability; it does not decode or apply audio gain itself.
+use crate::loader::symbol;
 use reborn_core::{EqBand, PcmFormat, ReplayGainMode};
 use reborn_observability::{Level, Observer};
 use serde::{Deserialize, Serialize};
@@ -166,20 +167,6 @@ unsafe impl Send for MediaApi {}
 unsafe impl Sync for MediaApi {}
 
 impl MediaApi {
-    unsafe fn symbol<T: Copy>(handle: *mut c_void, name: &'static [u8]) -> Result<T, String> {
-        let ptr = libc::dlsym(handle, name.as_ptr().cast());
-        if ptr.is_null() {
-            return Err(format!(
-                "FFmpeg media membrane symbol {} is missing",
-                String::from_utf8_lossy(&name[..name.len().saturating_sub(1)])
-            ));
-        }
-        // POSIX specifies dlsym results as usable function addresses. A
-        // transmute_copy is required because Rust keeps data and function
-        // pointers as distinct types even on this target.
-        Ok(std::mem::transmute_copy(&ptr))
-    }
-
     fn load() -> Result<Self, String> {
         let mut candidates = Vec::<PathBuf>::new();
         if let Ok(path) = std::env::var("REBORN_MEDIA_LIB") {
@@ -212,25 +199,25 @@ impl MediaApi {
             let loaded = unsafe {
                 Ok(Self {
                     _handle: handle,
-                    cancel_new: Self::symbol(handle, b"rb_cancel_new\0")?,
-                    cancel_free: Self::symbol(handle, b"rb_cancel_free\0")?,
-                    cancel_set: Self::symbol(handle, b"rb_cancel_set\0")?,
-                    logging: Self::symbol(handle, b"rb_media_logging\0")?,
-                    components: Self::symbol(handle, b"rb_media_components\0")?,
-                    error: Self::symbol(handle, b"rb_media_error\0")?,
-                    open: Self::symbol(handle, b"rb_media_open\0")?,
-                    inspect: Self::symbol(handle, b"rb_media_inspect\0")?,
-                    limits: Self::symbol(handle, b"rb_media_limits\0")?,
-                    close: Self::symbol(handle, b"rb_media_close\0")?,
-                    read: Self::symbol(handle, b"rb_media_read\0")?,
-                    seek: Self::symbol(handle, b"rb_media_seek\0")?,
-                    artwork: Self::symbol(handle, b"rb_media_art\0")?,
-                    chapters: Self::symbol(handle, b"rb_media_chapters\0")?,
-                    artwork_file: Self::symbol(handle, b"rb_media_art_file\0")?,
-                    logo_file: Self::symbol(handle, b"rb_media_logo_file\0")?,
-                    image_file: Self::symbol(handle, b"rb_media_image_file\0")?,
-                    convert: Self::symbol(handle, b"rb_media_convert\0")?,
-                    crossfade: Self::symbol(handle, b"rb_media_crossfade\0")?,
+                    cancel_new: symbol(handle, b"rb_cancel_new\0")?,
+                    cancel_free: symbol(handle, b"rb_cancel_free\0")?,
+                    cancel_set: symbol(handle, b"rb_cancel_set\0")?,
+                    logging: symbol(handle, b"rb_media_logging\0")?,
+                    components: symbol(handle, b"rb_media_components\0")?,
+                    error: symbol(handle, b"rb_media_error\0")?,
+                    open: symbol(handle, b"rb_media_open\0")?,
+                    inspect: symbol(handle, b"rb_media_inspect\0")?,
+                    limits: symbol(handle, b"rb_media_limits\0")?,
+                    close: symbol(handle, b"rb_media_close\0")?,
+                    read: symbol(handle, b"rb_media_read\0")?,
+                    seek: symbol(handle, b"rb_media_seek\0")?,
+                    artwork: symbol(handle, b"rb_media_art\0")?,
+                    chapters: symbol(handle, b"rb_media_chapters\0")?,
+                    artwork_file: symbol(handle, b"rb_media_art_file\0")?,
+                    logo_file: symbol(handle, b"rb_media_logo_file\0")?,
+                    image_file: symbol(handle, b"rb_media_image_file\0")?,
+                    convert: symbol(handle, b"rb_media_convert\0")?,
+                    crossfade: symbol(handle, b"rb_media_crossfade\0")?,
                 })
             };
             match loaded {
@@ -248,6 +235,10 @@ impl MediaApi {
 }
 
 static API: OnceLock<Result<MediaApi, String>> = OnceLock::new();
+/// The loaded membrane's handle, for the function tables of other modules (video).
+pub(crate) fn handle() -> Result<*mut c_void, String> {
+    api().map(|api| api._handle)
+}
 
 fn api() -> Result<&'static MediaApi, String> {
     match API.get_or_init(|| {
@@ -416,6 +407,9 @@ pub fn crossfade_pcm(
     }
     output.truncate(written.max(0) as usize * format.bytes_per_frame());
     Ok(output)
+}
+pub(crate) fn error_text(code: c_int) -> String {
+    api().map_or_else(|e| e, |api| error(api, code))
 }
 fn error(api: &MediaApi, code: c_int) -> String {
     let mut b = [0 as c_char; 256];

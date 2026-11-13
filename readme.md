@@ -27,14 +27,20 @@ skins. Written in Rust, it decodes with FFmpeg, draws with OpenGL ES on the Y2's
   songs you heard before stay in the list.
 - **Playlists** (`.m3u`/`.m3u8`) made and changed on the player or copied from a computer, and Favorites with a
   heart. Changes are written back into the playlist file.
+- **Wi-Fi Share**: copy music without a cable. Settings → Library → Wi-Fi Share shows a QR code; a phone (an
+  iPhone too), tablet or computer on the same Wi-Fi then has a file browser for Internal Storage and the SD card
+  in its browser ([guide](https://github.com/SchulzCode/Y2Linux/blob/main/docs/WIFI-SHARE.md)).
 
 **Listening**
 - Gapless playback, crossfade up to 12 s, shuffle by song or by album, repeat and a sleep timer.
-- A five-band equalizer with presets, headphone profiles for 47 headphones and IEMs (AutoEq) plus your own AutoEq
+- A five-band equalizer with presets, headphone profiles for 48 headphones and IEMs (AutoEq) plus your own AutoEq
   `ParametricEQ.txt` files, Normalize Volume (ReplayGain), balance, headphone level and DAC filter.
 - **Bluetooth headphones** with SBC, AAC and LDAC, picked automatically; the music follows them when they connect.
 - **Internet radio** from radio-browser.info: popular stations, countries, genres, search, favorites and your own
   `.m3u`/`.pls` lists, with station logos and the song that is playing.
+- **FM radio** from the player's own tuner, on Y2s whose hardware receives FM (the first Y2 revision does not):
+  search the band, wired headphones as the antenna, no internet needed
+  ([guide](https://github.com/SchulzCode/Y2Linux/blob/main/docs/FM-RADIO.md)).
 - **Audiobooks** with chapters, your place in every book, a speed per book (0.75–2×) and a sleep timer
   ([guide](https://github.com/SchulzCode/Y2Linux/blob/main/docs/AUDIOBOOKS.md)).
 - **Audiobookshelf**: browse a server and download books to listen offline ([guide](docs/audiobookshelf.md)).
@@ -45,8 +51,9 @@ skins. Written in Rust, it decodes with FFmpeg, draws with OpenGL ES on the Y2's
 - **Seventeen skins** (Classic, Nano Glass, Walkman, Terminal, Winamp, Paper, Big Type, Cassette, Neon Night, Zune,
   Bunny Bow, Luna XP and five Mini colours), and more by copying a skin folder into `Skins` on the player
   ([how to make one](docs/skins.md)).
-- Customize: Cover Flow on or off, how albums are sorted, lists that wrap around, the wheel on Now Playing (volume or
-  seeking), a wheel click, haptic ticks and what the buttons do while the screen is off.
+- Customize: Cover Flow on or off, how albums are sorted, lists that wrap around, a wheel click, haptic ticks, and
+  Buttons: give any button, hold or turn of the wheel any command, in the menus, on Now Playing and with the screen
+  off, saved as layouts with Reborn Default always there to go back to.
 - A status bar with the clock, Wi-Fi, Bluetooth, a computer connection and the battery, and short messages when
   something happens.
 

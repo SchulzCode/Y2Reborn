@@ -61,6 +61,7 @@ unsafe extern "C" {
         collection: c_int,
     ) -> c_int;
     fn rb_graphics_skin(p: *mut c_void, b: *const u8, w: c_int, h: c_int) -> c_int;
+    fn rb_graphics_video(p: *mut c_void, b: *const u8, w: c_int, h: c_int) -> c_int;
     fn rb_graphics_glyphs(p: *mut c_void, y: c_int, rows: c_int, a8: *const u8) -> c_int;
     fn rb_graphics_test(p: *mut c_void) -> c_int;
     fn rb_graphics_readback(p: *mut c_void, pixels: *mut u8) -> c_int;
@@ -91,6 +92,8 @@ pub struct Renderer {
     /// Whether this context's glyph-cache texture holds the whole shared
     /// page; a new context starts empty and takes one full upload.
     glyphs_resident: bool,
+    /// Size of the film picture in its texture; (0, 0): none.
+    video_size: (u16, u16),
     /// The last glyph upload failed (logged once per failure streak).
     glyphs_failed: bool,
 }
@@ -194,6 +197,7 @@ impl Renderer {
             skin_size: (1, 1),
             page_heights: heights.map(|h| h as usize),
             glyphs_resident: false,
+            video_size: (0, 0),
             glyphs_failed: false,
         })
     }
@@ -233,6 +237,8 @@ impl Renderer {
                     // Not drawn while the page failed to upload.
                     Tex::Glyphs if !self.glyphs_resident => continue,
                     Tex::Glyphs => (9, q.src),
+                    Tex::Video if self.video_size.0 == 0 => continue,
+                    Tex::Video => (10, [0, 0, self.video_size.0, self.video_size.1]),
                     Tex::Thumb(key) => match self.thumbs.get_mut(&key) {
                         Some(slot) => {
                             slot.used = self.frame;
@@ -449,6 +455,35 @@ impl Renderer {
         );
         self.log.add("thumbnail_uploads", 1.);
         Ok(())
+    }
+    /// Show `rgba` (`width` x `height`, at most 512 each way) as the film's picture.
+    pub fn video(&mut self, rgba: &[u8], width: u32, height: u32) -> Result<(), String> {
+        if width == 0 || height == 0 || rgba.len() != width as usize * height as usize * 4 {
+            return Err("film picture dimensions".into());
+        }
+        // SAFETY: the buffer holds exactly width * height RGBA texels; GL copies them at once.
+        let r = unsafe {
+            rb_graphics_video(
+                self.raw.as_ptr(),
+                rgba.as_ptr(),
+                width as c_int,
+                height as c_int,
+            )
+        };
+        if r != 0 {
+            self.video_size = (0, 0);
+            return Err(format!("film picture upload failed ({r})"));
+        }
+        self.video_size = (width as u16, height as u16);
+        Ok(())
+    }
+    /// The film ended: its picture is no longer drawn and its texture shrinks to one texel.
+    pub fn forget_video(&mut self) {
+        if self.video_size.0 != 0 {
+            // SAFETY: one RGBA texel; GL copies it at once.
+            unsafe { rb_graphics_video(self.raw.as_ptr(), [0u8, 0, 0, 255].as_ptr(), 1, 1) };
+            self.video_size = (0, 0);
+        }
     }
     pub fn artwork(&mut self, rgba: &[u8]) -> Result<(), String> {
         self.upload_art(rgba, false)

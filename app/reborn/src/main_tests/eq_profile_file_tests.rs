@@ -48,13 +48,13 @@ fn eq_folders_on_every_storage_are_listed_and_files_checked_on_import() {
 }
 
 /// The real shipped folder (installed as is to /usr/share/reborn/eq)
-/// lists its 47 profiles and nothing else: not the license, not SOURCES.md.
+/// lists its 48 profiles and nothing else: not the license, not SOURCES.md.
 #[test]
 fn the_shipped_folder_lists_exactly_its_profiles() {
     let shipped = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/eq");
     assert!(shipped.join("LICENSE-AutoEq.txt").is_file());
     let files = scan_eq_profiles(&[shipped], &[]);
-    assert_eq!(files.len(), 47);
+    assert_eq!(files.len(), 48);
     assert!(files
         .iter()
         .all(|f| !f.name.to_lowercase().contains("license")));

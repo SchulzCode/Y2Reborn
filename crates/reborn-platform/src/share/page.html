@@ -1,0 +1,361 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Y2 · Wi-Fi Share</title>
+<style>
+:root { --bg:#06070a; --sheet:#0e1014; --text:#f6f6f8; --muted:#b4b8c2; --dim:#989ca8; --accent:#6ea0ff;
+  --danger:#ff7864; --ok:#3cc878; --glass:rgba(255,255,255,.14); --faint:rgba(255,255,255,.063); --rule:rgba(255,255,255,.07); color-scheme:dark; }
+* { box-sizing:border-box; }
+body { margin:0; background:var(--bg); color:var(--text); font:16px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif; -webkit-font-smoothing:antialiased; }
+main { max-width:860px; margin:0 auto; padding:0 16px 120px; }
+header { position:sticky; top:0; z-index:5; background:rgba(6,7,10,.86); backdrop-filter:blur(14px); -webkit-backdrop-filter:blur(14px); border-bottom:1px solid var(--rule); }
+header div { max-width:860px; margin:0 auto; padding:14px 16px; display:flex; align-items:center; gap:12px; }
+header svg { width:40px; height:14px; fill:none; stroke:var(--accent); stroke-width:2.5; stroke-linecap:round; }
+header b { font-size:1.05rem; } header span { color:var(--dim); font-size:.85rem; margin-left:auto; }
+h1 { font-size:1.7rem; letter-spacing:-.02em; margin:28px 0 6px; }
+p.lead { color:var(--muted); margin:0 0 20px; }
+button, .button { font:inherit; color:var(--text); background:var(--faint); border:1px solid var(--glass); border-radius:99px; padding:9px 16px; cursor:pointer; }
+button:hover { background:var(--glass); }
+button.primary { background:var(--text); color:var(--bg); border-color:var(--text); font-weight:600; }
+button.quiet { border-color:transparent; background:none; color:var(--muted); padding:6px 10px; }
+button.quiet:hover { color:var(--text); background:var(--faint); }
+button.danger:hover { color:var(--danger); }
+:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+#gate { max-width:360px; margin:12vh auto 0; text-align:center; }
+#gate input { width:100%; font:600 2rem/1.2 ui-monospace,Menlo,monospace; letter-spacing:.3em; text-align:center; padding:14px 8px; margin:18px 0 14px; color:var(--text); background:var(--sheet); border:1px solid var(--glass); border-radius:16px; }
+#gate button { width:100%; }
+.note { color:var(--dim); font-size:.9rem; min-height:1.4em; margin:10px 0 0; }
+.note.bad { color:var(--danger); }
+.cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:12px; }
+.card { text-align:left; border-radius:20px; padding:18px 20px; background:var(--faint); border:1px solid var(--rule); width:100%; }
+.card b { display:block; font-size:1.1rem; } .card small { color:var(--muted); }
+.meter { height:6px; border-radius:3px; background:var(--glass); margin-top:12px; overflow:hidden; }
+.meter i { display:block; height:100%; background:var(--accent); border-radius:3px; }
+nav { display:flex; flex-wrap:wrap; align-items:center; gap:2px; margin:22px 0 12px; color:var(--dim); }
+nav button { padding:4px 8px; border:0; background:none; color:var(--muted); border-radius:8px; }
+nav button:last-of-type { color:var(--text); font-weight:600; }
+.tools { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:14px; }
+.list { border-radius:20px; background:var(--sheet); border:1px solid var(--rule); overflow:hidden; }
+.row { display:flex; align-items:center; gap:10px; padding:11px 12px 11px 16px; border-top:1px solid var(--rule); }
+.row:first-child { border-top:0; }
+.row .name { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; text-align:left; background:none; border:0; padding:0; border-radius:6px; color:var(--text); }
+.row .name.folder { font-weight:600; cursor:pointer; }
+.row .name.folder::before { content:""; display:inline-block; width:18px; height:14px; margin-right:10px; vertical-align:-1px; border-radius:3px; background:var(--accent); opacity:.85; clip-path:polygon(0 0,40% 0,50% 18%,100% 18%,100% 100%,0 100%); }
+.row small { color:var(--dim); white-space:nowrap; font-variant-numeric:tabular-nums; }
+.empty { padding:34px 16px; text-align:center; color:var(--dim); }
+#drop { margin-top:14px; border:1.5px dashed var(--glass); border-radius:20px; padding:22px; text-align:center; color:var(--dim); }
+#drop.over { border-color:var(--accent); color:var(--text); background:rgba(110,160,255,.08); }
+#queue { position:fixed; left:0; right:0; bottom:0; background:rgba(14,16,20,.96); border-top:1px solid var(--glass); padding:12px 16px; display:none; }
+#queue div { max-width:828px; margin:0 auto; }
+#queue .meter i { transition:width .2s; }
+#queue p { margin:0; display:flex; gap:10px; font-size:.92rem; } #queue p span { margin-left:auto; color:var(--dim); }
+input[type=file] { display:none; }
+@media (max-width:520px) { .row small.time { display:none; } h1 { font-size:1.4rem; } }
+</style>
+</head>
+<body>
+<header><div>
+  <svg viewBox="0 0 44 16" aria-hidden="true"><path d="M2 8c4-7 7 7 11 0s7 7 11 0 7 7 11 0 5 3 7 0"/></svg>
+  <b>Wi-Fi Share</b><span id="where">Innioasis Y2</span>
+</div></header>
+<main>
+  <section id="gate" hidden>
+    <h1>Enter the code</h1>
+    <p class="lead">It is on the player's screen: Settings → Library → Wi-Fi Share.</p>
+    <form id="enter"><input id="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" aria-label="Code">
+    <button class="primary">Open</button></form>
+    <p class="note" id="gate-note"></p>
+  </section>
+  <section id="browser" hidden>
+    <nav id="crumbs" aria-label="Folder"></nav>
+    <div id="home">
+      <h1>Your player's storage</h1>
+      <p class="lead">Pick where the music goes. The player looks for new music by itself when you stop sharing.</p>
+      <div class="cards" id="storages"></div>
+    </div>
+    <div id="folder" hidden>
+      <div class="tools">
+        <button class="primary" id="pick-files">Upload files</button>
+        <button id="pick-folder">Upload a folder</button>
+        <button id="new-folder">New folder</button>
+      </div>
+      <div class="list" id="list"></div>
+      <div id="drop">Drop files or folders here to upload them</div>
+      <p class="note" id="space"></p>
+    </div>
+    <p class="note" id="note" role="status"></p>
+    <input type="file" id="files" multiple>
+    <input type="file" id="tree" webkitdirectory multiple>
+  </section>
+</main>
+<div id="queue"><div><p><b id="queue-name"></b><span id="queue-count"></span></p><div class="meter"><i id="queue-bar"></i></div></div></div>
+<script>
+(function () {
+  'use strict';
+  const $ = function (id) { return document.getElementById(id); };
+  let root = null, path = [], storages = [], uploading = false;
+  const waiting = [];
+
+  function size(bytes) {
+    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+    let unit = 0;
+    while (bytes >= 1024 && unit < units.length - 1) { bytes /= 1024; unit++; }
+    return (unit && bytes < 100 ? bytes.toFixed(1) : Math.round(bytes)) + ' ' + units[unit];
+  }
+  function note(text, bad) {
+    $('note').textContent = text || '';
+    $('note').className = bad ? 'note bad' : 'note';
+  }
+  function address(route, extra) {
+    const query = new URLSearchParams(Object.assign({ root: root, path: '/' + path.join('/') }, extra || {}));
+    return route + '?' + query;
+  }
+  function place(name) { return '/' + path.concat(name.split('/')).join('/'); }
+  function ask(method, url) {
+    return fetch(url, { method: method, credentials: 'same-origin' }).then(function (answer) {
+      if (answer.status === 401) { gate(); throw new Error('code'); }
+      if (!answer.ok) return answer.text().then(function (text) { throw new Error(text); });
+      return answer;
+    });
+  }
+  function element(tag, text, className) {
+    const node = document.createElement(tag);
+    if (text) node.textContent = text;
+    if (className) node.className = className;
+    return node;
+  }
+
+  function gate() {
+    $('browser').hidden = true;
+    $('gate').hidden = false;
+    $('code').focus();
+  }
+  $('enter').addEventListener('submit', function (event) {
+    event.preventDefault();
+    fetch('/api/enter?code=' + encodeURIComponent($('code').value.trim()), { method: 'POST', credentials: 'same-origin' })
+      .then(function (answer) {
+        if (answer.ok) { $('gate').hidden = true; $('code').value = ''; home(); return null; }
+        return answer.text().then(function (text) { $('gate-note').textContent = text; $('gate-note').className = 'note bad'; });
+      });
+  });
+
+  function crumbs() {
+    const nav = $('crumbs');
+    nav.textContent = '';
+    const add = function (label, go) {
+      if (nav.children.length) nav.appendChild(document.createTextNode('›'));
+      const button = element('button', label);
+      button.type = 'button';
+      button.addEventListener('click', go);
+      nav.appendChild(button);
+    };
+    add('Storage', home);
+    if (!root) return;
+    const storage = storages.find(function (s) { return s.key === root; });
+    add(storage ? storage.name : root, function () { open(root, []); });
+    path.forEach(function (part, index) {
+      add(part, function () { open(root, path.slice(0, index + 1)); });
+    });
+  }
+
+  function home() {
+    root = null; path = [];
+    fetch('/api/list', { credentials: 'same-origin' }).then(function (answer) {
+      if (answer.status === 401) { gate(); return null; }
+      return answer.json();
+    }).then(function (data) {
+      if (!data) return;
+      storages = data.storages;
+      $('browser').hidden = false; $('home').hidden = false; $('folder').hidden = true;
+      const box = $('storages');
+      box.textContent = '';
+      storages.forEach(function (storage) {
+        const card = element('button', '', 'card');
+        card.type = 'button';
+        card.appendChild(element('b', storage.name));
+        card.appendChild(element('small', size(storage.free) + ' free of ' + size(storage.total)));
+        const meter = element('div', '', 'meter');
+        const fill = element('i');
+        fill.style.width = (storage.total ? 100 - storage.free * 100 / storage.total : 0) + '%';
+        meter.appendChild(fill);
+        card.appendChild(meter);
+        card.addEventListener('click', function () { open(storage.key, []); });
+        box.appendChild(card);
+      });
+      if (!storages.length) box.appendChild(element('p', 'No storage is available right now.', 'empty'));
+      crumbs(); note('');
+    }).catch(function () { note("The player doesn't answer. Is Wi-Fi Share still open on it?", true); });
+  }
+
+  function open(key, parts) {
+    root = key; path = parts;
+    ask('GET', address('/api/list')).then(function (answer) { return answer.json(); }).then(function (data) {
+      $('home').hidden = true; $('folder').hidden = false; $('browser').hidden = false;
+      const list = $('list');
+      list.textContent = '';
+      data.entries.forEach(function (entry) {
+        const row = element('div', '', 'row');
+        const name = element('button', entry.name, entry.folder ? 'name folder' : 'name');
+        name.type = 'button';
+        if (entry.folder) name.addEventListener('click', function () { open(root, path.concat(entry.name)); });
+        else name.disabled = true;
+        row.appendChild(name);
+        if (!entry.folder) row.appendChild(element('small', size(entry.size)));
+        row.appendChild(element('small', new Date(entry.time * 1000).toLocaleDateString(), 'time'));
+        if (!entry.folder) {
+          const save = element('a', 'Download', 'button');
+          save.href = address('/api/file', { path: place(entry.name) });
+          save.style.textDecoration = 'none';
+          save.style.fontSize = '.85rem';
+          save.style.padding = '5px 12px';
+          row.appendChild(save);
+        }
+        const rename = element('button', 'Rename', 'quiet');
+        rename.addEventListener('click', function () {
+          const to = prompt('New name', entry.name);
+          if (!to || to === entry.name) return;
+          ask('POST', address('/api/rename', { path: place(entry.name), to: to })).then(refresh, failed);
+        });
+        row.appendChild(rename);
+        const remove = element('button', 'Delete', 'quiet danger');
+        remove.addEventListener('click', function () {
+          const what = entry.folder ? 'the folder "' + entry.name + '" and everything in it' : '"' + entry.name + '"';
+          if (!confirm('Delete ' + what + '? This cannot be undone.')) return;
+          ask('POST', address('/api/delete', { path: place(entry.name) })).then(refresh, failed);
+        });
+        row.appendChild(remove);
+        list.appendChild(row);
+      });
+      if (!data.entries.length) list.appendChild(element('div', 'This folder is empty.', 'empty'));
+      $('space').textContent = size(data.free) + ' free of ' + size(data.total);
+      crumbs();
+    }).catch(failed);
+  }
+  function refresh() { note(''); if (root) open(root, path); }
+  function failed(error) { if (error.message !== 'code') note(error.message || "Couldn't do that.", true); }
+
+  $('new-folder').addEventListener('click', function () {
+    const name = prompt('Name of the new folder');
+    if (name) ask('POST', address('/api/folder', { path: place(name) })).then(refresh, failed);
+  });
+
+  // Uploads: one file after the other, each as the body of one request.
+  function queue(files) {
+    files.forEach(function (item) {
+      waiting.push({ file: item.file, root: root, target: place(item.name) });
+    });
+    if (!uploading) next(0, waiting.length);
+  }
+  function send(job, replace, progress) {
+    return new Promise(function (resolve, reject) {
+      const request = new XMLHttpRequest();
+      const query = new URLSearchParams({ root: job.root, path: job.target });
+      if (replace) query.set('replace', '1');
+      request.open('PUT', '/api/file?' + query);
+      request.upload.addEventListener('progress', function (event) {
+        if (event.lengthComputable) progress(event.loaded / event.total);
+      });
+      request.addEventListener('load', function () {
+        if (request.status === 200) resolve();
+        else reject({ status: request.status, text: request.responseText });
+      });
+      request.addEventListener('error', function () { reject({ status: 0, text: 'The connection was lost.' }); });
+      request.send(job.file);
+    });
+  }
+  function next(done, all) {
+    const job = waiting.shift();
+    if (!job) {
+      uploading = false;
+      $('queue').style.display = 'none';
+      note(done + (done === 1 ? ' file' : ' files') + ' uploaded.');
+      if (root) open(root, path);
+      return;
+    }
+    uploading = true;
+    all = Math.max(all, done + waiting.length + 1);
+    $('queue').style.display = 'block';
+    $('queue-name').textContent = job.file.name;
+    $('queue-count').textContent = (done + 1) + ' of ' + all;
+    const bar = function (part) { $('queue-bar').style.width = Math.round(part * 100) + '%'; };
+    bar(0);
+    send(job, false, bar).catch(function (problem) {
+      if (problem.status === 409 && confirm('"' + job.file.name + '" is already there. Replace it?')) return send(job, true, bar);
+      if (problem.status === 409) return 'skipped';
+      throw problem;
+    }).then(function (result) {
+      next(result === 'skipped' ? done : done + 1, all);
+    }, function (problem) {
+      waiting.length = 0;
+      uploading = false;
+      $('queue').style.display = 'none';
+      if (problem.status === 401) gate();
+      else note('"' + job.file.name + '": ' + (problem.text || "couldn't be uploaded."), true);
+      if (root) open(root, path);
+    });
+  }
+  window.addEventListener('beforeunload', function (event) {
+    if (uploading) { event.preventDefault(); event.returnValue = ''; }
+  });
+
+  $('pick-files').addEventListener('click', function () { $('files').click(); });
+  $('pick-folder').addEventListener('click', function () { $('tree').click(); });
+  [$('files'), $('tree')].forEach(function (input) {
+    input.addEventListener('change', function () {
+      queue(Array.prototype.map.call(input.files, function (file) {
+        return { file: file, name: file.webkitRelativePath || file.name };
+      }));
+      input.value = '';
+    });
+  });
+
+  // Dropped folders come as entries that are walked here.
+  function walk(entry, prefix, out) {
+    return new Promise(function (resolve) {
+      if (entry.isFile) {
+        entry.file(function (file) { out.push({ file: file, name: prefix + file.name }); resolve(); }, resolve);
+      } else if (entry.isDirectory) {
+        const reader = entry.createReader();
+        const all = [];
+        (function more() {
+          reader.readEntries(function (batch) {
+            if (batch.length) { Array.prototype.push.apply(all, batch); more(); return; }
+            Promise.all(all.map(function (child) { return walk(child, prefix + entry.name + '/', out); })).then(resolve);
+          }, resolve);
+        })();
+      } else resolve();
+    });
+  }
+  const drop = $('drop');
+  ['dragenter', 'dragover'].forEach(function (kind) {
+    document.addEventListener(kind, function (event) {
+      if (!root) return;
+      event.preventDefault();
+      drop.classList.add('over');
+    });
+  });
+  ['dragleave', 'drop'].forEach(function (kind) {
+    document.addEventListener(kind, function () { drop.classList.remove('over'); });
+  });
+  document.addEventListener('drop', function (event) {
+    if (!root) return;
+    event.preventDefault();
+    const items = Array.prototype.slice.call(event.dataTransfer.items || []);
+    const entries = items.map(function (item) { return item.webkitGetAsEntry && item.webkitGetAsEntry(); }).filter(Boolean);
+    const out = [];
+    if (entries.length) {
+      Promise.all(entries.map(function (entry) { return walk(entry, '', out); })).then(function () {
+        queue(out.filter(function (item) { return !item.name.split('/').some(function (part) { return part.charAt(0) === '.'; }); }));
+      });
+    } else {
+      queue(Array.prototype.map.call(event.dataTransfer.files, function (file) { return { file: file, name: file.name }; }));
+    }
+  });
+
+  home();
+})();
+</script>
+</body>
+</html>
