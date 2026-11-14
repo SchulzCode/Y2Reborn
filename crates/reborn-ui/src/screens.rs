@@ -70,6 +70,7 @@ fn native_screen(
     interactive: bool,
 ) {
     match m.screen {
+        Screen::Lyrics => crate::lyrics::draw(c, ui, m),
         Screen::NowPlaying if m.current().is_some_and(Track::is_video) => {
             if let Some(film) = m.current() {
                 crate::views_videos::now_playing(c, ui, m, film);
@@ -140,6 +141,7 @@ fn layout_keys(m: &AppModel, page: Option<&Page>, empty: bool) -> &'static [&'st
         };
     }
     match m.screen {
+        Screen::Lyrics => &[],
         Screen::NowPlaying if m.current().is_some() => &["now_playing"],
         Screen::Home => &["home", "list"],
         // Customize > Cover Flow: albums and audiobooks alike (8.36).
@@ -713,6 +715,7 @@ pub fn screen_title(m: &AppModel) -> String {
         Screen::Album => "Album".into(),
         Screen::Artist => "Artist".into(),
         Screen::NowPlaying => "Now Playing".into(),
+        Screen::Lyrics => "Lyrics".into(),
         Screen::Queue => "Up Next".into(),
         Screen::TrackInfo => "Song Info".into(),
         Screen::Settings => "Settings".into(),
@@ -751,7 +754,7 @@ pub fn screen_title(m: &AppModel) -> String {
         Screen::SettingsLibrary if m.navigation.filter == crate::SHARE => "Wi-Fi Share".into(),
         Screen::SettingsLibrary => "Library".into(),
         Screen::SettingsDisplay => "Display".into(),
-        Screen::Customize => crate::customize::title(&m.navigation.filter).into(),
+        Screen::Customize => crate::customize::title(&m.navigation.filter),
         Screen::Audiobooks => "Audiobooks".into(),
         Screen::Videos => "Videos".into(),
         Screen::Book => "Audiobook".into(),

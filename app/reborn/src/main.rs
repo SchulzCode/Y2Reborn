@@ -8,6 +8,7 @@ mod diagnostics;
 mod eq_files;
 mod fm;
 mod graphics_recovery;
+mod lyrics;
 mod main_loop;
 mod meter;
 mod outputs;
@@ -294,6 +295,7 @@ struct Runtime {
     interaction_hints: reborn_platform::workload::Hints,
     model: AppModel,
     ui: Ui,
+    lyrics: lyrics::Controller,
     /// The single owner of platform observation and platform operations.
     platform: Option<client::Client>,
     /// A refresh (not a user operation) is in flight.

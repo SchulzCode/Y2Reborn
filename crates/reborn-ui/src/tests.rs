@@ -715,7 +715,8 @@ fn now_playing_shows_the_chapter_the_book_and_what_is_left() {
             "Next Chapter",
             "Speed",
             "Sleep Timer",
-            "Up Next"
+            "Up Next",
+            "Lyrics"
         ]
     );
     // Previous/Next Chapter (Y2Linux #103): 30 s in, Previous restarts this part's chapter and
@@ -6158,7 +6159,7 @@ fn now_playing_go_rows(ui: &mut Ui, m: &mut AppModel) -> Vec<(String, String)> {
     let tracks = m.library.tracks.clone();
     let rows = ui.modal_rows_public(m, &tracks);
     ui.model_action(m, Action::Back);
-    assert_eq!(rows.len(), 8, "{rows:?}");
+    assert_eq!(rows.len(), 9, "{rows:?}");
     rows.into_iter()
         .filter(|r| r.label.starts_with("Go to"))
         .map(|r| (r.label, r.key))
@@ -6355,7 +6356,7 @@ fn every_menu_lists_its_shared_actions_in_one_order() {
     // Now Playing leaves the whole list to Up Next.
     let mut m = app(Screen::NowPlaying);
     let now = menu_labels(&mut ui, &mut m);
-    assert_eq!(now.len(), 8, "{now:?}");
+    assert_eq!(now.len(), 9, "{now:?}");
     assert!(!now.iter().any(|l| l.contains("as Playlist")));
     // An album, a playlist and a playlist's song.
     let mut m = app(Screen::Albums);

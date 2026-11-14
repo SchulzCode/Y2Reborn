@@ -84,8 +84,7 @@ fn sign_in_code(c: &mut Canvas, ui: &Ui, page: &Page, focus: usize, interactive:
         "Sign in to Last.fm",
         &text,
         page,
-        focus,
-        interactive,
+        interactive && focus == 0,
     );
 }
 
@@ -117,8 +116,7 @@ fn share_code(c: &mut Canvas, ui: &Ui, page: &Page, focus: usize, interactive: b
         "Copy music over Wi-Fi",
         &text,
         page,
-        focus,
-        interactive,
+        interactive && focus == 0,
     );
 }
 
@@ -131,8 +129,7 @@ fn code_page(
     title: &str,
     lines: &[(&str, Face, u32)],
     page: &Page,
-    focus: usize,
-    interactive: bool,
+    selected: bool,
 ) {
     if let Some(code) = code {
         let module = (room / (code.size as f32 + 8.)).floor().max(2.);
@@ -176,7 +173,6 @@ fn code_page(
         c.text(tx, y, line, *face, *tint);
         y += if tall { 26. } else { 20. };
     }
-    let selected = interactive && focus == 0;
     if let Some(cancel) = page.rows.first() {
         let by = HEIGHT - 66.;
         if selected {

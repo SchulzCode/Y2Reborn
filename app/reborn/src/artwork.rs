@@ -630,9 +630,14 @@ mod tests {
             worker.want(vec![job(&root, &track, 7)]);
             std::thread::sleep(std::time::Duration::from_millis(4));
         }
-        std::thread::sleep(std::time::Duration::from_millis(300));
+        // Wait for publication, retaining unread accounting until the assertion below. The worker
+        // increments that count before sending, so polling it could race the channel send.
+        let first = worker
+            .replies
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .unwrap();
         assert_eq!(unread(&worker), 1, "one reply, not one per request");
-        assert!(worker.try_reply().is_some());
+        worker.taken(&first);
         assert!(worker.try_reply().is_none());
         assert_eq!(unread(&worker), 0);
         // Once taken it may be asked for again (now from the disk cache).

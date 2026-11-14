@@ -112,7 +112,9 @@ impl Ui {
                     ConfirmAction::KeepButtons => Effect::None,
                 }
             }
-            Some(Modal::ContextMenu) => self.context_action(m, tracks, &key),
+            Some(Modal::ContextMenu) => self
+                .lyrics_menu(m, &key)
+                .unwrap_or_else(|| self.context_action(m, tracks, &key)),
             Some(Modal::PlaylistPicker) => self.picker_action(m, tracks, &key),
             Some(Modal::QuickMenu) => self.quick_menu_action(m, &key),
             None => Effect::None,

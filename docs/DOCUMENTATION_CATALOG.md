@@ -18,6 +18,8 @@ Indexed pages: **66**. Explicit historical/contract scope notices:
 | --- | --- |
 | [Reborn](../readme.md) | Current entry / index |
 | [Current Reborn state on the Y2](CURRENT_REBORN_STATE.md) | Current entry / index |
+| [Synchronized lyrics](lyrics.md) | Source candidate / owner guide |
+| [Synced lyrics host validation](validation/synced-lyrics-host.md) | Host validation / no device qualification |
 | [Y2Reborn complete document catalog](DOCUMENTATION_CATALOG.md) | Current entry / index |
 | [Reborn documentation](README.md) | Current entry / index |
 

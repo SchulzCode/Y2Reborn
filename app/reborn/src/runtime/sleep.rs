@@ -47,6 +47,9 @@ impl Runtime {
         {
             return Err("sleep_preparation_busy".into());
         }
+        if !self.lyrics.quiesce() {
+            return Err("sleep_preparation_busy".into());
+        }
         if !self.background.quiesce() {
             self.background.update(
                 &self.model.settings.music_directory,

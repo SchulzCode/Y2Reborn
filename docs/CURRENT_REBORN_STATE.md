@@ -1,5 +1,12 @@
 # Current Reborn state on the Y2
 
+## Source candidate: synchronized LRC lyrics, 2026-11-11
+
+The draft lyrics contribution adds Now Playing → Lyrics, bounded background sidecar loading,
+audio-position highlighting, wrapped text and native skin colors. See the [guide](lyrics.md) and
+[host validation](validation/synced-lyrics-host.md). This is not a published image or physical Y2
+qualification; existing release receipts below retain their original scope.
+
 ## 1.0.0-beta.9.3.20 — Y2Linux 1.0 Beta 9.3.20 (Baseline 229), 2026-11-10: issue fixes (published)
 
 Published as `baseline-229` (Reborn `f6ba913`; work `5c6e769`). Audiobook Previous/Next: `Listening::button_step`
