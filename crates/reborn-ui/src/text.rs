@@ -181,6 +181,22 @@ mod tests {
     use super::*;
 
     #[test]
+    fn the_title_faces_draw_the_czech_alphabet_in_their_own_weight() {
+        // Song, album and artist names use S25 (Now Playing), S20 and S10. A letter they lack
+        // is drawn from the lighter 24 px fallback page, scaled, and looks blurred.
+        for face in [Face::S10, Face::S20, Face::S25, Face::R15, Face::S15] {
+            // Every letter Czech adds to ASCII, and the acute vowels.
+            for ch in "ČčĎďĚěŇňŘřŠšŤťŮůŽž".chars().chain("ÁáÉéÍíÓóÚúÝý".chars())
+            {
+                assert!(
+                    matches!(lookup(face, ch), Some(Source::Exact(_))),
+                    "{ch} in {face:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn exact_sets_cover_latin_and_fall_back_for_the_rest() {
         assert!(matches!(lookup(Face::R15, 'a'), Some(Source::Exact(_))));
         assert!(matches!(lookup(Face::R15, 'é'), Some(Source::Exact(_))));

@@ -3718,7 +3718,7 @@ fn cover_flow_text_rides_under_its_cover_while_the_row_glides() {
         let glyphs: Vec<_> = quads
             .iter()
             .filter(|q| {
-                matches!(q.tex, reborn_graphics::Tex::Font(_)) && (258. ..284.).contains(&q.y)
+                matches!(q.tex, reborn_graphics::Tex::Font(_)) && (257. ..284.).contains(&q.y)
             })
             .collect();
         glyphs.iter().map(|q| q.x + q.w / 2.).sum::<f32>() / glyphs.len() as f32
