@@ -330,6 +330,8 @@ struct Runtime {
     kernel_events: Arc<Mutex<Vec<String>>>,
     background: background::Gate,
     art: bool,
+    /// Whose cover `art` is (`None` for a station's logo): `load` keeps it for the same song.
+    art_owner: Option<runtime::ArtOwner>,
     /// The cover or station logo now shown, square as decoded: a skin change uploads it again in
     /// that look's shape (`show_art`).
     art_square: Vec<u8>,

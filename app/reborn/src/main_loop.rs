@@ -350,6 +350,7 @@ pub(crate) fn run() -> Result<(), String> {
         radio_art: None,
         radio_art_pending: None,
         resume_art: None,
+        art_owner: None,
         playlist_worker: playlists::Worker::spawn(Some(root.join("cache/playlists.json"))),
         headless,
         last_activity: Instant::now(),
@@ -1020,7 +1021,7 @@ impl MainLoop {
             }
         }
         if let Some(rgba) = logo {
-            rt.show_art(rgba);
+            rt.show_art(rgba, None);
         }
     }
 
@@ -1393,7 +1394,7 @@ impl MainLoop {
                 } => {
                     if artwork_matches_current(&rt.model, generation, entry_id, track_id) {
                         rt.ui.accent = reborn_ui::art::accent_from_rgba(&bytes);
-                        rt.show_art(bytes.to_vec());
+                        rt.show_art(bytes.to_vec(), Some((entry_id, track_id)));
                     }
                 }
                 playback::PlaybackEvent::Core(event) => {
