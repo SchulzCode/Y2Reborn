@@ -14,7 +14,20 @@ impl Runtime {
             self.model.apply(Event::LibraryScanFailed(error.clone()));
             return Err(error);
         }
+        self.scan_asked = true;
         self.ui.flash("Scanning for music");
+        Ok(())
+    }
+
+    /// `Effect::RebuildLibrary`.
+    pub(crate) fn on_rebuild_library(&mut self) -> Result<(), String> {
+        self.model.apply(Event::LibraryScanStarted);
+        if let Err(error) = self.scanner.rebuild(self.model.sources.clone()) {
+            self.model.apply(Event::LibraryScanFailed(error.clone()));
+            return Err(error);
+        }
+        self.scan_asked = true;
+        self.ui.flash("Rebuilding library");
         Ok(())
     }
 

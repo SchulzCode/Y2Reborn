@@ -167,8 +167,8 @@ impl Ui {
     /// first rows.
     pub(crate) fn header_lead(&self, m: &AppModel, tracks: &[Track]) -> usize {
         const BUTTONS: [&str; 6] = [
-            "play:collection",
-            "shuffle:collection",
+            crate::play_options::PLAY_ALL,
+            crate::play_options::SHUFFLE_ALL,
             "pl_play",
             "pl_shuffle",
             "book_resume",

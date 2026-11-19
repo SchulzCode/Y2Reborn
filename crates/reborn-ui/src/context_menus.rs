@@ -237,6 +237,9 @@ impl Ui {
         if menu_key.starts_with("group_") {
             return self.group_effect(m, tracks, &source_key, menu_key);
         }
+        if let Some(choice) = play_options::choice(play_options::Family::Page, menu_key) {
+            return self.play_page(m, tracks, choice);
+        }
         if let Some(effect) = self.playing_book_effect(m, menu_key) {
             return effect;
         }
@@ -298,12 +301,6 @@ impl Ui {
                 if let Some(t) = track_index {
                     self.open_picker(m, vec![t]);
                 }
-                return Effect::None;
-            }
-            "collection_playlist" => {
-                Self::close_modal(m);
-                let members = self.filtered_indices(m, tracks);
-                self.open_picker(m, members);
                 return Effect::None;
             }
             "fav_toggle" => {
@@ -419,19 +416,6 @@ impl Ui {
             "play" => track_index.map(Effect::Play).unwrap_or(Effect::None),
             "play_next" => track_index.map(Effect::PlayNext).unwrap_or(Effect::None),
             "add_queue" => track_index.map(Effect::AddToQueue).unwrap_or(Effect::None),
-            "collection_play" => self.play_filtered(m, tracks, ShuffleMode::Off),
-            "collection_shuffle" => self.play_filtered(m, tracks, ShuffleMode::Songs),
-            "collection_shuffle_albums" => self.play_filtered(m, tracks, ShuffleMode::Albums),
-            "collection_next" | "collection_queue" => {
-                let members = self.filtered_indices(m, tracks);
-                if members.is_empty() {
-                    Effect::None
-                } else if menu_key == "collection_next" {
-                    Effect::PlayNextCollection(members)
-                } else {
-                    Effect::AddToQueueCollection(members)
-                }
-            }
             "show_queue" => {
                 Self::go(m, Screen::Queue, "");
                 self.open_up_next(m, tracks);

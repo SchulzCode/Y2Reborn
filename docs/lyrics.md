@@ -1,7 +1,7 @@
 # Synchronized lyrics
 
-Open the Now Playing options menu and select **Lyrics**. This source candidate adds a native
-480×360 viewer; it has not been tested on a physical Y2 and is proposed as a draft contribution.
+Open the Now Playing options menu (hold Select) and select **Lyrics**. Reborn shows the lyrics of
+the song playing: from a `.lrc` file beside it, or, without one, from the song's own tags.
 
 Place a UTF-8 `.lrc` file beside the local song, with the same base name:
 
@@ -11,8 +11,10 @@ Music/Homeward.lrc
 ```
 
 The reader checks `.lrc`, then `.LRC`, in that directory on Internal Storage or an available
-SD-card source. It does not search the internet or read embedded lyric tags. Radio retains its
-existing menu. This example uses original demonstration lyrics:
+SD-card source. Without a `.lrc` file it reads the lyrics stored in the song's tags (MP3 USLT, FLAC
+and Ogg `LYRICS` or `UNSYNCEDLYRICS`, M4A lyrics). Tag lyrics with LRC timestamps follow the music
+like a `.lrc` file; plain tag lyrics show as text you scroll with the wheel. It never searches the
+internet. Radio retains its existing menu. This example uses original demonstration lyrics:
 
 ```lrc
 [ar:Reborn original examples]
@@ -93,6 +95,4 @@ python3 tools/preview/render_previews.py /tmp/lyrics-preview
 ```
 
 The [original fixture](../assets/fixtures/lyrics-original.lrc) supplies the production UI previews.
-[Host validation](validation/synced-lyrics-host.md) records actual results. Before merge, verify
-real playback, seeks, repeat/shuffle, Bluetooth position reporting, SD removal and repeated
-sleep/wake on a physical Y2.
+The contribution's host validation is in [PR #126](https://github.com/SchulzCode/Y2Reborn/pull/126).

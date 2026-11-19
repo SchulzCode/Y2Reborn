@@ -301,7 +301,19 @@ fn music_holds_the_library_lists_and_back_returns_through_it() {
     assert_eq!(m.screen, Screen::Music);
     let rows = ui.rows(&m, &tracks);
     let keys: Vec<_> = rows.iter().map(|r| r.key.as_str()).collect();
-    assert_eq!(keys, ["artists", "albums", "tracks", "genres", "folders"]);
+    assert_eq!(
+        keys,
+        [
+            "artists",
+            "albums",
+            "tracks",
+            "genres",
+            "folders",
+            "list:recent:added",
+            "list:recent:played",
+            "list:most:played"
+        ]
+    );
     assert!(rows[0].secondary.ends_with("artists") || rows[0].secondary.ends_with("artist"));
     ui.action(&mut m, &tracks, Action::Select);
     assert_eq!(m.screen, Screen::Artists);
@@ -453,6 +465,9 @@ fn home_places_can_be_hidden_but_now_playing_and_settings_stay() {
             "tracks",
             "genres",
             "folders",
+            "list:recent:added",
+            "list:recent:played",
+            "list:most:played",
             "playlists",
             "search"
         ]
@@ -2111,13 +2126,13 @@ fn a_fast_spin_stops_at_the_end_of_a_long_list_before_wrapping() {
     m.library.tracks = tracks;
     m.settings.wrap_around = WrapAround::Everywhere;
     ui.invalidate_catalog();
-    m.navigation.focus = 495;
+    m.navigation.focus = 497;
     ui.model_action(&mut m, Action::WheelClockwise(8));
-    assert_eq!(m.navigation.focus, 499, "the spin stops at the end");
+    assert_eq!(m.navigation.focus, 501, "the spin stops at the end");
     ui.model_action(&mut m, Action::WheelClockwise(1));
-    assert_eq!(m.navigation.focus, 499, "still turning: it stays");
+    assert_eq!(m.navigation.focus, 501, "still turning: it stays");
     ui.model_action(&mut m, Action::WheelClockwise(3));
-    assert_eq!(m.navigation.focus, 499, "an accelerated step never wraps");
+    assert_eq!(m.navigation.focus, 501, "an accelerated step never wraps");
     // The wheel rested at the end: one more detent goes to the top.
     ui.last_step = Some(Instant::now() - WRAP_REST);
     ui.model_action(&mut m, Action::WheelClockwise(1));
@@ -2125,9 +2140,9 @@ fn a_fast_spin_stops_at_the_end_of_a_long_list_before_wrapping() {
     assert_eq!(m.navigation.scroll, 0, "the top is in view");
     ui.last_step = Some(Instant::now() - WRAP_REST);
     ui.model_action(&mut m, Action::WheelCounterClockwise(1));
-    assert_eq!(m.navigation.focus, 499);
+    assert_eq!(m.navigation.focus, 501);
     let visible = ui.visible_count(&m, &m.library.tracks.clone());
-    assert_eq!(m.navigation.scroll, 500 - visible, "the end is in view");
+    assert_eq!(m.navigation.scroll, 502 - visible, "the end is in view");
 }
 
 #[test]
@@ -2734,7 +2749,7 @@ fn filtered_track_context_actions_stay_on_the_selected_track() {
             "album:Élodie · Μουσική · Музыка · 音楽\u{1f}Album 0",
             3,
         ),
-        (Screen::Tracks, "", 2),
+        (Screen::Tracks, "", 4),
     ] {
         for (menu, expected) in [(0, Effect::PlayNext(2)), (1, Effect::AddToQueue(2))] {
             let mut ui = radios();
@@ -3124,7 +3139,8 @@ fn wheel_keeps_selection_visible_at_both_ends_of_realistic_library_sizes() {
         let visible = screens::visible_rows_for(Screen::Tracks);
         for _ in 0..(count / 4 + 12) {
             ui.model_action(&mut m, Action::WheelClockwise(4));
-            assert!(m.navigation.focus < count);
+            // Play All and Shuffle All above the songs.
+            assert!(m.navigation.focus < count + 2);
             assert!(m.navigation.focus >= m.navigation.scroll);
             assert!(m.navigation.focus < m.navigation.scroll + visible);
         }
@@ -3132,7 +3148,7 @@ fn wheel_keeps_selection_visible_at_both_ends_of_realistic_library_sizes() {
         for _ in 0..count.min(40) {
             ui.model_action(&mut m, Action::WheelClockwise(1));
         }
-        assert_eq!(m.navigation.focus, count - 1);
+        assert_eq!(m.navigation.focus, count + 1);
         assert_eq!(
             focus_target_count(&ui.draw(&m, &m.library.tracks, false)),
             1
@@ -3567,7 +3583,7 @@ fn genres_open_their_albums_then_all_songs_or_one_album() {
     let albums = ui.rows(&m, &tracks);
     assert_eq!(
         albums.iter().map(|r| r.label.as_str()).collect::<Vec<_>>(),
-        ["All Songs", "Shuffle", "Album 0", "Album 1"]
+        ["All Songs", "Shuffle All", "Album 0", "Album 1"]
     );
     assert_eq!(albums[0].secondary, "6 songs");
     // All Songs -> the genre's six songs.
@@ -3576,7 +3592,8 @@ fn genres_open_their_albums_then_all_songs_or_one_album() {
         (m.screen, m.navigation.filter.as_str()),
         (Screen::Tracks, "genre:Jazz")
     );
-    assert_eq!(ui.row_count(&m, &tracks), 6);
+    // Play All and Shuffle All, then the six songs.
+    assert_eq!(ui.row_count(&m, &tracks), 8);
     // Back, then one album -> its page.
     ui.action(&mut m, &tracks, Action::Back);
     m.navigation.focus = 3;
@@ -3866,6 +3883,8 @@ fn library_lists_sort_a_to_z_ignoring_case_accents_and_a_leading_article() {
     assert_eq!(
         labels(Screen::Tracks),
         [
+            "Play All",
+            "Shuffle All",
             "1979",
             "Bloodbuzz Ohio",
             "Bohemian Rhapsody",
@@ -5746,7 +5765,16 @@ fn music_queues_skip_audiobooks_and_songs_play_in_list_order() {
     let keys: Vec<_> = rows.iter().map(|r| r.key.as_str()).collect();
     assert_eq!(
         keys,
-        ["track:5", "track:4", "track:3", "track:2", "track:1", "track:0"]
+        [
+            "play:collection",
+            "shuffle:collection",
+            "track:5",
+            "track:4",
+            "track:3",
+            "track:2",
+            "track:1",
+            "track:0"
+        ]
     );
     match select_key(&mut ui, &mut m, "track:3") {
         Effect::PlayCollection {
@@ -6378,7 +6406,7 @@ fn every_menu_lists_its_shared_actions_in_one_order() {
     };
     let mut ui = radios();
     let mut m = app(Screen::Tracks);
-    m.navigation.focus = 1;
+    m.navigation.focus = 3;
     let songs = menu_labels(&mut ui, &mut m);
     assert_eq!(
         songs,
@@ -6866,7 +6894,7 @@ fn a_folder_lists_its_folders_then_its_songs_by_file_name() {
     assert_eq!(
         labels,
         [
-            "Shuffle",
+            "Shuffle All",
             "Alpha",
             "Clubland 28",
             "zeta",
@@ -6886,7 +6914,7 @@ fn a_folder_lists_its_folders_then_its_songs_by_file_name() {
     assert_eq!(
         labels,
         [
-            "Shuffle",
+            "Shuffle All",
             "01 - Zoe - One",
             "2 - Bea - Two",
             "10 - Xan - Ten"
@@ -7451,35 +7479,40 @@ fn fast_scrolling_steps_by_letter_and_lingers() {
     assert_eq!(ui.row_letter(&m, &tracks, 6), Some('A'));
     // Letter mode: one letter per detent, slow or fast.
     ui.model_action(&mut m, Action::WheelClockwise(1));
-    assert_eq!(m.navigation.focus, 10, "B");
+    assert_eq!(
+        m.navigation.focus, 12,
+        "B (Play All and Shuffle All above the songs)"
+    );
     // Reborn #91: a letter's first row is at the top, forwards as backwards.
-    assert_eq!(m.navigation.scroll, 10, "B at the top");
+    assert_eq!(m.navigation.scroll, 12, "B at the top");
     ui.model_action(&mut m, Action::WheelClockwise(4));
-    assert_eq!(m.navigation.focus, 20, "C");
-    assert_eq!(m.navigation.scroll, 20, "C at the top");
+    assert_eq!(m.navigation.focus, 22, "C");
+    assert_eq!(m.navigation.scroll, 22, "C at the top");
     // Turning back stays by letter: the letter before.
     ui.model_action(&mut m, Action::WheelCounterClockwise(1));
-    assert_eq!(m.navigation.focus, 10, "back to B");
-    assert_eq!(m.navigation.scroll, 10, "B at the top");
+    assert_eq!(m.navigation.focus, 12, "back to B");
+    assert_eq!(m.navigation.scroll, 12, "B at the top");
     // From inside a letter, back goes to its first row, then the one before.
-    m.navigation.focus = 15;
+    m.navigation.focus = 17;
     ui.model_action(&mut m, Action::WheelCounterClockwise(1));
-    assert_eq!(m.navigation.focus, 10);
+    assert_eq!(m.navigation.focus, 12);
     ui.model_action(&mut m, Action::WheelCounterClockwise(1));
-    assert_eq!(m.navigation.focus, 0);
+    assert_eq!(m.navigation.focus, 2, "A");
+    ui.model_action(&mut m, Action::WheelCounterClockwise(1));
+    assert_eq!(m.navigation.focus, 0, "Play All, above the letters");
     ui.model_action(&mut m, Action::WheelCounterClockwise(1));
     assert_eq!(m.navigation.focus, 0, "stays at the top");
     // After the last letter: its last row, where the list stops.
-    m.navigation.focus = 52;
+    m.navigation.focus = 54;
     ui.model_action(&mut m, Action::WheelClockwise(1));
-    assert_eq!(m.navigation.focus, 59, "no letter after F");
+    assert_eq!(m.navigation.focus, 61, "no letter after F");
     ui.model_action(&mut m, Action::WheelClockwise(1));
-    assert_eq!(m.navigation.focus, 59);
+    assert_eq!(m.navigation.focus, 61);
     // Each detent kept the letter up; once it lingered out, rows again.
     assert!(ui.fast_scroll_until.unwrap() > Instant::now());
     ui.fast_scroll_until = Some(Instant::now() - Duration::from_millis(1));
     ui.model_action(&mut m, Action::WheelCounterClockwise(1));
-    assert_eq!(m.navigation.focus, 58, "one row after the linger");
+    assert_eq!(m.navigation.focus, 60, "one row after the linger");
 }
 
 #[test]
@@ -7773,7 +7806,7 @@ fn a_playlist_moves_to_another_place_in_the_playlists_list() {
     assert_eq!(names(&ui, &m), ["Favorites", "Road Trip", "another"]);
 }
 
-/// Y2Reborn #74: with Playlists and Search off Home, Music has seven lists; turning down reaches
+/// Y2Reborn #74: with Playlists and Search off Home, Music has ten lists; turning down reaches
 /// the last, which scrolls into view as in every list (it stayed below the screen).
 #[test]
 fn music_scrolls_its_lists_into_view() {
@@ -7783,11 +7816,11 @@ fn music_scrolls_its_lists_into_view() {
     m.settings.show_on_home("playlists", false);
     m.settings.show_on_home("search", false);
     let tracks = m.library.tracks.clone();
-    assert_eq!(ui.rows(&m, &tracks).len(), 7);
-    for _ in 0..6 {
+    assert_eq!(ui.rows(&m, &tracks).len(), 10);
+    for _ in 0..9 {
         ui.model_action(&mut m, Action::WheelClockwise(1));
     }
-    assert_eq!(m.navigation.focus, 6);
+    assert_eq!(m.navigation.focus, 9);
     let quads = ui.draw(&m, &tracks, false);
     let text = drawn_text(&quads);
     assert!(

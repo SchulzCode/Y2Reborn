@@ -14,6 +14,7 @@ pub use home::{HOME_HIDEABLE, HOME_PINNABLE};
 pub mod lyrics;
 mod names;
 pub mod platform;
+pub mod play_stats;
 pub mod playlist;
 pub mod queue;
 mod radio;
@@ -1486,6 +1487,9 @@ pub struct AppModel {
     pub generation: u64,
     #[serde(skip)]
     pub sources: Vec<Source>,
+    /// What was played, for Music's Recently Played and Most Played (kept in its own file).
+    #[serde(skip)]
+    pub play_stats: play_stats::PlayStats,
     #[serde(skip)]
     pub screen_off: bool,
     #[serde(skip)]

@@ -438,14 +438,17 @@ impl Runtime {
     }
 }
 
-/// Describe a library scan without calling audiobook downloads songs.
-pub(crate) fn scan_message(download: bool, songs: u64, rescanned: u64) -> String {
-    match songs {
-        _ if download => "Audiobook downloaded".to_owned(),
-        _ if rescanned > 0 && songs > 1 => format!("{} new songs added", rescanned.min(songs)),
-        0 => "Scan finished. No music found.".to_owned(),
-        1 => "Scan finished. 1 song in your library.".to_owned(),
-        n => format!("Scan finished. {n} songs in your library."),
+/// Keep download feedback specific and use the standard scan policy otherwise.
+pub(crate) fn scan_message(
+    download: bool,
+    songs: u64,
+    rescanned: u64,
+    asked: bool,
+) -> Option<String> {
+    if download {
+        Some("Audiobook downloaded".to_owned())
+    } else {
+        crate::main_loop::scan_toast(songs, rescanned, asked)
     }
 }
 
@@ -454,17 +457,27 @@ mod scan_message_tests {
     use super::scan_message;
 
     #[test]
-    fn download_scan_does_not_call_book_parts_songs() {
-        assert_eq!(scan_message(true, 17, 17), "Audiobook downloaded");
-        assert_eq!(scan_message(false, 17, 17), "17 new songs added");
-        assert_eq!(scan_message(false, 0, 0), "Scan finished. No music found.");
+    fn downloads_and_background_scans_keep_their_own_messages() {
         assert_eq!(
-            scan_message(false, 1, 0),
-            "Scan finished. 1 song in your library."
+            scan_message(true, 17, 17, true).as_deref(),
+            Some("Audiobook downloaded")
         );
         assert_eq!(
-            scan_message(false, 17, 0),
-            "Scan finished. 17 songs in your library."
+            scan_message(false, 17, 17, true).as_deref(),
+            Some("17 new songs added")
+        );
+        assert_eq!(scan_message(false, 0, 0, false), None);
+        assert_eq!(
+            scan_message(false, 0, 0, true).as_deref(),
+            Some("Scan finished. No music found.")
+        );
+        assert_eq!(
+            scan_message(false, 1, 0, true).as_deref(),
+            Some("Scan finished. 1 song in your library.")
+        );
+        assert_eq!(
+            scan_message(false, 17, 0, true).as_deref(),
+            Some("Scan finished. 17 songs in your library.")
         );
     }
 }

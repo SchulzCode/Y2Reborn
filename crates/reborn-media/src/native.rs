@@ -155,6 +155,7 @@ struct MediaApi {
     chapters: MediaChapters,
     artwork_file: MediaArtworkFile,
     logo_file: MediaArtworkFile,
+    lyrics_file: MediaArtworkFile,
     image_file: MediaImageFile,
     convert: MediaConvert,
     crossfade: MediaCrossfade,
@@ -215,6 +216,7 @@ impl MediaApi {
                     chapters: symbol(handle, b"rb_media_chapters\0")?,
                     artwork_file: symbol(handle, b"rb_media_art_file\0")?,
                     logo_file: symbol(handle, b"rb_media_logo_file\0")?,
+                    lyrics_file: symbol(handle, b"rb_media_lyrics_file\0")?,
                     image_file: symbol(handle, b"rb_media_image_file\0")?,
                     convert: symbol(handle, b"rb_media_convert\0")?,
                     crossfade: symbol(handle, b"rb_media_crossfade\0")?,
@@ -909,36 +911,58 @@ fn art_side(side: u32) -> Result<usize, String> {
 }
 /// A cover image file, centre-cropped to a `side` x `side` RGBA square.
 pub fn external_artwork(path: &Path, side: u32) -> Result<Vec<u8>, String> {
-    use std::os::unix::ffi::OsStrExt;
     let side = art_side(side)?;
-    let name = CString::new(path.as_os_str().as_bytes()).map_err(|_| "NUL in path")?;
-    let api = api()?;
     let mut b = vec![0; side * side * 4];
-    // SAFETY: C receives a valid local path and exactly side*side*4 writable bytes.
-    let r = unsafe { (api.artwork_file)(name.as_ptr(), b.as_mut_ptr(), side as c_int) };
+    let api = api()?;
+    path_call(api.artwork_file, path, &mut b, side as c_int)?;
+    Ok(b)
+}
+/// One C call on a file: `f(path, out, arg)`, `out` being all of `out`; its result, or its error
+/// as text.
+fn path_call(
+    f: MediaArtworkFile,
+    path: &Path,
+    out: &mut [u8],
+    arg: c_int,
+) -> Result<c_int, String> {
+    use std::os::unix::ffi::OsStrExt;
+    let name = CString::new(path.as_os_str().as_bytes()).map_err(|_| "NUL in path")?;
+    // SAFETY: C receives a valid local path and the whole writable `out`, whose length every
+    // caller's `arg` stays within (side*side*4 for a square, the byte count for text).
+    let r = unsafe { f(name.as_ptr(), out.as_mut_ptr(), arg) };
     if r < 0 {
-        Err(error(api, r))
+        Err(error(api()?, r))
     } else {
-        Ok(b)
+        Ok(r)
+    }
+}
+/// The lyrics a music file carries in its tags (USLT, LYRICS, UNSYNCEDLYRICS, ©lyr), at most
+/// `limit` bytes; `None` when it has none, `Err("too_large")` beyond `limit`. Only the file's
+/// header is read.
+pub fn embedded_lyrics(path: &Path, limit: usize) -> Result<Option<Vec<u8>>, String> {
+    let cap = c_int::try_from(limit).map_err(|_| "lyrics limit")?;
+    let mut b = vec![0u8; limit];
+    let api = api()?;
+    let too_large = error(api, -libc::E2BIG);
+    match path_call(api.lyrics_file, path, &mut b, cap) {
+        Err(e) if e == too_large => Err("too_large".into()),
+        Err(e) => Err(e),
+        Ok(0) => Ok(None),
+        Ok(n) => {
+            b.truncate(n as usize);
+            Ok(Some(b))
+        }
     }
 }
 /// A station logo (JPEG, PNG or WebP) whole and undistorted, centred in a
 /// `side` x `side` straight-alpha RGBA square with transparent margins.
 pub fn logo_image(path: &Path, side: u32) -> Result<Vec<u8>, String> {
-    use std::os::unix::ffi::OsStrExt;
     if side == 0 || side > 256 {
         return Err("logo size".into());
     }
-    let name = CString::new(path.as_os_str().as_bytes()).map_err(|_| "NUL in path")?;
-    let api = api()?;
     let mut b = vec![0; side as usize * side as usize * 4];
-    // SAFETY: C receives a valid local path and exactly side*side*4 writable bytes.
-    let r = unsafe { (api.logo_file)(name.as_ptr(), b.as_mut_ptr(), side as c_int) };
-    if r < 0 {
-        Err(error(api, r))
-    } else {
-        Ok(b)
-    }
+    path_call(api()?.logo_file, path, &mut b, side as c_int)?;
+    Ok(b)
 }
 /// A skin picture (JPEG, PNG or WebP) at its own size as straight-alpha RGBA:
 /// `(width, height, pixels)`. Pictures larger than `max_w` x `max_h` are refused.
@@ -1053,6 +1077,47 @@ mod tests {
         Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../assets/fixtures")
             .join(n)
+    }
+    /// Lyrics in a song's tags (here an ID3v2.4 USLT frame) come from the file's header; a file
+    /// without any has none, and a limit too small is "too_large".
+    #[test]
+    fn lyrics_in_a_songs_tags_are_read() {
+        fn syncsafe(n: usize) -> [u8; 4] {
+            [21, 14, 7, 0].map(|shift| (n >> shift & 0x7f) as u8)
+        }
+        let mp3 = std::fs::read(fixture("mp3.mp3")).unwrap();
+        let audio = if mp3.starts_with(b"ID3") {
+            let size = mp3[6..10]
+                .iter()
+                .fold(0usize, |n, b| n << 7 | usize::from(*b & 0x7f));
+            &mp3[10 + size..]
+        } else {
+            &mp3[..]
+        };
+        let text = "[00:01.00]First line\n[00:02.00]Second line";
+        let mut uslt = vec![3u8];
+        uslt.extend(b"eng\0");
+        uslt.extend(text.as_bytes());
+        let mut frame = b"USLT".to_vec();
+        frame.extend(syncsafe(uslt.len()));
+        frame.extend([0, 0]);
+        frame.extend(&uslt);
+        let mut file = b"ID3\x04\x00\x00".to_vec();
+        file.extend(syncsafe(frame.len()));
+        file.extend(&frame);
+        file.extend(audio);
+        let path = std::env::temp_dir().join(format!("reborn-lyrics-{}.mp3", std::process::id()));
+        std::fs::write(&path, file).unwrap();
+        assert_eq!(
+            embedded_lyrics(&path, 4096).unwrap().as_deref(),
+            Some(text.as_bytes())
+        );
+        assert_eq!(embedded_lyrics(&path, 8), Err("too_large".into()));
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(
+            embedded_lyrics(&fixture("flac-16-44100.flac"), 4096),
+            Ok(None)
+        );
     }
     /// Feed a fixture through a pipe in small, slow chunks, as a radio
     /// stream arrives, and decode it with the stream decoder.

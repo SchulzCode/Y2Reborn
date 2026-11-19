@@ -154,8 +154,23 @@ fn read(job: &Job, revision: &AtomicU64) -> Result<Option<lyrics::Lyrics>, Strin
             Err(error) => return Err(error.to_string()),
         }
     }
+    // No .lrc beside it: the lyrics in the song's own tags, if any.
     let Some(sidecar) = sidecar else {
-        return Ok(None);
+        // A file whose tags cannot be read just has no lyrics to show.
+        let bytes = match reborn_media::embedded_lyrics(source.path(), lyrics::MAX_BYTES) {
+            Err(e) if e == "too_large" => return Err(lyrics::Error::TooLarge.message().into()),
+            Err(_) => None,
+            Ok(bytes) => bytes,
+        };
+        if revision.load(Ordering::Acquire) != job.revision || !source.is_current() {
+            return Ok(None);
+        }
+        return match bytes {
+            Some(bytes) => lyrics::parse_tag(&bytes)
+                .map(Some)
+                .map_err(|e| e.message().into()),
+            None => Ok(None),
+        };
     };
     let mut file = File::open(sidecar.path()).map_err(|e| e.to_string())?;
     let length = file.metadata().map_err(|e| e.to_string())?.len();

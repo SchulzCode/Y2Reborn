@@ -1736,6 +1736,42 @@ static int read_image_file(const char *path, AVPacket **out, enum AVCodecID *cod
 /* External cover images use the same FFmpeg image decoders and libswscale as
  * attached artwork. They are read as bounded local files without enabling an
  * image demuxer or any network protocol in the production build. */
+/* Lyrics a file carries in its tags (ID3 USLT as "lyrics-<lang>", Vorbis and
+ * FLAC LYRICS or UNSYNCEDLYRICS, MP4 ©lyr): the container's first, else a
+ * stream's (Ogg comments). Copied into `out` without its NUL; returns the
+ * length, 0 when there are none, AVERROR(E2BIG) beyond `cap`. Only the header
+ * is read: no stream probing, no decoding. */
+static const AVDictionaryEntry *lyrics_entry(const AVDictionary *d) {
+  const AVDictionaryEntry *e = av_dict_get(d, "lyrics", NULL, AV_DICT_IGNORE_SUFFIX);
+  while (e && !*e->value) e = av_dict_get(d, "lyrics", e, AV_DICT_IGNORE_SUFFIX);
+  if (!e) e = av_dict_get(d, "unsyncedlyrics", NULL, 0);
+  return e && *e->value ? e : NULL;
+}
+int rb_media_lyrics_file(const char *path, uint8_t *out, int cap) {
+  if (!path || !out || cap < 1)
+    return AVERROR(EINVAL);
+  AVFormatContext *f = NULL;
+  int r = avformat_open_input(&f, path, NULL, NULL);
+  if (r < 0)
+    return r;
+  const AVDictionaryEntry *e = lyrics_entry(f->metadata);
+  for (unsigned i = 0; !e && i < f->nb_streams; i++)
+    e = lyrics_entry(f->streams[i]->metadata);
+  if (!e) {
+    r = 0;
+  } else {
+    size_t length = strlen(e->value);
+    if (length > (size_t)cap) {
+      r = AVERROR(E2BIG);
+    } else {
+      memcpy(out, e->value, length);
+      r = (int)length;
+    }
+  }
+  avformat_close_input(&f);
+  return r;
+}
+
 int rb_media_art_file(const char *path, uint8_t *out, int side) {
   if (!path || !out || side < 1 || side > 256)
     return AVERROR(EINVAL);

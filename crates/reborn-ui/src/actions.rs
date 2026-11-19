@@ -675,8 +675,15 @@ impl Ui {
             }
             return Effect::None;
         }
-        if key == "shuffle:collection" {
-            return self.play_filtered(m, tracks, ShuffleMode::Songs);
+        if let Some(choice) = play_options::header_choice(key) {
+            return self.play_page(m, tracks, choice);
+        }
+        // Music's Recently Added, Recently Played and Most Played: Songs in their order.
+        if let Some(filter) = key.strip_prefix("list:") {
+            if play_options::list_title(filter).is_some() {
+                Self::go(m, Screen::Tracks, filter);
+            }
+            return Effect::None;
         }
         if key == "playlists" {
             Self::go(m, Screen::Playlists, "");
@@ -696,7 +703,7 @@ impl Ui {
             return Effect::None;
         }
         if key == catalog::SEARCH_PLAY_ALL {
-            return self.play_filtered(m, tracks, ShuffleMode::Off);
+            return self.play_page(m, tracks, play_options::Choice::Play);
         }
         if let Some((screen, filter)) = pages::sub_page(key) {
             Self::go(m, screen, filter);
@@ -767,9 +774,6 @@ impl Ui {
                 }
                 if key.starts_with("track:") {
                     return self.play_track(m, tracks, key);
-                }
-                if key == "play:collection" {
-                    return self.play_filtered(m, tracks, ShuffleMode::Off);
                 }
             }
             Screen::Queue => {

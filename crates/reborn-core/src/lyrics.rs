@@ -56,10 +56,15 @@ pub struct Line {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Lyrics {
     pub lines: Vec<Line>,
+    /// Timed (LRC); untimed lyrics from a song's tags have no current line.
+    pub synced: bool,
 }
 impl Lyrics {
     /// Last entry at or before the audible position; equal times keep their file ordering.
     pub fn active(&self, position_ms: u64) -> Option<usize> {
+        if !self.synced {
+            return None;
+        }
         self.lines
             .partition_point(|line| line.at_ms <= position_ms)
             .checked_sub(1)
@@ -144,7 +149,45 @@ pub fn parse(bytes: &[u8]) -> Result<Lyrics, Error> {
         };
     }
     lines.sort_by_key(|line| line.at_ms);
-    Ok(Lyrics { lines })
+    Ok(Lyrics {
+        lines,
+        synced: true,
+    })
+}
+
+/// Lyrics from a song's own tags: LRC when they carry timestamps, else plain text, one entry per
+/// line; runs of blank lines become one empty entry (a gap between verses).
+pub fn parse_tag(bytes: &[u8]) -> Result<Lyrics, Error> {
+    let timed = parse(bytes)?;
+    if !timed.lines.is_empty() {
+        return Ok(timed);
+    }
+    let text = std::str::from_utf8(bytes).map_err(|_| Error::InvalidUtf8)?;
+    let text = text.strip_prefix('\u{feff}').unwrap_or(text);
+    let mut lines: Vec<Line> = Vec::new();
+    for (index, raw) in text.lines().enumerate() {
+        if index >= MAX_INPUT_LINES {
+            return Err(Error::TooManyLines);
+        }
+        if raw.len() > MAX_LINE_BYTES {
+            return Err(Error::LineTooLong);
+        }
+        let raw = raw.trim();
+        if raw.is_empty() && lines.last().is_none_or(|l| l.text.is_empty()) {
+            continue;
+        }
+        lines.push(Line {
+            at_ms: 0,
+            text: raw.into(),
+        });
+    }
+    while lines.last().is_some_and(|l| l.text.is_empty()) {
+        lines.pop();
+    }
+    Ok(Lyrics {
+        lines,
+        synced: false,
+    })
 }
 
 fn timestamp(tag: &str) -> Option<u64> {

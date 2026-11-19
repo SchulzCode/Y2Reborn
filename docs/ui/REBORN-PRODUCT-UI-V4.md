@@ -184,7 +184,8 @@ previews, spelling (3).
   (`pages::home`). Pinned Music lists stand after Music in `HOME_PINNABLE` order
   (Artists, Albums, Songs, Genres, Folders); Home lays out up to eleven rows.
 * Music (`Screen::Music`, `views_library::music`) lists Artists, Albums, Songs, Genres and
-  Folders as menu entries with counts ("7 artists"); Playlists and Search left it (they are
+  Folders as menu entries with counts ("7 artists"), then Recently Added, Recently Played and
+  Most Played (Songs with a filter, `play_options::LISTS`); Playlists and Search left it (they are
   on Home). `components::menu_entry` is shared with Radio's menu, so both menus look alike.
   Back goes Artists → Music → Home (navigation history).
 * Settings → Display → Home Menu (`Screen::HomeMenu`): a switch per Music list;

@@ -207,6 +207,7 @@ impl Runtime {
 
     pub(crate) fn recreate_graphics(&mut self) -> Result<(), String> {
         self.art = false;
+        self.resume_art = None;
         // A new renderer starts without Cover Flow's full-resolution cover.
         self.ui.collection_art.set(None);
         if let Some(worker) = &mut self.thumbs {

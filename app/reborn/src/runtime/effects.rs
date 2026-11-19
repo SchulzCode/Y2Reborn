@@ -400,14 +400,7 @@ impl Runtime {
                     self.checkpoint();
                 }
             }
-            Effect::RebuildLibrary => {
-                self.model.apply(Event::LibraryScanStarted);
-                if let Err(error) = self.scanner.rebuild(self.model.sources.clone()) {
-                    self.model.apply(Event::LibraryScanFailed(error.clone()));
-                    return Err(error);
-                }
-                self.ui.flash("Rebuilding library");
-            }
+            Effect::RebuildLibrary => self.on_rebuild_library()?,
             Effect::PowerOff => {
                 power::request_shutdown(false)?;
             }

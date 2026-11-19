@@ -46,10 +46,11 @@ pub struct Scrobble {
 
 /// A counted play whose start time may still be unknown (no trustworthy
 /// clock yet). `started_mono_ms` lets the player stamp it later in the same
-/// boot.
+/// boot. `play` is what Last.fm gets; a song it cannot take (no tags) still
+/// counts for the player's own play history (`play_stats`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Counted {
-    pub play: Play,
+    pub play: Option<Play>,
     pub started_unix: Option<i64>,
     pub started_mono_ms: u64,
 }
@@ -64,7 +65,7 @@ impl Counted {
             }
         };
         Some(Scrobble {
-            play: self.play.clone(),
+            play: self.play.clone()?,
             timestamp,
         })
     }
@@ -109,6 +110,8 @@ pub fn threshold_ms(duration_ms: u64) -> u64 {
 struct Current {
     entry: u64,
     play: Option<Play>,
+    /// The player's own history takes it (`play_stats::counts`).
+    counts: bool,
     duration_ms: u64,
     started_unix: Option<i64>,
     started_mono_ms: u64,
@@ -157,6 +160,7 @@ impl Tracker {
             self.current = Some(Current {
                 entry,
                 play: play_of(track),
+                counts: crate::play_stats::counts(track),
                 duration_ms: track.duration_ms,
                 started_unix: now_unix.map(|t| t - (position_ms / 1000) as i64),
                 started_mono_ms: now_mono_ms.saturating_sub(position_ms),
@@ -180,10 +184,12 @@ impl Tracker {
         if c.counted || c.heard_ms < threshold_ms(c.duration_ms) {
             return None;
         }
-        let play = c.play.clone()?;
+        if c.play.is_none() && !c.counts {
+            return None;
+        }
         c.counted = true;
         Some(Counted {
-            play,
+            play: c.play.clone(),
             started_unix: c.started_unix,
             started_mono_ms: c.started_mono_ms,
         })
@@ -264,8 +270,12 @@ mod tests {
         let mut clock = 10_000;
         let got = run(&mut tr, 1, &t, &mut clock, 0, 200_000);
         assert_eq!(got.len(), 1);
-        assert_eq!(got[0].play.title, "Song");
-        assert_eq!(got[0].play.album_artist, "", "same as the artist");
+        assert_eq!(got[0].play.as_ref().unwrap().title, "Song");
+        assert_eq!(
+            got[0].play.as_ref().unwrap().album_artist,
+            "",
+            "same as the artist"
+        );
         assert_eq!(got[0].started_unix, Some(1_700_000_010));
         assert_eq!(threshold_ms(200_000), 100_000);
         assert_eq!(threshold_ms(3_600_000), CAP_MS);
@@ -393,5 +403,23 @@ mod tests {
         assert!(log_header("Y2Reborn 1.0").starts_with("#AUDIOSCROBBLER/1.1\n#TZ/UTC\n"));
         let json = serde_json::to_string(&s).unwrap();
         assert_eq!(serde_json::from_str::<Scrobble>(&json).unwrap(), s);
+    }
+
+    #[test]
+    fn an_untagged_song_counts_for_the_history_but_is_not_scrobbled() {
+        let mut t = track(200_000);
+        t.online = true;
+        t.title = t.filename.clone();
+        let mut tr = Tracker::default();
+        let mut clock = 10_000;
+        let got = run(&mut tr, 1, &t, &mut clock, 0, 200_000);
+        assert_eq!(got.len(), 1);
+        assert!(got[0].play.is_none());
+        assert!(got[0].stamp(clock, Some(1_800_000_000)).is_none());
+        // Not a song at all (offline here): nothing.
+        let mut tr = Tracker::default();
+        let mut gone = t.clone();
+        gone.online = false;
+        assert!(run(&mut tr, 2, &gone, &mut clock, 0, 200_000).is_empty());
     }
 }

@@ -22,6 +22,8 @@ use std::time::{Duration, Instant};
 /// long (Last.fm's codes last an hour; the page gives up sooner).
 const POLL_EVERY: Duration = Duration::from_secs(3);
 const SIGN_IN_FOR: Duration = Duration::from_secs(15 * 60);
+/// The player's own play history (Music's Recently Played and Most Played), under the root.
+pub(crate) const PLAY_STATS: &str = "state/play-stats.json";
 /// Plays counted before the clock was known, kept in memory at most.
 const UNSTAMPED_MAX: usize = 500;
 /// Now Playing is announced again after a pause or a failed attempt, at most
@@ -177,13 +179,13 @@ impl Runtime {
             .zip(self.model.queue.get(position))
     }
     /// Follow the play: once it counts, keep it for Last.fm and the log.
+    /// Follows the song playing: a play that counts goes into the player's own history, and to
+    /// Last.fm or the scrobbler log when the listener chose one.
     pub(crate) fn scrobble_tick(&mut self) {
         let wanted = self.model.settings.scrobble_log
             || (self.model.settings.lastfm_scrobble && self.lastfm.connected());
         if !wanted {
-            self.scrobbles = Default::default();
             self.scrobbles_unstamped.clear();
-            return;
         }
         let now_ms = disk::boottime_ms();
         let unix = self.trusted_unix();
@@ -200,10 +202,13 @@ impl Runtime {
             self.scrobbles
                 .observe(current, playing, self.model.position_ms, now_ms, unix)
         {
-            if self.scrobbles_unstamped.len() >= UNSTAMPED_MAX {
-                self.scrobbles_unstamped.remove(0);
+            self.count_play();
+            if wanted && counted.play.is_some() {
+                if self.scrobbles_unstamped.len() >= UNSTAMPED_MAX {
+                    self.scrobbles_unstamped.remove(0);
+                }
+                self.scrobbles_unstamped.push(counted);
             }
-            self.scrobbles_unstamped.push(counted);
         }
         if self.scrobbles_unstamped.is_empty() || unix.is_none() {
             return;
@@ -212,6 +217,23 @@ impl Runtime {
             if let Some(scrobble) = counted.stamp(now_ms, unix) {
                 self.keep_scrobble(&scrobble);
             }
+        }
+    }
+    /// The song playing counted: its play count and place in Recently Played.
+    fn count_play(&mut self) {
+        let Some(track) = self.model.current().cloned() else {
+            return;
+        };
+        self.model.play_stats.record(&track);
+        if let Err(e) = self.model.play_stats.save(&self.root.join(PLAY_STATS)) {
+            self.log.emit(
+                Level::Warn,
+                "library",
+                "play_stats_failed",
+                "Play history not saved",
+                None,
+                json!({"error": e.to_string()}),
+            );
         }
     }
     fn keep_scrobble(&mut self, scrobble: &Scrobble) {

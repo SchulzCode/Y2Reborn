@@ -3,7 +3,7 @@
 //! song with the wheel. Files are read and written by the player
 //! (`Effect::Playlist`); this module only decides and draws from what it has.
 
-use crate::{keyboard, names_or_unknown, playlist_index, track_title, Item, Ui};
+use crate::{keyboard, names_or_unknown, play_options, playlist_index, track_title, Item, Ui};
 use reborn_core::{
     playlist::{Playlist, PlaylistEdit, PlaylistEntry},
     sort::{fold, natural_key, sort_key, SortAs},
@@ -483,48 +483,33 @@ impl Ui {
         let members = self.playable_shown(m, tracks, &p);
         let source = crate::source_label(m);
         let origin = crate::page_origin(m);
-        match key {
-            "pl_play" | "pl_shuffle" if !members.is_empty() => {
+        if let Some(choice) = play_options::choice(play_options::Family::Playlist, key) {
+            return self.play_choice(m, choice, members, source, origin);
+        }
+        let Some(i) = key
+            .strip_prefix("pl_entry:")
+            .and_then(|i| i.parse::<usize>().ok())
+        else {
+            return Effect::None;
+        };
+        match self.resolved(tracks, &p).get(i).copied().flatten() {
+            Some(t) if tracks.get(t).is_some_and(|t| t.online) => {
                 Self::go(m, Screen::NowPlaying, "");
                 Effect::PlayCollection {
-                    selected: members[0],
+                    selected: t,
                     members,
-                    shuffle: if key == "pl_shuffle" {
-                        ShuffleMode::Songs
-                    } else {
-                        ShuffleMode::Off
-                    },
+                    shuffle: ShuffleMode::Off,
                     source,
                     origin,
                 }
             }
-            k => {
-                let Some(i) = k
-                    .strip_prefix("pl_entry:")
-                    .and_then(|i| i.parse::<usize>().ok())
-                else {
-                    return Effect::None;
-                };
-                match self.resolved(tracks, &p).get(i).copied().flatten() {
-                    Some(t) if tracks.get(t).is_some_and(|t| t.online) => {
-                        Self::go(m, Screen::NowPlaying, "");
-                        Effect::PlayCollection {
-                            selected: t,
-                            members,
-                            shuffle: ShuffleMode::Off,
-                            source,
-                            origin,
-                        }
-                    }
-                    Some(_) => {
-                        self.flash("Insert the SD card to play this song");
-                        Effect::None
-                    }
-                    None => {
-                        self.flash("This song isn't on the player");
-                        Effect::None
-                    }
-                }
+            Some(_) => {
+                self.flash("Insert the SD card to play this song");
+                Effect::None
+            }
+            None => {
+                self.flash("This song isn't on the player");
+                Effect::None
             }
         }
     }
@@ -533,14 +518,8 @@ impl Ui {
     pub(crate) fn playlist_context_rows(&self, m: &AppModel, key: &str) -> Vec<Item> {
         if let Some(p) = self.menu_playlist(m, key) {
             // As an album's: Play and Shuffle first (8.36).
-            let mut rows = vec![
-                Item::new("Play", "pl_play"),
-                Item::new("Shuffle", "pl_shuffle"),
-                Item::new("Shuffle Albums", "pl_shuffle_albums"),
-                Item::new("Play Next", "pl_next"),
-                Item::new("Add to Queue", "pl_queue"),
-                sort_row("pl_sort", m.settings.playlist_sort(&p.path)),
-            ];
+            let mut rows = play_options::menu(play_options::Family::Playlist, true);
+            rows.push(sort_row("pl_sort", m.settings.playlist_sort(&p.path)));
             if !is_favorites(&p.path) && !p.read_only {
                 rows.push(Item::new("Rename", "pl_rename"));
             }
@@ -595,37 +574,19 @@ impl Ui {
     ) -> Option<Effect> {
         if let Some(p) = self.menu_playlist(m, source).cloned() {
             let members = self.playable_shown(m, tracks, &p);
+            if let Some(choice) = play_options::choice(play_options::Family::Playlist, menu) {
+                let origin = Some(reborn_core::QueueOrigin {
+                    screen: Screen::Playlist,
+                    filter: p.path.to_string_lossy().into_owned(),
+                });
+                return Some(self.play_choice(m, choice, members, p.name.clone(), origin));
+            }
             return Some(match menu {
                 // The menu stays open: each press steps the order on.
                 "pl_sort" => Effect::SetPlaylistSort(
                     p.path.clone(),
                     m.settings.playlist_sort(&p.path).next(),
                 ),
-                "pl_play" | "pl_shuffle" | "pl_shuffle_albums" if !members.is_empty() => {
-                    Self::go(m, Screen::NowPlaying, "");
-                    Effect::PlayCollection {
-                        selected: members[0],
-                        members,
-                        shuffle: match menu {
-                            "pl_shuffle" => ShuffleMode::Songs,
-                            "pl_shuffle_albums" => ShuffleMode::Albums,
-                            _ => ShuffleMode::Off,
-                        },
-                        source: p.name.clone(),
-                        origin: Some(reborn_core::QueueOrigin {
-                            screen: Screen::Playlist,
-                            filter: p.path.to_string_lossy().into_owned(),
-                        }),
-                    }
-                }
-                "pl_next" if !members.is_empty() => {
-                    Self::close_modal(m);
-                    Effect::PlayNextCollection(members)
-                }
-                "pl_queue" if !members.is_empty() => {
-                    Self::close_modal(m);
-                    Effect::AddToQueueCollection(members)
-                }
                 "pl_rename" => {
                     Self::close_modal(m);
                     self.open_name_keyboard(Some(&p));

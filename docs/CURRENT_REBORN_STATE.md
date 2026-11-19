@@ -1,11 +1,28 @@
 # Current Reborn state on the Y2
 
-## Source candidate: synchronized LRC lyrics, 2026-11-11
+## Playing a group of songs, in one place; Recently Added, Recently Played, Most Played (#163, #109, #158)
 
-The draft lyrics contribution adds Now Playing → Lyrics, bounded background sidecar loading,
-audio-position highlighting, wrapped text and native skin colors. See the [guide](lyrics.md) and
-[host validation](validation/synced-lyrics-host.md). This is not a published image or physical Y2
-qualification; existing release receipts below retain their original scope.
+`play_options` (reborn-ui) owns every way a group of songs is played: the header rows (`header_rows`: Play All and
+Shuffle All on an album, Songs and its lists, a genre's songs; Play All on an artist's page; Shuffle All on a folder
+and a genre's albums), the hold-Select menu for a group's row, an album's or artist's page and a playlist (`menu`,
+keys `group_*`, `collection_*`, `pl_*`), and what each choice starts (`Ui::play_choice`, `Ui::play_page`). Before,
+those rows, menus and `PlayCollection` effects were built separately in seven files. Songs gains Play All and
+Shuffle All (#163); the rows have no letter, so fast scrolling steps over them.
+
+Music lists **Recently Added** (newest file first, `play_stats::recently_added`, by `mtime`), **Recently Played** and
+**Most Played** (100 songs each) as Songs with a filter (`recent:added`, `recent:played`, `most:played`). A play
+counts by the scrobbling rule (`scrobble::Tracker`, half the song or 4 minutes heard), now with or without Last.fm and
+for untagged songs too (`Counted::play` is `None` for those, so they are not scrobbled). `play_stats::PlayStats`
+keeps each song's play count and last play as a sequence number by path (a rescan keeps it, at most 5 000 songs),
+saved to `state/play-stats.json` at each counted play; the catalog's stamp carries its generation.
+
+## Lyrics (PR #126 by Lord-Funion, merged 2026-11-17; embedded lyrics added)
+
+Now Playing → Lyrics (after Add to Playlist; audiobooks: last row): a `.lrc` file beside the song,
+else the lyrics in the song's tags (`reborn_media::embedded_lyrics`, C `rb_media_lyrics_file`: ID3
+USLT, Vorbis/FLAC LYRICS or UNSYNCEDLYRICS, MP4 ©lyr; header only). Timed lyrics follow the audio
+position; untimed tag lyrics (`Lyrics::synced == false`) are plain text browsed with the wheel. See
+the [guide](lyrics.md).
 
 ## 1.0.0-beta.9.3.20 — Y2Linux 1.0 Beta 9.3.20 (Baseline 229), 2026-11-10: issue fixes (published)
 

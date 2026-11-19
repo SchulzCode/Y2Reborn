@@ -171,6 +171,8 @@ type Stamp = (
     String,
     reborn_core::ArtistsList,
     (reborn_core::AlbumOrder, reborn_core::ArtistAlbums),
+    // The play history (Recently Played and Most Played change with it).
+    u64,
 );
 /// A whole-library list: the library, the screen, who Artists lists and how
 /// Albums orders them.
@@ -336,7 +338,9 @@ impl Catalog {
         // Shuffle the folder with everything in its folders (a Reddit user, 2026-11-13;
         // holding Select on the folder's row did it from the folder above).
         if !songs.is_empty() || folders.iter().any(|(_, n)| *n > 0) {
-            self.push(Item::new("Shuffle", "shuffle:collection"));
+            for item in crate::play_options::header_rows(Screen::Folders) {
+                self.push(item);
+            }
         }
         for (child, songs) in folders {
             let name = child
@@ -374,6 +378,7 @@ impl Catalog {
             m.navigation.filter.clone(),
             m.settings.artists_list,
             (m.settings.album_order, m.settings.artist_albums),
+            m.play_stats.generation(),
         );
         if self.stamp.as_ref() == Some(&stamp) {
             return;
@@ -474,7 +479,9 @@ impl Catalog {
                         Item::new("All Songs", "all_songs")
                             .with_secondary(crate::components::count(songs, "song", "songs")),
                     );
-                    self.push(Item::new("Shuffle", "shuffle:collection"));
+                    for item in crate::play_options::header_rows(Screen::Albums) {
+                        self.push(item);
+                    }
                 }
                 // A genre's album opens on that genre's songs (#50).
                 let genre = m.navigation.filter.strip_prefix("genre:");
@@ -564,17 +571,19 @@ impl Catalog {
             }
             Screen::Folders => self.folder_rows(m, tracks),
             Screen::Tracks | Screen::Album | Screen::Artist => {
-                if matches!(m.screen, Screen::Album | Screen::Artist) {
-                    self.push(Item::new("Play All", "play:collection"));
+                for item in crate::play_options::header_rows(m.screen) {
+                    self.push(item);
                 }
-                if m.screen == Screen::Album {
-                    self.push(Item::new("Shuffle All", "shuffle:collection"));
-                }
-                let mut ids: Vec<_> = tracks
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, t)| t.is_music() && track_matches(t, &m.navigation.filter))
-                    .collect();
+                // Music's own lists (Recently Added, Played, Most Played): in their order.
+                let list = crate::play_options::list_songs(m, tracks, &m.navigation.filter);
+                let mut ids: Vec<_> = match &list {
+                    Some(list) => list.iter().map(|&i| (i, &tracks[i])).collect(),
+                    None => tracks
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, t)| t.is_music() && track_matches(t, &m.navigation.filter))
+                        .collect(),
+                };
                 if ids.is_empty() {
                     self.rows.clear();
                     return;
@@ -706,6 +715,10 @@ impl Catalog {
             return Some(letter);
         }
         let letter = match row {
+            // Play All and Shuffle All stand above the letters.
+            Row::Item(item) if crate::play_options::header_choice(&item.key).is_some() => {
+                return None;
+            }
             Row::Item(item) if by_artist && screen == Screen::Albums => {
                 let t = tracks.get(item.art?)?;
                 crate::initial(shown_artist(&t.album_artist, t), Screen::Artists)

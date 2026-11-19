@@ -2,8 +2,9 @@
 //! on the song playing, the history is a scroll up), then your queue, then
 //! the rest of what plays, each part under a heading. Rows are made one at a
 //! time from the queue (it holds up to 5 000 songs).
+use crate::play_options;
 use crate::{display_or_unknown, track_title, Effect, Item, Selection, Ui};
-use reborn_core::{Action, AppModel, QueueEntryId, Screen, ShuffleMode, Track};
+use reborn_core::{Action, AppModel, QueueEntryId, Screen, Track};
 use std::{collections::HashMap, ops::Range};
 
 /// A row of Up Next.
@@ -581,19 +582,8 @@ impl Ui {
     }
 
     pub(crate) fn group_menu(key: &str) -> Vec<Item> {
-        let mut rows = vec![
-            Item::new("Play", "group_play"),
-            Item::new("Shuffle", "group_shuffle"),
-            Item::new("Play Next", "group_next"),
-            Item::new("Add to Queue", "group_queue"),
-            Item::new("Add to Playlist…", "group_playlist"),
-        ];
-        // Many albums: each whole, in random order (one album has nothing
-        // to mix).
-        if !key.starts_with("album:") {
-            rows.insert(2, Item::new("Shuffle Albums", "group_shuffle_albums"));
-        }
-        rows
+        // Many albums: each whole, in random order (one album has nothing to mix).
+        play_options::menu(play_options::Family::Group, !key.starts_with("album:"))
     }
 
     /// A group's songs in its own order (an album by disc and track).
@@ -677,35 +667,13 @@ impl Ui {
         key: &str,
         menu_key: &str,
     ) -> Effect {
-        let members = self.group_members(m, tracks, key);
-        let Some(&first) = members.first() else {
+        let Some(choice) = play_options::choice(play_options::Family::Group, menu_key) else {
             return Effect::None;
         };
+        let members = self.group_members(m, tracks, key);
         let source = Self::group_label(m, key);
-        Self::close_modal(m);
-        match menu_key {
-            "group_play" | "group_shuffle" | "group_shuffle_albums" => {
-                Self::go(m, Screen::NowPlaying, "");
-                Effect::PlayCollection {
-                    selected: first,
-                    members,
-                    shuffle: match menu_key {
-                        "group_shuffle" => ShuffleMode::Songs,
-                        "group_shuffle_albums" => ShuffleMode::Albums,
-                        _ => ShuffleMode::Off,
-                    },
-                    source,
-                    origin: Self::group_origin(m, key),
-                }
-            }
-            "group_next" => Effect::PlayNextCollection(members),
-            "group_queue" => Effect::AddToQueueCollection(members),
-            "group_playlist" => {
-                self.open_picker(m, members);
-                Effect::None
-            }
-            _ => Effect::None,
-        }
+        let origin = Self::group_origin(m, key);
+        self.play_choice(m, choice, members, source, origin)
     }
 
     /// The song or group a menu is about: its title and line under it.

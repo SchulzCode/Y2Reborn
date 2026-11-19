@@ -1845,6 +1845,37 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         m.navigation.focus = 6;
         m.navigation.scroll = 2;
     });
+    // #109 #158: Music's own lists, and Songs' Play All / Shuffle All (#163).
+    case!("75c-music-lists", at(Screen::Music, ""), |_, m| {
+        m.navigation.focus = 6;
+        m.navigation.scroll = 1;
+    });
+    case!(
+        "75d-recently-added",
+        at(Screen::Tracks, "recent:added"),
+        |_, m| m.navigation.focus = 1
+    );
+    case!(
+        "75e-recently-played-empty",
+        at(Screen::Tracks, "recent:played")
+    );
+    case!(
+        "75f-most-played",
+        at(Screen::Tracks, "most:played"),
+        |_, m| {
+            let tracks = m.library.tracks.clone();
+            for (i, t) in tracks.iter().enumerate().take(4) {
+                for _ in 0..(5 - i) {
+                    m.play_stats.record(t);
+                }
+            }
+            m.navigation.focus = 2;
+        }
+    );
+    case!("10c-songs-play-all", at(Screen::Tracks, ""), |_, m| m
+        .navigation
+        .focus =
+        0);
     case!("76-home-pinned", at(Screen::Home, ""), |ui, m| {
         m.settings.pin_home("albums", true);
         m.settings.pin_home("tracks", true);

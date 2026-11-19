@@ -126,3 +126,19 @@ fn cache_identity_includes_source_path_revision_and_mount() {
     sources[0].root = "/another-source".into();
     assert!(!key.matches(&track, &sources));
 }
+
+#[test]
+fn tag_lyrics_are_timed_when_they_carry_timestamps_and_plain_text_otherwise() {
+    let timed = parse_tag(b"[00:01.00]One\n[00:02.00]Two").unwrap();
+    assert!(timed.synced);
+    assert_eq!(timed.active(1500), Some(0));
+    // Untimed: one line each, a run of blank lines is one gap, none at the ends; no current line.
+    let plain =
+        parse_tag("\u{feff}\n\nFirst verse\r\nline two\n\n\n\nChorus\n\n".as_bytes()).unwrap();
+    assert!(!plain.synced);
+    let texts: Vec<&str> = plain.lines.iter().map(|l| &*l.text).collect();
+    assert_eq!(texts, ["First verse", "line two", "", "Chorus"]);
+    assert_eq!(plain.active(60_000), None);
+    assert_eq!(parse_tag(&[0xff, 0xfe]), Err(Error::InvalidUtf8));
+    assert!(parse_tag(b"").unwrap().lines.is_empty());
+}

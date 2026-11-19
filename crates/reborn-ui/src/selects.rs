@@ -326,32 +326,6 @@ impl Ui {
         effect
     }
 
-    pub(crate) fn play_filtered(
-        &mut self,
-        m: &mut AppModel,
-        tracks: &[Track],
-        shuffle: ShuffleMode,
-    ) -> Effect {
-        // A folder's Shuffle takes the songs in its folders too, in the order Folders shows them.
-        let members = match m.navigation.filter.clone() {
-            folder if m.screen == Screen::Folders && folder.starts_with("folder:") => {
-                self.group_members(m, tracks, &folder)
-            }
-            _ => self.filtered_indices(m, tracks),
-        };
-        let Some(&index) = members.first() else {
-            return Effect::None;
-        };
-        let effect = Effect::PlayCollection {
-            selected: index,
-            members,
-            shuffle,
-            source: source_label(m),
-            origin: page_origin(m),
-        };
-        Self::go(m, Screen::NowPlaying, "");
-        effect
-    }
     pub(crate) fn filtered_indices(&self, m: &AppModel, tracks: &[Track]) -> Vec<usize> {
         if matches!(
             m.screen,

@@ -653,6 +653,15 @@ pub struct TransferRefresh {
     copying: bool,
 }
 impl TransferRefresh {
+    /// A refresh tracker that starts after `generation`: the start scan already reads whatever
+    /// was copied before the app started, so only a later change asks for another scan.
+    pub fn since(generation: u64) -> Self {
+        Self {
+            seen: generation,
+            requested: generation,
+            ..Self::default()
+        }
+    }
     pub fn observe(&mut self, generation: u64, copying: bool, now: Instant) {
         if generation != 0 && generation != self.seen {
             self.seen = generation;
@@ -802,6 +811,21 @@ mod tests {
         assert!(refresh.ready(false, true, false, now + Duration::from_secs(3)));
         refresh.requested();
         assert!(!refresh.ready(false, true, false, now + Duration::from_secs(4)));
+    }
+    #[test]
+    fn a_generation_present_at_start_asks_for_no_scan_but_a_later_one_does() {
+        let now = Instant::now();
+        let mut refresh = TransferRefresh::since(23);
+        // The platform keeps reporting the old generation: nothing to refresh.
+        refresh.observe(23, false, now);
+        assert!(!refresh.ready(false, true, false, now + Duration::from_secs(60)));
+        // A copy finishing after the start changes it.
+        refresh.observe(24, false, now + Duration::from_secs(70));
+        assert!(refresh.ready(false, true, false, now + Duration::from_secs(72)));
+        // No record at start (0) and the first one later still counts.
+        let mut fresh = TransferRefresh::since(0);
+        fresh.observe(5, false, now);
+        assert!(fresh.ready(false, true, false, now + Duration::from_secs(3)));
     }
     #[test]
     fn mount_names_not_block_numbers() {

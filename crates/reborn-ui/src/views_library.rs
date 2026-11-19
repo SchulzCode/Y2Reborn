@@ -153,6 +153,9 @@ pub fn music(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interactiv
             "albums" => (0xFF7A59FF, Icon::Vinyl),
             "tracks" => (0x38C9B4FF, Icon::Headphones),
             "genres" => (0xA07BFFFF, Icon::Note),
+            "list:recent:added" => (0xFFC14DFF, Icon::Plus),
+            "list:recent:played" => (0xFF6FAEFF, Icon::Refresh),
+            "list:most:played" => (0xFF5C7AFF, Icon::Trend),
             _ => (0x5CCB7AFF, Icon::Folder),
         };
         let y = 42. + (i - first) as f32 * MUSIC_H;
@@ -255,7 +258,15 @@ fn song_list(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interactiv
                 .position(|t| t.id == q.id && t.source_id == q.source_id)
                 .map(|i| (i, &tracks[i]))
         });
-        if artists {
+        if let Some(choice) = crate::play_options::header_choice(&row.key) {
+            // Play All and Shuffle All: their sign where a cover would be.
+            let icon = if choice == crate::play_options::Choice::Play {
+                Icon::Play
+            } else {
+                Icon::Shuffle
+            };
+            c.icon(icon, 39., y + 26., 24., accent);
+        } else if artists {
             // Artists are round.
             cover(c, ui, art_track, 20., y + 7., 38.);
             components::round_cover(c, 20., y + 7., 38., selected);
@@ -772,7 +783,7 @@ fn folder_list(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interact
             }
             None => {
                 // The folder's Shuffle row (9.3.30) is no folder.
-                let icon = if row.key == "shuffle:collection" {
+                let icon = if row.key == crate::play_options::SHUFFLE_ALL {
                     Icon::Shuffle
                 } else {
                     Icon::Folder
@@ -840,6 +851,20 @@ pub(crate) fn empty_copy(m: &AppModel) -> (&'static str, &'static str, Option<&'
             "Scan Didn't Finish",
             "Your existing music was kept. Scan again to finish.",
             Some("Scan for Music"),
+        );
+    }
+    let filter = m.navigation.filter.as_str();
+    if m.screen == Screen::Tracks
+        && [
+            crate::play_options::RECENTLY_PLAYED,
+            crate::play_options::MOST_PLAYED,
+        ]
+        .contains(&filter)
+    {
+        return (
+            "Nothing Played Yet",
+            "Songs show up here once you have listened to them.",
+            None,
         );
     }
     (

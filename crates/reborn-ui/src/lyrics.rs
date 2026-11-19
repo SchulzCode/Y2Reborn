@@ -36,6 +36,12 @@ impl Prepared {
         let (mut rows, mut centers, mut y) = (Vec::new(), Vec::new(), 0.);
         for (entry, line) in document.lines.iter().enumerate() {
             let start = y;
+            // Untimed lyrics: an empty line is the gap between verses.
+            if line.text.is_empty() && !document.synced {
+                centers.push(y);
+                y += 14.;
+                continue;
+            }
             let text = if line.text.is_empty() {
                 "Instrumental"
             } else {
@@ -177,7 +183,7 @@ pub(crate) fn draw(c: &mut Canvas, ui: &Ui, model: &AppModel) {
             State::Failed(reason) if same => ("Unable to read lyrics", reason.as_str()),
             _ => (
                 "No lyrics found",
-                "Add an .lrc file beside your song to display synced lyrics.",
+                "Add an .lrc file beside your song, or lyrics to its tags, to see them here.",
             ),
         };
         c.text_center(240., 164., title, Face::S25, color::TEXT);
@@ -204,6 +210,8 @@ pub(crate) fn draw(c: &mut Canvas, ui: &Ui, model: &AppModel) {
     c.text_right(460., 20., status, Face::R11, color::MUTED);
     let hint = if view.prepared(model).is_none() {
         "Back · Now Playing"
+    } else if view.prepared(model).is_some_and(|p| !p.document.synced) {
+        "Wheel · Browse lyrics"
     } else if view.manual.get().is_some() {
         "Browsing · Centre to follow"
     } else {
@@ -236,11 +244,18 @@ fn draw_lines(c: &mut Canvas, ui: &Ui, model: &AppModel, prepared: &Prepared) {
         if y >= BOTTOM {
             break;
         }
+        // A row whose baseline went under the title band would show only its descenders below
+        // the band's edge (seen on the player): it is gone.
+        if y + 23. < TOP + 2. {
+            continue;
+        }
         let at = prepared.document.lines[row.entry].at_ms;
         let color = if stamp == Some(at) {
             color::ACCENT
-        } else {
+        } else if prepared.document.synced {
             color::MUTED
+        } else {
+            color::TEXT
         };
         c.text(28., y + 23., &row.text, Face::S25, color);
         if stamp == Some(at) {

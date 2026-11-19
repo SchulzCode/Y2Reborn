@@ -118,6 +118,12 @@ fn music(ui: &Ui, m: &AppModel, tracks: &[Track]) -> Vec<Item> {
         row("Folders", "folders", ""),
     ]
     .into_iter()
+    // Recently Added, Recently Played, Most Played (Y2Reborn #109, #158).
+    .chain(
+        crate::play_options::LISTS
+            .iter()
+            .map(|(filter, title)| row(title, &format!("list:{filter}"), "")),
+    )
     // Playlists and Search taken off Home stay at hand here.
     .chain(
         [("playlists", "Playlists"), ("search", "Search")]
