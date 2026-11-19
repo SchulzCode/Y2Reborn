@@ -454,7 +454,7 @@ pub fn cover_rounded(
             ..reborn_graphics::Quad::rect(x, y, size, size, color::TEXT)
         });
     } else {
-        placeholder(c, x, y, size, radius, key);
+        placeholder_of(c, x, y, size, radius, key, Some(t));
         ui.want_thumb(key, index);
     }
 }
@@ -490,10 +490,27 @@ pub fn placeholder_color(key: u64) -> u32 {
 
 /// A calm gradient tile standing in for a cover that is missing or loading.
 pub fn placeholder(c: &mut Canvas, x: f32, y: f32, size: f32, radius: f32, key: u64) {
+    placeholder_of(c, x, y, size, radius, key, None);
+}
+
+/// The placeholder for `track`'s cover: a book for an audiobook, a note for everything else.
+pub fn placeholder_of(
+    c: &mut Canvas,
+    x: f32,
+    y: f32,
+    size: f32,
+    radius: f32,
+    key: u64,
+    track: Option<&Track>,
+) {
     c.rrect(x, y, size, size, radius, placeholder_color(key));
     if size >= 40. {
         c.icon(
-            Icon::Note,
+            if track.is_some_and(|t| t.book) {
+                Icon::Book
+            } else {
+                Icon::Note
+            },
             x + size / 2.,
             y + size / 2.,
             (size * 0.34).round(),

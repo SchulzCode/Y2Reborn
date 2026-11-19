@@ -692,7 +692,7 @@ fn draw_art(c: &mut Canvas, s: &Scene, b: Bx, source: &ArtSource, radius: &f32, 
                 // A station without its logo (yet): its initials.
                 components::initials_tile(c, crate::track_title(t), b.x, b.y, b.w);
             } else {
-                components::placeholder(c, b.x, b.y, b.w, *radius, 0);
+                components::placeholder_of(c, b.x, b.y, b.w, *radius, 0, s.m.current());
             }
         }
         ArtSource::Row if row.and_then(|r| r.item.remote_art).is_some() => {

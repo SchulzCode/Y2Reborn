@@ -6,12 +6,15 @@ impl Ui {
         self.motion.begin_frame();
         glyph_cache::begin_frame();
         let frame = screens::draw(self, m, tracks, has_art);
-        let frame = if self.ui_motion {
+        let mut frame = if self.ui_motion {
             self.slide_screens(m, frame)
         } else {
             frame
         };
         glyph_cache::end_frame(&frame);
+        if self.light && self.skin.is_none() {
+            crate::light::apply(&mut frame);
+        }
         frame
     }
 

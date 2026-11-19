@@ -84,7 +84,7 @@ impl Ui {
             "radio_fm_cancel" => Effect::Radio(RadioRequest::FmCancel),
             "radio_fm_hide" => {
                 Self::back(m);
-                self.flash("FM Radio is hidden. Settings → Customize → Browsing brings it back.");
+                self.flash("FM Radio is hidden. Settings › Customize › Browsing brings it back.");
                 Effect::Radio(RadioRequest::FmShow(false))
             }
             "radio_favorites" => list(m, self, "Favorites", RadioRequest::Favorites),
@@ -239,6 +239,9 @@ impl Ui {
             "gapless" => Effect::SetGapless(!m.settings.gapless_enabled),
             "scrobble_log" => Effect::SetScrobbleLog(!m.settings.scrobble_log),
             "update_notifications" => Effect::SetUpdateNotices(!m.settings.update_notifications),
+            "whats_new_after_update" => {
+                Effect::SetWhatsNewAfterUpdate(!m.settings.whats_new_after_update)
+            }
             "lastfm_scrobble" => Effect::SetLastFmScrobble(!m.settings.lastfm_scrobble),
             "lastfm_now_playing" => Effect::SetLastFmNowPlaying(!m.settings.lastfm_now_playing),
             "lastfm_connect" => Effect::LastFm(reborn_core::LastFmRequest::Connect),

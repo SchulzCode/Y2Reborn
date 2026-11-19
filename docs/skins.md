@@ -548,7 +548,7 @@ Write these in curly braces inside `text`, for example `"{artist} · {album}"`.
 `back` `chevron` `check` `close` `play` `pause` `prev` `next` `play_large` `pause_large` `prev_large` `next_large`
 `shuffle` `repeat` `repeat_one` `gapless` `eq` `normalise` `moon` `bluetooth` `wifi` `lock` `bolt` `folder` `note`
 `speaker` `headphones` `sd` `usb` `warning` `info` `sun` `drive` `power` `download` `refresh` `search` `vinyl`
-`person` `crossfade` `heart` `palette`, and three that follow the player's state: `play_pause`, `play_pause_large`
+`person` `crossfade` `heart` `palette` `book`, and three that follow the player's state: `play_pause`, `play_pause_large`
 (pause while playing, else play) and `repeat_mode` (repeat or repeat one).
 
 ### Limits

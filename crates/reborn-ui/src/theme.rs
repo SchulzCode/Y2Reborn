@@ -8,6 +8,8 @@
 //! spacing locally. Type uses the exact-size Open Sans sets in `text::Face`.
 
 pub const WIDTH: f32 = 480.0;
+/// The skin id of Reborn Light, Reborn's own look in light colours (no skin folder; `light`).
+pub const REBORN_LIGHT: &str = "reborn-light";
 pub const HEIGHT: f32 = 360.0;
 
 pub mod color {
@@ -23,6 +25,9 @@ pub mod color {
     /// The accent of controls and state; also Now Playing's colour before a
     /// cover is known, or when a cover is too dull.
     pub const ACCENT: u32 = 0x6EA0FFFF;
+    /// Type and signs on an accent fill: white in both looks (Reborn Light keeps it white,
+    /// where `TEXT` turns dark).
+    pub const ON_ACCENT: u32 = 0xFEFEFEFF;
     pub const DANGER: u32 = 0xFF7864FF;
     pub const SUCCESS: u32 = 0x3CC878FF;
     pub const WARNING: u32 = 0xFFBE3CFF;

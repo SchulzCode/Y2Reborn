@@ -11,14 +11,14 @@ use crate::{
 use reborn_core::{AppModel, MediaSource, Screen, Track};
 use reborn_graphics::{Quad, Tex};
 
-fn art_quad(c: &mut Canvas, x: f32, y: f32, size: f32, has_art: bool) {
+fn art_quad(c: &mut Canvas, x: f32, y: f32, size: f32, has_art: bool, track: Option<&Track>) {
     if has_art {
         c.draw.push(Quad {
             tex: Tex::Art,
             ..Quad::rect(x, y, size, size, color::TEXT)
         });
     } else {
-        components::placeholder(c, x, y, size, size * 0.085, 0);
+        components::placeholder_of(c, x, y, size, size * 0.085, 0, track);
     }
 }
 
@@ -39,7 +39,7 @@ pub fn home(
     let current = m.current();
     if let Some(t) = current {
         c.glow(360., 172., 150., 160., alpha(cover, 0x46));
-        art_quad(c, 266., 58., 180., has_art);
+        art_quad(c, 266., 58., 180., has_art, Some(t));
         // As wide as the line below: a long title ran into the menu.
         c.text_center(
             356.,
@@ -547,7 +547,7 @@ fn album_page(
         .zip(m.current())
         .is_some_and(|(t, cur)| t.album == cur.album && t.album_artist == cur.album_artist);
     if has_art && matches_current {
-        art_quad(c, 24., 44., 104., true);
+        art_quad(c, 24., 44., 104., true, None);
     } else {
         cover_rounded(c, ui, key, 24., 44., 104., 9.);
     }

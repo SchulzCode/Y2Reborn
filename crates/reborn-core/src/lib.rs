@@ -23,6 +23,7 @@ pub use screens::Screen;
 pub mod scrobble;
 mod sleep;
 pub mod sort;
+pub mod whats_new;
 mod zones;
 pub use names::{joined_names, split_artists, split_genres};
 pub use radio::{RadioRequest, RadioStation};
@@ -962,6 +963,12 @@ pub struct Settings {
     /// (Y2Reborn #97). Off unless the listener turns it on: the player does not nag.
     #[serde(default)]
     pub update_notifications: bool,
+    /// Show What's New once after the player starts on a new version (Y2Linux #128). Off unless
+    /// the listener turns it on; `whats_new_seen` is the version it was shown (or turned on) for.
+    #[serde(default)]
+    pub whats_new_after_update: bool,
+    #[serde(default)]
+    pub whats_new_seen: String,
     /// Radio shows FM Radio (the player's own tuner). On unless the listener turns it off: the
     /// first Y2 revision has the tuner but cannot receive, and there the entry is only in the way.
     #[serde(default = "default_true")]
@@ -1297,6 +1304,8 @@ impl Default for Settings {
             lastfm_now_playing: true,
             internal_setup_asked: false,
             update_notifications: false,
+            whats_new_after_update: false,
+            whats_new_seen: String::new(),
             fm_radio: true,
             update_announced: String::new(),
             hp_level: HpLevel::Low,
@@ -1523,6 +1532,10 @@ pub enum Effect {
     SetScrobbleLog(bool),
     /// Settings → System → Software Update → Update Notifications (Y2Reborn #97).
     SetUpdateNotices(bool),
+    /// Software Update → What's New: the notes of this version, fetched once (Y2Linux #128).
+    FetchWhatsNew,
+    /// Software Update → Show What's New After Updates.
+    SetWhatsNewAfterUpdate(bool),
     SetLastFmScrobble(bool),
     SetLastFmNowPlaying(bool),
     SetCodecPreference(CodecPreference),

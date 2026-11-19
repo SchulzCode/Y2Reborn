@@ -22,6 +22,7 @@ impl Ui {
         }
         let effect = self
             .lyrics_action(m, action)
+            .or_else(|| self.whats_new_action(m, action))
             .unwrap_or_else(|| self.action_inner(m, tracks, action));
         // Cover Flow and the album page hand the centre cover to each other.
         if m.settings.album_view == reborn_core::AlbumView::CoverFlow && !self.motion_fixed {
@@ -536,6 +537,9 @@ impl Ui {
         if key == "report_toggle" {
             let on = m.platform.snapshot.reports.as_ref().and_then(|r| r.enabled) == Some(true);
             return Effect::Platform(PlatformTask::ReportEnable(!on));
+        }
+        if key == "whats_new" {
+            return self.open_whats_new(m);
         }
         if key == "report_info" {
             Self::go(m, Screen::ErrorReports, "info");

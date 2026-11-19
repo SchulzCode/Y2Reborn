@@ -66,6 +66,8 @@ pub enum Icon {
     Plus,
     Palette,
     Sliders,
+    /// An audiobook without a cover (Y2Reborn #162).
+    Book,
 }
 
 impl Icon {
@@ -126,6 +128,7 @@ impl Icon {
             Self::Plus => mask::PLUS,
             Self::Palette => mask::PALETTE,
             Self::Sliders => mask::SLIDERS,
+            Self::Book => mask::BOOK,
         }
     }
 }

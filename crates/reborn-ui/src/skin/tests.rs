@@ -554,10 +554,14 @@ fn the_picker_lists_skins_and_selecting_one_asks_for_it() {
     let rows: Vec<Item> = ui.rows(&m, &tracks);
     assert_eq!(rows[0].key, "theme_set:");
     assert_eq!(rows[0].kind, crate::RowKind::Check(true));
+    // Reborn's own look in light colours comes next (Y2Linux #112).
+    assert_eq!(rows[1].key, "theme_set:reborn-light");
+    assert_eq!(rows[1].label, "Reborn Light");
+    assert_eq!(rows[1].kind, crate::RowKind::Check(false));
     // No author line (UI v4): the picker shows each look's swatch instead.
-    assert_eq!(rows[1].secondary, "");
-    assert!(!rows[2].enabled && rows[2].secondary.contains("format 9"));
-    m.navigation.focus = 1;
+    assert_eq!(rows[2].secondary, "");
+    assert!(!rows[3].enabled && rows[3].secondary.contains("format 9"));
+    m.navigation.focus = 2;
     match ui.action(&mut m, &tracks, reborn_core::Action::Select) {
         Effect::SetTheme(id) => assert_eq!(id, "classic"),
         other => panic!("{other:?}"),

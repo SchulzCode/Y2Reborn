@@ -71,6 +71,7 @@ fn native_screen(
 ) {
     match m.screen {
         Screen::Lyrics => crate::lyrics::draw(c, ui, m),
+        Screen::WhatsNew => crate::whats_new::draw(c, ui),
         Screen::NowPlaying if m.current().is_some_and(Track::is_video) => {
             if let Some(film) = m.current() {
                 crate::views_videos::now_playing(c, ui, m, film);
@@ -142,7 +143,7 @@ fn layout_keys(m: &AppModel, page: Option<&Page>, empty: bool) -> &'static [&'st
         };
     }
     match m.screen {
-        Screen::Lyrics => &[],
+        Screen::Lyrics | Screen::WhatsNew => &[],
         Screen::NowPlaying if m.current().is_some() => &["now_playing"],
         Screen::Home => &["home", "list"],
         // Customize > Cover Flow: albums and audiobooks alike (8.36).
@@ -729,6 +730,7 @@ pub fn screen_title(m: &AppModel) -> String {
         Screen::Artist => "Artist".into(),
         Screen::NowPlaying => "Now Playing".into(),
         Screen::Lyrics => "Lyrics".into(),
+        Screen::WhatsNew => "What's New".into(),
         Screen::Queue => "Up Next".into(),
         Screen::TrackInfo => "Song Info".into(),
         Screen::Settings => "Settings".into(),

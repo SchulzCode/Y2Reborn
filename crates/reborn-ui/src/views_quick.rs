@@ -191,7 +191,7 @@ fn radio_tile(c: &mut Canvas, ui: &Ui, row: &Item) {
     let lit_ink = if ui.skin.is_some() {
         color::BG
     } else {
-        color::TEXT
+        color::ON_ACCENT
     };
     let (ix, iy) = (x + 32., y + 30.);
     c.disc(ix, iy, 18., mix_rgba(color::GLASS, lit_ink, on));

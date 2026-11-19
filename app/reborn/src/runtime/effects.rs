@@ -143,6 +143,8 @@ impl Runtime {
                 self.checkpoint();
             }
             Effect::SetUpdateNotices(on) => self.set_update_notices(on),
+            Effect::FetchWhatsNew => self.fetch_whats_new(),
+            Effect::SetWhatsNewAfterUpdate(on) => self.set_whats_new_after_update(on),
             Effect::SetLastFmScrobble(on) => {
                 self.model.settings.lastfm_scrobble = on;
                 self.checkpoint();

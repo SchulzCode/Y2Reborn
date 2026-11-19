@@ -52,7 +52,7 @@ Settings
 │  ├ Playback                Gapless Playback · Crossfade ›
 │  └ Output                  Headphone Jack / Bluetooth devices · Speaker · Headphone Level › · DAC Filter ›
 ├ Display                    Brightness card · Screen Off After ›
-├ Skin                       the skins
+├ Skin                       Reborn · Reborn Light · the installed skins
 ├ Customize                  Home Menu › · Browsing › · Buttons ›
 │  ├ Home Menu               the places on Home and their order
 │  ├ Browsing                Cover Flow · Sort Albums · Artist's Albums › · Artists List
@@ -70,6 +70,10 @@ Software Update ends with **Update Notifications** (a toggle, off by default, Y2
 looks at the platform every two minutes while Wi-Fi is up, and when the platform's daily check has found a newer
 version the status bar says "Software update available" once for that version (not on Software Update itself, which
 shows it). The toggle is under every Software Update page that has a choice, not while a check or install runs.
+Under it, **What's New** (Y2Linux #128) opens this version's release notes: the part of the GitHub release written
+for the player (before `<!-- github-only -->`), fetched once over Wi-Fi and kept in `state/whats-new.json`, read
+with the wheel (`Screen::WhatsNew`). **Show What's New After Updates** (off by default) opens them once on the first
+start of a new version, on Home or Now Playing; anywhere else a toast says where they are.
 
 Browsing's **FM Radio** (a switch, on by default) decides whether Radio shows the player's own tuner. With it,
 Radio opens as a choice of **FM Radio** and **Internet Radio** (the internet stations' menu is `Screen::Radio`
@@ -83,6 +87,11 @@ page is on screen; **Stop Sharing** is Back ([plan](REBORN-WIFI-SHARE.md)).
 
 Library's hint line names the audio the last scan left out because Reborn cannot play its type ("43 files can't
 be played here (WMA, DSD), so they aren't in your library.", Y2Reborn #104); without such files there is no line.
+
+**Reborn Light** (Y2Linux #112) is Reborn's own look in light colours, not a skin folder: the theme id
+`reborn-light` keeps the native drawing and `reborn_ui::light` recolours each finished frame (tokens to light
+counterparts, glass to black, greys turned around, bright colours darkened to 4.5:1; covers untouched). Type on an
+accent fill uses `color::ON_ACCENT`, which stays white there.
 
 Shuffle and Repeat are on Now Playing's menu, the sleep timer on Now Playing too: things you change while
 listening stay where you listen.

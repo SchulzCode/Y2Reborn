@@ -329,6 +329,8 @@ pub(crate) fn run() -> Result<(), String> {
         radio_favorites: reborn_platform::radio::load_favorites(&root.join("state/radio.json")),
         radio_current: None,
         radio_sequence: 0,
+        whats_new_reply: None,
+        whats_new_asked: false,
         radio_replies: std::sync::mpsc::channel(),
         radio_directory: Arc::new(Mutex::new(None)),
         radio_live: None,
@@ -1614,6 +1616,7 @@ impl MainLoop {
             rt.radio_reply(reply);
         }
         rt.remote_audio_tick();
+        rt.whats_new_tick();
         rt.lost_peer_tick();
         rt.scrobble_tick();
         rt.note_history();

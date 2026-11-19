@@ -20,6 +20,7 @@ mod radiod;
 pub mod scrobble;
 pub mod share;
 pub mod storage;
+pub mod whats_new;
 pub mod wifi;
 pub mod workload;
 

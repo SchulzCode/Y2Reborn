@@ -20,6 +20,8 @@ pub enum Screen {
     Artist,
     NowPlaying,
     Lyrics,
+    /// Settings → System → Software Update → What's New (Y2Linux #128).
+    WhatsNew,
     Queue,
     TrackInfo,
     Settings,

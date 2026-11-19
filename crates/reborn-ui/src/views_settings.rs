@@ -690,8 +690,19 @@ fn themes(c: &mut Canvas, ui: &Ui, m: &AppModel, page: &Page, focus: usize, inte
             components::focus_row(c, 10., y + 1., WIDTH - 24., THEME_H - 2.);
         }
         let id = row.key.strip_prefix("theme_set:").unwrap_or("");
+        // Reborn and Reborn Light show their own colours in either look (the light look recolours
+        // the frame: there the dark swatch is drawn in what maps to dark, and the other way round).
         let (bg, tint) = if id.is_empty() {
-            (color::BG, color::ACCENT)
+            (
+                if ui.light { color::TEXT } else { color::BG },
+                color::ACCENT,
+            )
+        } else if id == crate::theme::REBORN_LIGHT {
+            if ui.light {
+                (color::BG, color::ACCENT)
+            } else {
+                (crate::light::BG, crate::light::ACCENT)
+            }
         } else {
             ui.themes
                 .iter()

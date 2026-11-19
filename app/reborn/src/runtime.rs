@@ -10,3 +10,4 @@ mod radio;
 mod sleep;
 mod themes;
 mod transport;
+mod whats_new;

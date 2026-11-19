@@ -69,7 +69,10 @@ impl Runtime {
     /// Switch to the skin `id` ("" = Reborn's own look). A skin that does not
     /// load leaves the current look in place and says why.
     pub(crate) fn apply_theme(&mut self, id: &str, announce: bool) -> Result<(), String> {
-        if id.is_empty() {
+        // Reborn Light is Reborn's own look, recoloured (Y2Linux #112): no skin folder.
+        let light = id == reborn_ui::theme::REBORN_LIGHT;
+        self.ui.light = light;
+        if id.is_empty() || light {
             self.ui.skin = None;
             if let Some(renderer) = self.graphics.as_mut() {
                 let _ = renderer.skin_atlas(None);

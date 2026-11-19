@@ -319,7 +319,11 @@ fn settings(ui: &Ui, m: &AppModel, tracks: &[Track]) -> Page {
         row(
             "Skin",
             "theme",
-            ui.skin.as_deref().map_or("Reborn", |s| s.name.as_str()),
+            ui.skin
+                .as_deref()
+                .map_or(if ui.light { "Reborn Light" } else { "Reborn" }, |s| {
+                    s.name.as_str()
+                }),
         )
         .with_kind(RowKind::Chevron),
         row("Customize", "customize", "").with_kind(RowKind::Chevron),
@@ -594,8 +598,11 @@ fn screen_timeout(m: &AppModel) -> Page {
 
 /// The skin picker: Reborn's own look first, then every installed skin.
 fn theme(ui: &Ui, m: &AppModel) -> Page {
+    let light = crate::theme::REBORN_LIGHT;
     let mut rows = vec![
-        row("Reborn", "theme_set:", "").with_kind(RowKind::Check(m.settings.theme.is_empty()))
+        row("Reborn", "theme_set:", "").with_kind(RowKind::Check(m.settings.theme.is_empty())),
+        row("Reborn Light", &format!("theme_set:{light}"), "")
+            .with_kind(RowKind::Check(m.settings.theme == light)),
     ];
     for skin in &ui.themes {
         // A skin's swatch says more than its author; only a problem is told.
@@ -1505,6 +1512,18 @@ fn update_status(ui: &Ui, m: &AppModel) -> Page {
         page.rows.push(
             row("Update Notifications", "update_notifications", "")
                 .with_kind(RowKind::Toggle(m.settings.update_notifications)),
+        );
+        // This version's release notes, and whether they open by themselves after an update
+        // (Y2Linux #128; off unless turned on).
+        page.rows
+            .push(row("What's New", "whats_new", "").with_kind(RowKind::Chevron));
+        page.rows.push(
+            row(
+                "Show What's New After Updates",
+                "whats_new_after_update",
+                "",
+            )
+            .with_kind(RowKind::Toggle(m.settings.whats_new_after_update)),
         );
     }
     page

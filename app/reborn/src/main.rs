@@ -346,6 +346,10 @@ struct Runtime {
     radio_favorites: Vec<reborn_core::RadioStation>,
     radio_current: Option<reborn_core::RadioStation>,
     radio_sequence: u64,
+    /// What's New being fetched (Y2Linux #128), and whether it was asked for after an update.
+    whats_new_reply:
+        Option<std::sync::mpsc::Receiver<Result<Vec<reborn_core::whats_new::Line>, String>>>,
+    whats_new_asked: bool,
     radio_replies: (
         std::sync::mpsc::Sender<RadioReply>,
         std::sync::mpsc::Receiver<RadioReply>,

@@ -740,7 +740,7 @@ fn draw_key(
     } else if lit {
         (
             alpha(accent, if key == Key::Done { 120 } else { 90 }),
-            color::TEXT,
+            color::ON_ACCENT,
         )
     } else if function {
         (color::GLASS_FAINT, color::MUTED)

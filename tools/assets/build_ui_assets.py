@@ -379,6 +379,12 @@ def ic_note(p):
     p.poly([(14.4, 5), (25, 8.5), (25, 14), (14.4, 10.5)])
 
 
+# An audiobook without a cover (Y2Reborn #162): an open book, two pages either side of the spine.
+def ic_book(p):
+    p.poly([(3.5, 7.5), (14.6, 9.6), (14.6, 26.5), (3.5, 24.4)])
+    p.poly([(28.5, 7.5), (17.4, 9.6), (17.4, 26.5), (28.5, 24.4)])
+
+
 def ic_speaker(p):
     p.poly([(5, 12), (11, 12), (18, 6), (18, 26), (11, 20), (5, 20)])
     p.arc(18, 16, 6.5, -48, 48, 2.2)
@@ -605,6 +611,7 @@ ICONS = [
     ('trend', 32, ic_trend), ('broadcast', 32, ic_broadcast),
     ('heart', 32, ic_heart), ('heart_on', 32, ic_heart_on), ('plus', 32, ic_plus),
     ('palette', 32, ic_palette), ('sliders', 32, ic_sliders), ('moon', 32, ic_moon),
+    ('book', 32, ic_book),
 ]
 ARC_FRAMES = 48
 ARC_SIZE = 96

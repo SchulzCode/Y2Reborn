@@ -8001,9 +8001,25 @@ fn without_wifi_the_update_page_leads_to_wifi_instead_of_waiting() {
             .collect()
     };
     assert!(ui.online());
-    assert_eq!(keys(&ui, &m), ["task:update_check", "update_notifications"]);
+    assert_eq!(
+        keys(&ui, &m),
+        [
+            "task:update_check",
+            "update_notifications",
+            "whats_new",
+            "whats_new_after_update"
+        ]
+    );
     ui.wifi.status = WifiStatus::Disconnected;
-    assert_eq!(keys(&ui, &m), ["wifi", "update_notifications"]);
+    assert_eq!(
+        keys(&ui, &m),
+        [
+            "wifi",
+            "update_notifications",
+            "whats_new",
+            "whats_new_after_update"
+        ]
+    );
     assert_eq!(select_key(&mut ui, &mut m, "wifi"), Effect::None);
     assert_eq!(m.screen, Screen::Wifi);
     let mut m = software_update();
@@ -8014,9 +8030,25 @@ fn without_wifi_the_update_page_leads_to_wifi_instead_of_waiting() {
         can_download: true,
         ..Default::default()
     };
-    assert_eq!(keys(&ui, &m), ["wifi", "update_notifications"]);
+    assert_eq!(
+        keys(&ui, &m),
+        [
+            "wifi",
+            "update_notifications",
+            "whats_new",
+            "whats_new_after_update"
+        ]
+    );
     ui.wifi.status = WifiStatus::Connected("Home".into());
-    assert_eq!(keys(&ui, &m), ["update_now", "update_notifications"]);
+    assert_eq!(
+        keys(&ui, &m),
+        [
+            "update_now",
+            "update_notifications",
+            "whats_new",
+            "whats_new_after_update"
+        ]
+    );
 }
 
 #[test]

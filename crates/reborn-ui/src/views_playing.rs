@@ -54,7 +54,7 @@ pub fn now_playing(
         // A station without a logo (yet): its initials, as in the lists.
         components::initials_tile(c, crate::track_title(t), 26., 46., 176.);
     } else {
-        components::placeholder(c, 26., 46., 176., 15., 0);
+        components::placeholder_of(c, 26., 46., 176., 15., 0, Some(t));
     }
 
     if radio {
