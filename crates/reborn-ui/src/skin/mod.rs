@@ -618,6 +618,7 @@ pub const LAYOUTS: &[&str] = &[
     "customize",
     "audiobooks",
     "book",
+    "audiobookshelf_book",
     "service",
     "battery",
     "sleep",

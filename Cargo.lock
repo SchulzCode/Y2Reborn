@@ -218,6 +218,7 @@ dependencies = [
  "reborn-observability",
  "reborn-platform",
  "reborn-ui",
+ "rustix",
  "serde",
  "serde_json",
 ]
@@ -310,6 +311,7 @@ dependencies = [
  "libc",
  "reborn-core",
  "reborn-observability",
+ "rustix",
  "serde",
  "serde_json",
  "y2p-contract",

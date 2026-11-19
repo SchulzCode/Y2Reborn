@@ -110,6 +110,7 @@ impl Runtime {
 
     /// `Effect::ResetSettings`.
     pub(crate) fn on_reset_settings(&mut self) -> Result<(), String> {
+        self.audiobookshelf_reset()?;
         // The Last.fm sign-in is a setting too: forget it and its plays.
         self.lastfm_forget();
         // Volume and the music location are part of the session, not
@@ -143,7 +144,8 @@ impl Runtime {
         } else {
             self.checkpoint();
         }
-        self.ui.flash("Settings reset");
+        self.ui
+            .flash("Settings reset; signing out of Audiobookshelf");
         Ok(())
     }
 

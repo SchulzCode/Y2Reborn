@@ -16,6 +16,17 @@ use crate::{sort::fold, Track};
 use serde::{Deserialize, Serialize};
 use std::{cmp::Ordering, collections::HashMap, path::Path};
 
+/// How an audiobook starts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BookStart {
+    /// Where it was left, a little before.
+    Resume,
+    /// From its first chapter.
+    Beginning,
+    /// At the start of chapter `n`.
+    Chapter(usize),
+}
+
 /// Folder names (folded) that hold audiobooks.
 const FOLDERS: [&str; 7] = [
     "audiobooks",
@@ -130,7 +141,7 @@ pub struct Book {
     pub parts: Vec<usize>,
     /// Sum of the parts; 0 when any part's length is unknown.
     pub duration_ms: u64,
-    /// A part with a cover, for the book's picture.
+    /// A representative part for the book's picture, including folder covers.
     pub art: Option<usize>,
 }
 
@@ -176,7 +187,12 @@ pub fn books(tracks: &[Track]) -> Vec<Book> {
             } else {
                 all().map(|t| t.duration_ms).sum()
             };
-            let art = parts.iter().copied().find(|&i| tracks[i].artwork);
+            // The artwork worker also looks for a cover beside the file.
+            let art = parts
+                .iter()
+                .copied()
+                .find(|&i| tracks[i].artwork)
+                .or_else(|| parts.first().copied());
             Book {
                 key,
                 title,
@@ -672,6 +688,17 @@ mod tests {
                 )
             })
             .collect()
+    }
+
+    #[test]
+    fn book_without_embedded_art_still_has_a_part_for_folder_cover() {
+        let mut tracks = [
+            file("/m/Audiobooks/Book/01.mp3"),
+            file("/m/Audiobooks/Book/02.mp3"),
+        ];
+        assert_eq!(books(&tracks)[0].art, Some(0));
+        tracks[1].artwork = true;
+        assert_eq!(books(&tracks)[0].art, Some(1));
     }
 
     #[test]

@@ -1324,6 +1324,34 @@
     "align": "right"
    }
   ],
+  "audiobookshelf_book": [
+   {
+    "type": "native",
+    "part": "screen",
+    "recolor": true
+   },
+   {
+    "type": "part",
+    "name": "titlebar"
+   },
+   {
+    "type": "part",
+    "name": "title"
+   },
+   {
+    "type": "list",
+    "x": 0,
+    "y": 164,
+    "w": 480,
+    "rows": 5,
+    "row_height": 33,
+    "row": [{"type": "part", "name": "row"}],
+    "focused": [
+     {"type": "part", "name": "row_focused", "if": "!disabled"},
+     {"type": "part", "name": "row", "if": "disabled"}
+    ]
+   }
+  ],
   "cover_flow": [
    {
     "type": "rect",

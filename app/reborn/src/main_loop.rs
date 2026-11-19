@@ -323,11 +323,9 @@ pub(crate) fn run() -> Result<(), String> {
         art_square: Vec::new(),
         history_seen: None,
         history_track: None,
-        dirty: DirtyState {
-            render: true,
-            persistence: false,
-        },
+        dirty: DirtyState::initial(),
         root: root.clone(),
+        audiobookshelf: audiobookshelf::start(&root),
         radio_favorites: reborn_platform::radio::load_favorites(&root.join("state/radio.json")),
         radio_current: None,
         radio_sequence: 0,
@@ -1473,6 +1471,7 @@ impl MainLoop {
     /// The library scanner's results.
     fn scan_results(&mut self, rt: &mut Runtime) {
         if let Ok(result) = rt.scanner.results.try_recv() {
+            let download_scan = std::mem::take(&mut rt.ui.audiobookshelf.download_scan_active);
             // Whichever way this scan ends, the next one starts unasked.
             let asked = std::mem::take(&mut rt.scan_asked);
             // A no-op scan must not rematerialize the resident catalog or
@@ -1501,7 +1500,12 @@ impl MainLoop {
                     // Files that could not be read are counted on Settings →
                     // Library, not announced after every start.
                     let songs = stats.discovered.saturating_sub(stats.unreadable);
-                    if let Some(text) = scan_toast(songs, stats.rescanned, asked) {
+                    if let Some(text) = crate::audiobookshelf::scan_message(
+                        download_scan,
+                        songs,
+                        stats.rescanned,
+                        asked,
+                    ) {
                         rt.ui.flash(text);
                     }
                 }
@@ -1611,7 +1615,7 @@ impl MainLoop {
         for reply in radio_replies {
             rt.radio_reply(reply);
         }
-        rt.radio_tick();
+        rt.remote_audio_tick();
         rt.whats_new_tick();
         rt.lost_peer_tick();
         rt.scrobble_tick();

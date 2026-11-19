@@ -164,7 +164,7 @@ fn source_file(parent: &fs::File, name: &std::ffi::OsStr) -> Result<fs::File, St
     }
     Ok(file)
 }
-fn descriptor_mount(file: &fs::File) -> Result<u64, String> {
+pub(crate) fn descriptor_mount(file: &fs::File) -> Result<u64, String> {
     fs::read_to_string(format!("/proc/self/fdinfo/{}", file.as_raw_fd()))
         .map_err(|e| e.to_string())?
         .lines()
