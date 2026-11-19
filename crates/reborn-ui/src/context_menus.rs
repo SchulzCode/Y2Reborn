@@ -102,6 +102,16 @@ impl Ui {
                         }
                         None => Effect::None,
                     },
+                    ConfirmAction::ClearPlaylist => match self.playlists.target.take() {
+                        Some(path) => {
+                            Effect::Playlist(Box::new(reborn_core::PlaylistRequest::Edit {
+                                path,
+                                edit: reborn_core::playlist::PlaylistEdit::Clear,
+                                create: false,
+                            }))
+                        }
+                        None => Effect::None,
+                    },
                     ConfirmAction::PowerOff => Effect::PowerOff,
                     ConfirmAction::Reboot => Effect::Reboot,
                     ConfirmAction::Platform(task) => Effect::Platform(task),
@@ -112,7 +122,9 @@ impl Ui {
                     ConfirmAction::KeepButtons => Effect::None,
                 }
             }
-            Some(Modal::ContextMenu) => self.context_action(m, tracks, &key),
+            Some(Modal::ContextMenu) => self
+                .lyrics_menu(m, &key)
+                .unwrap_or_else(|| self.context_action(m, tracks, &key)),
             Some(Modal::PlaylistPicker) => self.picker_action(m, tracks, &key),
             Some(Modal::QuickMenu) => self.quick_menu_action(m, &key),
             None => Effect::None,

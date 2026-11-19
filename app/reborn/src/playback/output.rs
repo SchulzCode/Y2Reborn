@@ -67,6 +67,7 @@ impl SinkWorker {
             held,
             open_spec,
             kept,
+            stop_seen: None,
         };
         while let ControlFlow::Continue(()) | ControlFlow::Break(Pass::Again) = self.pass(&mut st) {
         }
@@ -270,7 +271,8 @@ impl SinkWorker {
     fn stopped(&mut self, st: &mut Playing) {
         // Stopped or replaced: the sink waits for the next stream
         // (a Stop closes it, as does the time running out).
-        if st.generation != self.se.load(Ordering::Acquire) {
+        let current = self.se.load(Ordering::Acquire);
+        if st.generation != current {
             if let Some(k) = keep_sink(
                 st.sink.take(),
                 st.open_spec.take(),
@@ -281,7 +283,13 @@ impl SinkWorker {
             }
             st.pending = None;
             st.eof = false;
-            st.forget_clicks();
+            // Once per stop: the generation stays behind until the next song opens, and a click
+            // forgotten on every pass got one queue of silence and no more, so the next click
+            // only revived the run-dry stream and was lost: every other row clicked (Y2Linux #127).
+            if st.stop_seen != Some(current) {
+                st.forget_clicks();
+                st.stop_seen = Some(current);
+            }
         }
         if st.kept.as_ref().is_some_and(|k| Instant::now() >= k.until) {
             st.kept = None;
@@ -482,11 +490,13 @@ impl SinkWorker {
                             );
                         }
                         let frame_bytes = block.format.bytes_per_frame() as u64;
-                        // Played frames in source time (× speed).
-                        let ms = block.position_ms
-                            + (*offset as u64 / frame_bytes).saturating_sub(s.delay())
-                                * self.sink_tempo.load(Ordering::Acquire)
-                                / u64::from(block.rate);
+                        let ms = heard_ms(
+                            block.position_ms,
+                            *offset as u64 / frame_bytes,
+                            s.delay(),
+                            self.sink_tempo.load(Ordering::Acquire),
+                            block.rate,
+                        );
                         let _ = self.et.try_send(PlaybackEvent::Core(Event::Position {
                             generation: st.generation,
                             ms,
@@ -758,6 +768,16 @@ pub(super) fn top_up_silence(sink: &mut dyn AudioSink, format: PcmFormat, rate: 
 /// Silence with the click in it, enough that a paused stream that clicked keeps playing: about
 /// 46 ms queued (a click waits at most that long; 35 ms underran on a busy pass), from 256-frame
 /// pieces.
+/// Where the listener is: the block's start, plus its frames written, less the output's delay, in
+/// source time (× speed, per mille). The delay reaches back before the block when it is longer than
+/// what of the block went out: on Bluetooth (BlueALSA's buffer, encoder and the headphones' own
+/// delay, several hundred ms) the position stopped at the block's start and ran ahead of the sound,
+/// and a film's picture with it (Y2Reborn #133).
+pub(super) fn heard_ms(block_ms: u64, written: u64, delay: u64, tempo: u64, rate: u32) -> u64 {
+    let rate = u64::from(rate.max(1));
+    (block_ms + written * tempo / rate).saturating_sub(delay * tempo / rate)
+}
+
 fn click_over_silence(
     sink: &mut dyn AudioSink,
     click: &mut Click,
@@ -790,6 +810,8 @@ pub(super) struct Playing {
     /// Paused in place, the stream plays for clicks: since the last one.
     clicking: Option<Instant>,
     kept: Option<KeptSink>,
+    /// The stop (sink generation) whose clicks were forgotten.
+    stop_seen: Option<u64>,
     open_spec: Option<(SinkSpec, u64)>,
     held: bool,
     last_progress: Instant,

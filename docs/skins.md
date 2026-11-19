@@ -509,6 +509,7 @@ Write these in curly braces inside `text`, for example `"{artist} · {album}"`.
 | Value | Shows |
 | --- | --- |
 | `title` `artist` `album` `album_artist` `genre` `track_number` | the song playing; for a radio station, the song it announces |
+| `year` | the song's release year (`2018`); in a list row its song's, elsewhere the playing song's; empty without one |
 | `station` | the radio station playing (empty for a song) |
 | `elapsed` `remaining` `duration` | `1:23`, `-2:05`, `3:28` |
 | `queue_index` `queue_length` | for "3 of 12" |
@@ -523,7 +524,7 @@ Write these in curly braces inside `text`, for example `"{artist} · {album}"`.
 | `clock` `date` | `21:41` or `9:41 PM`; `Sat 31 Oct`; empty until the player knows the time |
 | `flow_title` `flow_artist` `flow_detail` | Cover Flow's centre album: its name, artist, songs and length |
 | `status` | a page's status line (Wi-Fi, Bluetooth, pickers) |
-| `page_title` `page_body` | a page's heading and explanation |
+| `page_title` `page_body` | a page's heading and explanation; on an album's or artist's page its name |
 | `empty_title` `empty_body` `empty_action` | what an empty list says |
 | `message` | a toast's text |
 | `sheet_title` `sheet_body` | a menu's or question's heading and text |
@@ -540,7 +541,7 @@ Write these in curly braces inside `text`, for example `"{artist} · {album}"`.
 | Playback | `playing` `paused` `has_track` `has_art` `live` (a radio station plays) `favorite` (the song is in Favorites) `shuffle` `shuffle_albums` `repeat` `repeat_one` `eq` `gapless` `crossfade` `normalise` `sleep` |
 | Player | `charging` `battery_low` `bluetooth` `bluetooth_connected` `wifi` `wifi_connected` `has_clock` |
 | Screen | `back` (not Home) `empty` (an empty list) `has_status` `has_title` `has_body` `has_action` `has_facts` `interactive` `error` (an error toast) `danger` (a question that deletes or resets) |
-| Inside list rows | `focused` `disabled` `toggle` `on` `check` `checked` `chevron` `has_detail` `row_art` `numbered` `current` (the song playing) `first` `last` `odd` |
+| Inside list rows | `focused` `disabled` `toggle` `on` `check` `checked` `chevron` `has_detail` `row_art` `numbered` `current` (the song playing) `first` `last` `odd` `scrollbar` (the list shows its scrollbar) |
 
 ### Icons
 

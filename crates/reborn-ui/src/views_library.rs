@@ -571,7 +571,7 @@ fn album_page(
         c,
         144.,
         134.,
-        &[("Play", focus == 0), ("Shuffle", focus == 1)],
+        &[("Play All", focus == 0), ("Shuffle All", focus == 1)],
         interactive,
     );
     if let Some(t) = opening {

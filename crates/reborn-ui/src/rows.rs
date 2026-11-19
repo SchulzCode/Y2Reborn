@@ -2,6 +2,66 @@
 use crate::*;
 
 impl Ui {
+    fn playing_rows(&self, m: &AppModel, tracks: &[Track]) -> Vec<Item> {
+        let Some(current) = m.current() else {
+            return vec![];
+        };
+        if current.is_radio() {
+            let key = if current.filename.is_empty() {
+                current.path.to_string_lossy().into_owned()
+            } else {
+                current.filename.clone()
+            };
+            let saved = self.radio.favorites.contains(&key);
+            let mut rows = vec![
+                Item::new(
+                    if saved {
+                        "Remove from Favorites"
+                    } else {
+                        "Add to Favorites"
+                    },
+                    "radio_favorite_current",
+                ),
+                Item::new("Stop Radio", "radio_stop"),
+            ];
+            if self.radio.now.is_some() {
+                rows.insert(1, Item::new("Station Info", "radio_info_current"));
+            }
+            return rows;
+        }
+        // A book: its chapters; shuffle and repeat do not apply to it.
+        if let Some((book, _)) = m.book_part() {
+            return playing_book_rows(m, book);
+        }
+        // The song after this one, named where Up Next opens.
+        let next = m
+            .queue
+            .get(m.queue_position + 1)
+            .filter(|_| m.settings.repeat != RepeatMode::Track)
+            .map(|t| track_title(t).to_owned())
+            .unwrap_or_default();
+        vec![
+            Item::new("Up Next", "show_queue").with_secondary(next),
+            Item::new("Lyrics", "lyrics"),
+            Item::new("Sleep Timer", "sleep_timer").with_secondary(sleep_label(m, false)),
+            Item::new("Shuffle", "toggle_shuffle")
+                .with_secondary(m.settings.shuffle_mode().label()),
+            Item::new("Repeat", "cycle_repeat").with_secondary(repeat_label(m.settings.repeat)),
+            self.favorite_row(m, tracks, self.current_index(m, tracks)),
+            Item::new("Add to Playlist…", "add_playlist"),
+            // Back to where the music came from (#25, #60): the Go to
+            // row of that place, Go to Album's for a playlist or folder.
+            match self.origin_label(m) {
+                Some(label) if label != "Go to Artist" => Item::new(label, "go_source"),
+                _ => Item::new("Go to Album", "go_album"),
+            },
+            match self.origin_label(m) {
+                Some(label @ "Go to Artist") => Item::new(label, "go_source"),
+                _ => Item::new("Go to Artist", "go_artist"),
+            },
+        ]
+    }
+
     pub fn rows(&self, m: &AppModel, tracks: &[Track]) -> Vec<Item> {
         match m.screen {
             Screen::Artists
@@ -249,62 +309,7 @@ impl Ui {
 
     pub(crate) fn context_rows(&self, m: &AppModel, tracks: &[Track]) -> Vec<Item> {
         if m.screen == Screen::NowPlaying {
-            let Some(current) = m.current() else {
-                return vec![];
-            };
-            if current.is_radio() {
-                let key = if current.filename.is_empty() {
-                    current.path.to_string_lossy().into_owned()
-                } else {
-                    current.filename.clone()
-                };
-                let saved = self.radio.favorites.contains(&key);
-                let mut rows = vec![
-                    Item::new(
-                        if saved {
-                            "Remove from Favorites"
-                        } else {
-                            "Add to Favorites"
-                        },
-                        "radio_favorite_current",
-                    ),
-                    Item::new("Stop Radio", "radio_stop"),
-                ];
-                if self.radio.now.is_some() {
-                    rows.insert(1, Item::new("Station Info", "radio_info_current"));
-                }
-                return rows;
-            }
-            // A book: its chapters; shuffle and repeat do not apply to it.
-            if let Some((book, _)) = m.book_part() {
-                return playing_book_rows(m, book);
-            }
-            // The song after this one, named where Up Next opens.
-            let next = m
-                .queue
-                .get(m.queue_position + 1)
-                .filter(|_| m.settings.repeat != RepeatMode::Track)
-                .map(|t| track_title(t).to_owned())
-                .unwrap_or_default();
-            return vec![
-                Item::new("Up Next", "show_queue").with_secondary(next),
-                Item::new("Sleep Timer", "sleep_timer").with_secondary(sleep_label(m, false)),
-                Item::new("Shuffle", "toggle_shuffle")
-                    .with_secondary(m.settings.shuffle_mode().label()),
-                Item::new("Repeat", "cycle_repeat").with_secondary(repeat_label(m.settings.repeat)),
-                self.favorite_row(m, tracks, self.current_index(m, tracks)),
-                Item::new("Add to Playlist…", "add_playlist"),
-                // Back to where the music came from (#25, #60): the Go to
-                // row of that place, Go to Album's for a playlist or folder.
-                match self.origin_label(m) {
-                    Some(label) if label != "Go to Artist" => Item::new(label, "go_source"),
-                    _ => Item::new("Go to Album", "go_album"),
-                },
-                match self.origin_label(m) {
-                    Some(label @ "Go to Artist") => Item::new(label, "go_source"),
-                    _ => Item::new("Go to Artist", "go_artist"),
-                },
-            ];
+            return self.playing_rows(m, tracks);
         }
         let selected_key = m.navigation.context_key.clone().or_else(|| {
             m.navigation
@@ -631,5 +636,6 @@ fn playing_book_rows(m: &AppModel, book: &reborn_core::books::Listening) -> Vec<
         Item::new("Speed", "book_speed").with_secondary(format!("{}×", speed_label(book.speed))),
         Item::new("Sleep Timer", "sleep_timer").with_secondary(sleep_label(m, true)),
         Item::new("Up Next", "show_queue"),
+        Item::new("Lyrics", "lyrics"),
     ]
 }

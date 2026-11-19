@@ -231,6 +231,7 @@ pub(crate) enum Var {
     Remaining,
     Duration,
     TrackNumber,
+    Year,
     QueueIndex,
     QueueLength,
     Quality,
@@ -270,6 +271,7 @@ const VARS: &[(&str, Var, bool)] = &[
     ("remaining", Var::Remaining, false),
     ("duration", Var::Duration, false),
     ("track_number", Var::TrackNumber, false),
+    ("year", Var::Year, false),
     ("queue_index", Var::QueueIndex, false),
     ("queue_length", Var::QueueLength, false),
     ("quality", Var::Quality, false),
@@ -359,6 +361,7 @@ pub(crate) enum Flag {
     First,
     Last,
     Odd,
+    Scrollbar,
 }
 
 const FLAGS: &[(&str, Flag, bool)] = &[
@@ -408,6 +411,7 @@ const FLAGS: &[(&str, Flag, bool)] = &[
     ("first", Flag::First, true),
     ("last", Flag::Last, true),
     ("odd", Flag::Odd, true),
+    ("scrollbar", Flag::Scrollbar, true),
 ];
 
 /// Alternatives (`|`) of conjunctions (`&`) of possibly negated flags.

@@ -12,6 +12,7 @@ To build and install it, use Y2Linux's
 | --- | --- |
 | Exact current application and physical scope | [Current Reborn state](CURRENT_REBORN_STATE.md) |
 | Skins: format, screens, elements, installing | [Reborn skins](skins.md) |
+| Local synchronized lyrics and controls | [Lyrics](lyrics.md) |
 | Responsiveness, rendering, startup and idle measurements | [Performance pass](validation/REBORN-PLATFORM-V1-PERFORMANCE.md) |
 | All pages by scope | [Complete catalog](DOCUMENTATION_CATALOG.md) |
 | Media / live volume | [FFmpeg stack](architecture/reborn-audio-stack-ffmpeg9.md), [volume](architecture/live-volume.md) |

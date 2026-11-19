@@ -1,5 +1,8 @@
 # Reborn audio fixtures
 
+`lyrics-original.lrc` contains original demonstration text written for the local synced-lyrics
+viewer. It is supplied under this repository's license and contains no copied song lyrics.
+
 The generated fixtures are deterministic 440 Hz, ramp, artwork, metadata and
 corruption inputs produced locally with FFmpeg 9.0.1 by
 `tools/build/fixtures.py`. Their hashes are recorded in `manifest.json`.

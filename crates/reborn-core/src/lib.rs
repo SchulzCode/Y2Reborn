@@ -11,17 +11,22 @@ mod countries;
 pub mod eq;
 pub mod home;
 pub use home::{HOME_HIDEABLE, HOME_PINNABLE};
+pub mod lyrics;
 mod names;
 pub mod platform;
 pub mod playlist;
 pub mod queue;
 mod radio;
+mod screens;
+pub use screens::Screen;
 pub mod scrobble;
+mod sleep;
 pub mod sort;
 mod zones;
 pub use names::{joined_names, split_artists, split_genres};
 pub use radio::{RadioRequest, RadioStation};
 use serde::{Deserialize, Serialize};
+pub use sleep::{SleepChoice, SleepItem, SleepTimer, SLEEP_MINUTES};
 use std::{
     collections::HashMap,
     fs,
@@ -665,102 +670,6 @@ pub enum NormalizedInput {
     WheelClockwise(u8),
     WheelCounterClockwise(u8),
 }
-/// Every user-facing route. The tree is documented in
-/// `docs/ui/REBORN-PRODUCT-NAVIGATION-V2.md`; Diagnostics is the only
-/// technical subtree and is reached through Settings → System.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum Screen {
-    #[default]
-    #[serde(alias = "main")]
-    Home,
-    Music,
-    Artists,
-    Albums,
-    /// Genres from the files' tags; each opens its albums.
-    Genres,
-    Tracks,
-    Folders,
-    Album,
-    Artist,
-    NowPlaying,
-    Queue,
-    TrackInfo,
-    Settings,
-    Wifi,
-    Bluetooth,
-    PcTransfer,
-    SettingsAudio,
-    Equalizer,
-    SettingsPlayback,
-    /// Crossfade length picker.
-    Crossfade,
-    /// Left/right balance picker.
-    Balance,
-    /// Screen-off delay picker.
-    ScreenTimeout,
-    /// Where music plays, and the headphone jack's settings (Settings > Sound).
-    Output,
-    /// Wired headphone output level picker (Settings > Sound > Output).
-    HeadphoneLevel,
-    /// DAC interpolation filter picker (Settings > Sound).
-    DacFilter,
-    /// Skin picker: the built-in look and the installed skins.
-    Theme,
-    /// Time zone picker (Settings > Display).
-    TimeZone,
-    /// The date and time set by hand (Settings > Display, #53).
-    DateTime,
-    /// Which Music lists also stand on Home (Settings > Customize).
-    HomeMenu,
-    SettingsLibrary,
-    SettingsDisplay,
-    /// How Reborn behaves: wrap-around lists, Home Menu, Album View.
-    Customize,
-    /// The audiobooks: in progress first, then new, then finished.
-    Audiobooks,
-    /// One audiobook (`navigation.filter` is its key): buttons and chapters.
-    Book,
-    /// The library's films (video files), each opened on Now Playing.
-    Videos,
-    SettingsSystem,
-    Battery,
-    Sleep,
-    Storage,
-    Update,
-    About,
-    Maintenance,
-    Diagnostics,
-    /// One Diagnostics section; the navigation filter holds its id.
-    DiagnosticSection,
-    /// A full-length value; the navigation filter holds label and text.
-    ValueDetail,
-    TextEntry,
-    Pairing,
-    /// Internet radio: favorites, own stations, the directory, search.
-    Radio,
-    /// A list of stations (the list's title is in the navigation filter).
-    RadioStations,
-    /// Countries or genres of the station directory.
-    RadioCategories,
-    /// Library search results; the navigation filter holds the search text.
-    Search,
-    /// One station's details (logo, country, language, genres, format).
-    RadioInfo,
-    /// Every playlist file, Favorites first.
-    Playlists,
-    /// Settings > Last.fm: sign-in, scrobbling and the scrobbler log.
-    LastFm,
-    Audiobookshelf,
-    AudiobookshelfLibraries,
-    AudiobookshelfBooks,
-    AudiobookshelfBook,
-    /// One playlist; the navigation filter holds its file's path.
-    Playlist,
-    /// About & Updates > Error Reports; filter "info": what is sent, "save":
-    /// where Save Report writes the file.
-    ErrorReports,
-}
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct NavigationState {
@@ -824,6 +733,8 @@ pub enum ConfirmAction {
     ForgetAllBluetooth,
     ClearCache,
     DeletePlaylist,
+    /// Take every song out of a playlist (Y2Linux #103).
+    ClearPlaylist,
     Platform(PlatformTask),
     /// The one-time question after the update: send error reports or not.
     ReportsQuestion,
@@ -1591,44 +1502,6 @@ pub struct AppModel {
     /// The running sleep timer (a restart ends it).
     #[serde(skip)]
     pub sleep_timer: Option<SleepTimer>,
-}
-
-/// The sleep timer's choices, picked with the wheel from Now Playing's menu.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SleepChoice {
-    Off,
-    Minutes(u16),
-    /// The end of the chapter (a book) or the song playing.
-    EndOfItem,
-}
-/// The timed lengths in minutes (#29): short steps first, up to three hours.
-pub const SLEEP_MINUTES: [u16; 12] = [5, 10, 15, 20, 30, 45, 60, 75, 90, 120, 150, 180];
-impl SleepChoice {
-    /// The picker's rows: Off, the end of this song or chapter, the lengths.
-    pub fn all() -> Vec<Self> {
-        let mut all = vec![Self::Off, Self::EndOfItem];
-        all.extend(SLEEP_MINUTES.iter().map(|&m| Self::Minutes(m)));
-        all
-    }
-}
-/// A running sleep timer: playback pauses at `until` (after a fade) or when
-/// the item playing when it was set (queue entry, chapter) ends.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SleepTimer {
-    pub choice: SleepChoice,
-    pub until: Option<std::time::Instant>,
-    pub item: (usize, Option<usize>),
-}
-impl AppModel {
-    /// What plays now, as the sleep timer tells items apart: the queue entry
-    /// and, in a book, the chapter.
-    pub fn sleep_item(&self) -> (usize, Option<usize>) {
-        (
-            self.queue_position,
-            self.book_part()
-                .and_then(|(book, part)| book.chapter_at(part, self.position_ms)),
-        )
-    }
 }
 
 /// Effects are requests to the application/service boundary. They carry no
@@ -2573,26 +2446,6 @@ mod tests {
         assert!(!s.zone_auto());
         s.time_zone_auto = Some(true);
         assert!(s.zone_auto());
-    }
-}
-
-#[cfg(test)]
-mod sleep_timer_tests {
-    use super::*;
-    #[test]
-    fn the_sleep_timer_offers_off_the_end_of_the_item_and_lengths_to_three_hours() {
-        let all = SleepChoice::all();
-        assert_eq!(all.len(), 14);
-        assert_eq!(
-            all[..3],
-            [
-                SleepChoice::Off,
-                SleepChoice::EndOfItem,
-                SleepChoice::Minutes(5)
-            ]
-        );
-        assert_eq!(all.last(), Some(&SleepChoice::Minutes(180)));
-        assert!(SLEEP_MINUTES.windows(2).all(|w| w[0] < w[1]));
     }
 }
 

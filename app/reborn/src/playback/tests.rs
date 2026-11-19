@@ -24,6 +24,21 @@ fn an_opened_sink_fades_for_a_rise_and_otherwise_continues_an_unfinished_fade() 
         .is_none());
 }
 
+/// Y2Reborn #133: the position is what the listener hears, also when the output's delay is longer
+/// than what of the block went out (Bluetooth), where it used to stop at the block's start.
+#[test]
+fn the_position_is_what_is_heard_behind_a_long_output_delay() {
+    use super::output::heard_ms;
+    // Wired: 100 ms of the block out, 93 ms queued.
+    assert_eq!(heard_ms(10_000, 4_410, 4_096, 1000, 44_100), 10_008);
+    // Bluetooth: 50 ms of the block out, 450 ms behind it (before: 10 000, 400 ms ahead).
+    assert_eq!(heard_ms(10_000, 2_205, 19_845, 1000, 44_100), 9_600);
+    // A song's start: nothing heard yet is 0, not a time of the song before.
+    assert_eq!(heard_ms(0, 2_205, 19_845, 1000, 44_100), 0);
+    // At 1.5× speed source time runs faster.
+    assert_eq!(heard_ms(10_000, 4_410, 0, 1500, 44_100), 10_150);
+}
+
 struct Sink {
     frames: Arc<AtomicU64>,
     fail: bool,
@@ -1781,6 +1796,84 @@ fn wheel_clicks_sound_while_paused_and_never_over_the_music() {
     });
     let silence = inserted_stretch(&paused, &plain);
     assert!(silence >= 176, "the clicks played over silence: {silence}");
+}
+
+/// The wired device as it runs dry: a write more than 50 ms after the one before finds the stream
+/// stopped, revives it and takes nothing (the sink's recovered xrun).
+#[derive(Clone, Default)]
+struct DryingDevice {
+    out: Arc<Mutex<Vec<i32>>>,
+    last: Arc<Mutex<Option<Instant>>>,
+}
+impl AudioSink for DryingDevice {
+    fn parameters(&self) -> Parameters {
+        ClickDevice::default().parameters()
+    }
+    fn write(&mut self, s: &[u8]) -> Result<usize, String> {
+        let now = Instant::now();
+        let dry = self
+            .last
+            .lock()
+            .unwrap()
+            .replace(now)
+            .is_some_and(|last| now - last > Duration::from_millis(50));
+        if dry {
+            return Ok(0);
+        }
+        let mut out = self.out.lock().unwrap();
+        out.extend(
+            s.as_chunks::<8>()
+                .0
+                .iter()
+                .map(|f| i32::from_le_bytes(f[..4].try_into().unwrap())),
+        );
+        Ok(s.len() / 8)
+    }
+    fn discard(&mut self) -> Result<(), String> {
+        Ok(())
+    }
+    fn delay(&self) -> u64 {
+        0
+    }
+}
+
+/// Y2Linux #127: after a stop (a USB file transfer ends in one) every wheel click sounds, not every
+/// other one.
+#[test]
+fn every_wheel_click_sounds_after_a_stop() {
+    let device = DryingDevice::default();
+    let sink = device.clone();
+    let root = std::env::temp_dir().join(format!("reborn-click-stop-{}", std::process::id()));
+    let log = Observer::new(&root).unwrap();
+    let mut p = Playback::with_sink(
+        log,
+        root,
+        Box::new(move |_, _, _| Ok(Box::new(sink.clone()))),
+    )
+    .unwrap();
+    p.stop(7);
+    let wired = spec(AudioOutput::Wired, 44100);
+    // A click's start: a non-zero sample after at least 64 silent ones (its wave crosses zero).
+    let clicks = || {
+        let out = device.out.lock().unwrap();
+        let mut silent = 64;
+        let mut starts = 0;
+        for v in out.iter() {
+            if *v == 0 {
+                silent += 1;
+            } else {
+                starts += usize::from(silent >= 64);
+                silent = 0;
+            }
+        }
+        starts
+    };
+    for _ in 0..4 {
+        p.click(Some(wired.clone()));
+        thread::sleep(Duration::from_millis(150));
+    }
+    assert_eq!(clicks(), 4);
+    p.shutdown(2).unwrap();
 }
 
 /// #77: with no song, a click opens the wired output asked for, the next clicks find it open, and

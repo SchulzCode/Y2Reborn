@@ -545,6 +545,10 @@ impl Ui {
                 rows.push(Item::new("Rename", "pl_rename"));
             }
             rows.push(Item::new("Duplicate", "pl_duplicate"));
+            // Empty it, Favorites too, behind a question (Y2Linux #103).
+            if !p.read_only && !p.entries.is_empty() {
+                rows.push(Item::new("Clear Playlist", "pl_clear"));
+            }
             if !is_favorites(&p.path) {
                 rows.push(Item::new("Delete Playlist", "pl_delete"));
             }
@@ -639,9 +643,13 @@ impl Ui {
                     }
                     Effect::None
                 }
-                "pl_delete" => {
+                "pl_delete" | "pl_clear" => {
                     self.playlists.target = Some(p.path);
-                    m.navigation.modal = Some(Modal::Confirm(ConfirmAction::DeletePlaylist));
+                    m.navigation.modal = Some(Modal::Confirm(if menu == "pl_clear" {
+                        ConfirmAction::ClearPlaylist
+                    } else {
+                        ConfirmAction::DeletePlaylist
+                    }));
                     m.navigation.modal_focus = 0;
                     Effect::None
                 }
@@ -844,10 +852,26 @@ impl Ui {
             .get(&path)
             .map_or_else(|| FAVORITES.to_owned(), |p| p.name.clone());
         self.playlists.used(&path);
-        let entries = self.entries_for(m, tracks, &songs, &path);
-        self.flash(match entries.len() {
-            1 => format!("Added to {name}"),
-            n => format!("{n} songs added to {name}"),
+        // A song already in it is not added again: adding a whole folder brings a playlist up to
+        // date (Y2Linux #106).
+        let present: std::collections::HashSet<usize> = self
+            .playlists
+            .get(&path)
+            .map(|p| self.resolved(tracks, p).into_iter().flatten().collect())
+            .unwrap_or_default();
+        let mut seen = std::collections::HashSet::new();
+        let new: Vec<usize> = (songs.iter().copied())
+            .filter(|s| !present.contains(s) && seen.insert(*s))
+            .collect();
+        if new.is_empty() {
+            self.flash(format!("Already in {name}"));
+            return Effect::None;
+        }
+        let entries = self.entries_for(m, tracks, &new, &path);
+        self.flash(match (entries.len(), songs.len() - new.len()) {
+            (1, 0) => format!("Added to {name}"),
+            (n, 0) => format!("{n} songs added to {name}"),
+            (n, kept) => format!("{n} added to {name}, {kept} already in it"),
         });
         Effect::Playlist(Box::new(PlaylistRequest::Edit {
             path,

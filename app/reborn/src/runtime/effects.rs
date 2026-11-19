@@ -8,7 +8,20 @@ mod sound;
 mod system;
 
 impl Runtime {
+    /// What the listener asked for. A song or chapter they moved to is theirs:
+    /// an "end of song" sleep timer does not take it for the end of the one
+    /// before (#137).
     pub(crate) fn effect(&mut self, e: Effect) -> Result<(), String> {
+        let before = self.model.sleep_item();
+        let was_playing = matches!(
+            self.model.playback,
+            PlaybackState::Playing | PlaybackState::Buffering
+        );
+        let result = self.run_effect(e);
+        self.sleep_timer_follows_listener(before, was_playing);
+        result
+    }
+    fn run_effect(&mut self, e: Effect) -> Result<(), String> {
         // Holding Previous/Next seeks every 90 ms: steps are collected and
         // applied once, so they never meet a restart still in progress.
         if let Effect::Seek(direction) = e {

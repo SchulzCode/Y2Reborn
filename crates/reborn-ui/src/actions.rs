@@ -20,7 +20,9 @@ impl Ui {
         if m.screen == Screen::NowPlaying && m.current().is_some_and(Track::is_video) {
             self.show_video_controls();
         }
-        let effect = self.action_inner(m, tracks, action);
+        let effect = self
+            .lyrics_action(m, action)
+            .unwrap_or_else(|| self.action_inner(m, tracks, action));
         // Cover Flow and the album page hand the centre cover to each other.
         if m.settings.album_view == reborn_core::AlbumView::CoverFlow && !self.motion_fixed {
             let kind = match (before.0, m.screen) {

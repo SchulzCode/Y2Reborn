@@ -801,6 +801,92 @@ fn bitrate_shows_in_skins_and_song_info() {
 }
 
 #[test]
+fn year_page_names_and_the_scrollbar_condition_in_skins() {
+    // Y2Reborn #135 `{year}`, #144 an album's and artist's page name, #138 `scrollbar`.
+    let row = r##"[{"type": "text", "x": 0, "y": 0, "w": 300, "h": 30, "text": "{label}"},
+                 {"type": "text", "if": "scrollbar", "x": 300, "y": 0, "w": 100, "h": 30, "text": "BAR"}]"##;
+    let list = |rows: usize| {
+        format!(
+            r##"{{"type": "list", "x": 0, "y": 40, "w": 480, "rows": {rows}, "row_height": 30, "row": {row}, "focused": {row},
+                "scrollbar": {{"x": 474, "w": 4, "track": "accent", "thumb": "accent"}}}}"##
+        )
+    };
+    let title =
+        r##"{"type": "text", "x": 0, "y": 0, "w": 480, "h": 30, "text": "[{page_title}]"}"##;
+    let screens = format!(
+        r##"{{"now_playing": [{{"type": "text", "x": 0, "y": 300, "w": 480, "h": 30, "text": "({{year}})"}}],
+             "album": [{title}, {}], "list": [{title}, {}]}}"##,
+        list(8),
+        list(1)
+    );
+    let ui = skinned(compile_test(&screens).unwrap());
+    let mut tracks = library(3);
+    for t in &mut tracks {
+        t.album_artist = "Artist".into();
+        t.album = "Album".into();
+    }
+    tracks[0].year = 2018;
+    let mut m = model(Screen::NowPlaying);
+    m.queue = tracks.clone();
+    let text = crate::tests::drawn_text(&ui.draw(&m, &tracks, false));
+    assert!(text.contains("(2018)"), "{text}");
+    m.queue = tracks[1..].to_vec();
+    let text = crate::tests::drawn_text(&ui.draw(&m, &tracks, false));
+    assert!(text.contains("()"), "no year, nothing: {text}");
+    // The album's page is named after it; five rows in eight: no scrollbar.
+    m.screen = Screen::Album;
+    m.navigation.filter = "album:Artist\u{1f}Album".into();
+    let text = crate::tests::drawn_text(&ui.draw(&m, &tracks, false));
+    assert!(text.contains("[Album]") && !text.contains("BAR"), "{text}");
+    // Another list of more rows than it shows: its rows know the scrollbar is there.
+    m.screen = Screen::Artist;
+    m.navigation.filter = "artist:Artist".into();
+    let text = crate::tests::drawn_text(&ui.draw(&m, &tracks, false));
+    assert!(text.contains("[Artist]") && text.contains("BAR"), "{text}");
+    m.screen = Screen::Tracks;
+    m.navigation.filter.clear();
+    let text = crate::tests::drawn_text(&ui.draw(&m, &tracks, false));
+    assert!(
+        text.contains("[Songs]"),
+        "other screens keep their title: {text}"
+    );
+}
+
+#[test]
+fn an_albums_page_leads_with_its_year_and_plays_all() {
+    // Y2Linux #125: the album's page as album lists, "2019 · 3 songs · …"; Y2Reborn #145.
+    let ui = crate::Ui::default();
+    let mut tracks = library(3);
+    for t in &mut tracks {
+        t.album_artist = "Artist".into();
+        t.album = "Album".into();
+        t.year = 2019;
+    }
+    tracks[1].year = 2021;
+    let mut m = model(Screen::Album);
+    m.navigation.filter = "album:Artist\u{1f}Album".into();
+    let rows = ui.rows(&m, &tracks);
+    assert_eq!(
+        (rows[0].label.as_str(), rows[1].label.as_str()),
+        ("Play All", "Shuffle All")
+    );
+    assert!(
+        rows[0].secondary.starts_with("2019 · 3 songs · "),
+        "{}",
+        rows[0].secondary
+    );
+    for t in &mut tracks {
+        t.year = 0;
+    }
+    let rows = crate::Ui::default().rows(&m, &tracks);
+    assert!(
+        rows[0].secondary.starts_with("3 songs · "),
+        "{}",
+        rows[0].secondary
+    );
+}
+
+#[test]
 fn a_skins_cover_flow_captions_glide_with_the_covers() {
     // Y2Reborn #112: a skin's own captions ride under the incoming cover and fade in, like
     // Reborn's own (#71); at rest they stand where the skin put them.

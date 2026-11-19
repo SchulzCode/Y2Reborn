@@ -2,7 +2,7 @@
 //! fading out over the last seconds) or when the chapter or song playing ends.
 //! It lives only in memory: a restart ends it.
 use crate::Runtime;
-use reborn_core::{PlaybackState, SleepChoice, SleepTimer};
+use reborn_core::{PlaybackState, SleepChoice, SleepItem, SleepTimer};
 use std::time::{Duration, Instant};
 
 /// The last stretch of a timed sleep fades the volume out.
@@ -34,6 +34,22 @@ impl Runtime {
             }),
         };
         self.dirty.mark_render();
+    }
+
+    /// The listener moved to another song or chapter: an "end of song" timer
+    /// follows it while they listen and ends when they start afresh.
+    pub(crate) fn sleep_timer_follows_listener(&mut self, before: SleepItem, was_playing: bool) {
+        let Some(timer) = self.model.sleep_timer else {
+            return;
+        };
+        let now = self.model.sleep_item();
+        self.model.sleep_timer = timer.after_listener_moved(before, now, was_playing);
+        if self.model.sleep_timer.is_none() {
+            self.ui.flash("Sleep timer off");
+        }
+        if self.model.sleep_timer != Some(timer) {
+            self.dirty.mark_render();
+        }
     }
 
     /// The listener's own volume again after a fade.

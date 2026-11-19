@@ -46,6 +46,7 @@
       { "type": "text", "x": 230, "y": 128, "w": 234, "h": 24, "text": "{artist}", "font": "R17", "color": "muted" },
       { "type": "text", "x": 230, "y": 154, "w": 234, "h": 22, "text": "{album}", "font": "R15", "color": "dim" },
       { "type": "text", "x": 230, "y": 184, "w": 234, "h": 20, "text": "{quality}", "font": "R11", "color": "dim" },
+      { "type": "text", "x": 230, "y": 184, "w": 234, "h": 20, "text": "{year}", "font": "R11", "color": "dim", "align": "right" },
       { "type": "icon", "x": 230, "y": 214, "size": 32, "icon": "play_pause", "color": "accent" },
       { "type": "icon", "if": "shuffle", "x": 276, "y": 220, "size": 20, "icon": "shuffle", "color": "muted" },
       { "type": "bar", "x": 16, "y": 268, "w": 448, "h": 6, "value": "progress", "track": "track", "fill": "accent", "radius": 3 },
@@ -60,7 +61,8 @@
       { "type": "list", "x": 0, "y": 40, "w": 480, "rows": 7, "row_height": 44,
         "row": [ { "type": "part", "name": "row" } ],
         "focused": [
-          { "type": "image", "x": 6, "y": 2, "w": 468, "h": 40, "image": "highlight", "slice": [6, 6, 6, 6] },
+          { "type": "image", "if": "!scrollbar", "x": 6, "y": 2, "w": 468, "h": 40, "image": "highlight", "slice": [6, 6, 6, 6] },
+          { "type": "image", "if": "scrollbar", "x": 6, "y": 2, "w": 462, "h": 40, "image": "highlight", "slice": [6, 6, 6, 6] },
           { "type": "part", "name": "row" }
         ],
         "scrollbar": { "x": 474, "w": 4, "track": "track", "thumb": "accent" } }

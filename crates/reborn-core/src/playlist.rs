@@ -60,6 +60,8 @@ pub enum PlaylistEdit {
     },
     /// Every entry whose location is one of these (Favorites' heart).
     RemoveLocations(Vec<String>),
+    /// Every entry: the playlist stays, empty (Y2Linux #103).
+    Clear,
 }
 
 impl Playlist {
@@ -95,6 +97,7 @@ impl Playlist {
             PlaylistEdit::RemoveLocations(locations) => {
                 self.entries.retain(|e| !locations.contains(&e.location));
             }
+            PlaylistEdit::Clear => self.entries.clear(),
         }
         Ok(())
     }

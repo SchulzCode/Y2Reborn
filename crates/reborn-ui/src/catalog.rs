@@ -565,10 +565,10 @@ impl Catalog {
             Screen::Folders => self.folder_rows(m, tracks),
             Screen::Tracks | Screen::Album | Screen::Artist => {
                 if matches!(m.screen, Screen::Album | Screen::Artist) {
-                    self.push(Item::new("Play", "play:collection"));
+                    self.push(Item::new("Play All", "play:collection"));
                 }
                 if m.screen == Screen::Album {
-                    self.push(Item::new("Shuffle", "shuffle:collection"));
+                    self.push(Item::new("Shuffle All", "shuffle:collection"));
                 }
                 let mut ids: Vec<_> = tracks
                     .iter()
@@ -606,18 +606,7 @@ impl Catalog {
                     .filter(|(_, total, _)| *total > ids.len());
                 if matches!(m.screen, Screen::Album | Screen::Artist) {
                     if let Some(Row::Item(item)) = self.rows.first_mut() {
-                        let songs = match &whole {
-                            Some((_, total, genre)) => format!(
-                                "{} · {} of {total} songs",
-                                if genre.is_empty() { "No Genre" } else { genre },
-                                ids.len()
-                            ),
-                            None => crate::components::count(ids.len(), "song", "songs"),
-                        };
-                        item.secondary = format!(
-                            "{songs} · {}",
-                            crate::components::time(ids.iter().map(|(_, t)| t.duration_ms).sum())
-                        );
+                        item.secondary = page_detail(m.screen, &ids, whole.as_ref());
                     }
                 }
                 if m.screen == Screen::Artist {
@@ -852,4 +841,30 @@ fn track_item(i: usize, t: &Track) -> Item {
     .with_secondary(crate::names_or_unknown(&t.artist));
     item.art = Some(i);
     item
+}
+
+/// The line under an album's or artist's page title: "2019 · 12 songs · 48:10". An album opened from
+/// a genre counts that genre's songs of all of them; an album's page leads with its year, as album
+/// lists do (Y2Linux #125).
+fn page_detail(
+    screen: Screen,
+    ids: &[(usize, &Track)],
+    whole: Option<&(String, usize, &str)>,
+) -> String {
+    let songs = match whole {
+        Some((_, total, genre)) => format!(
+            "{} · {} of {total} songs",
+            if genre.is_empty() { "No Genre" } else { genre },
+            ids.len()
+        ),
+        None => crate::components::count(ids.len(), "song", "songs"),
+    };
+    let length = crate::components::time(ids.iter().map(|(_, t)| t.duration_ms).sum());
+    let year = ids
+        .iter()
+        .fold(0, |y, (_, t)| crate::earliest_year(y, t.year));
+    match year {
+        year if year > 0 && screen == Screen::Album => format!("{year} · {songs} · {length}"),
+        _ => format!("{songs} · {length}"),
+    }
 }

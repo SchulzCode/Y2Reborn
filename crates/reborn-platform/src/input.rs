@@ -2758,8 +2758,10 @@ mod tests {
     #[test]
     fn back_held_five_seconds_in_the_first_minute_brings_back_reborn_default_once() {
         use PhysicalControl as P;
-        let mut router = ActionRouter::default();
-        router.born = Some(Instant::now());
+        let mut router = ActionRouter {
+            born: Some(Instant::now()),
+            ..ActionRouter::default()
+        };
         assert!(router
             .route(&button(NormalizedInput::Press(P::Back)), true)
             .is_empty());
@@ -2776,8 +2778,10 @@ mod tests {
             .route(&button(NormalizedInput::Repeat(P::Back)), true)
             .is_empty());
         // After the first minute a long hold of Back is only Home.
-        let mut late = ActionRouter::default();
-        late.born = Some(Instant::now() - ESCAPE_WINDOW - ESCAPE_HOLD);
+        let mut late = ActionRouter {
+            born: Some(Instant::now() - ESCAPE_WINDOW - ESCAPE_HOLD),
+            ..ActionRouter::default()
+        };
         let _ = late.route(&button(NormalizedInput::Press(P::Back)), true);
         if let Some(h) = late.held.get_mut(&P::Back) {
             h.since = Instant::now() - ESCAPE_HOLD;

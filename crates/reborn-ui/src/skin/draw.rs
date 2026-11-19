@@ -2,7 +2,7 @@
 //! recolours Reborn's own drawing for the screens a skin leaves to Reborn.
 use super::{
     atlas::Font, Align, ArtSource, Bx, Case, El, Flag, FontRef, IconRef, IndicatorLook, Level,
-    ListSource, NativePart, Node, Paint, Palette, Seg, Skin, Var,
+    ListSource, NativePart, Node, Paint, Palette, Scroll, Seg, Skin, Var,
 };
 use crate::{
     canvas::{Canvas, Icon},
@@ -56,6 +56,8 @@ struct Row<'a> {
     count: usize,
     focused: bool,
     current: bool,
+    /// Its list shows a scrollbar (#138).
+    scrollbar: bool,
 }
 
 impl Scene<'_> {
@@ -151,6 +153,7 @@ impl Scene<'_> {
             Flag::First => row.is_some_and(|r| r.index == 0),
             Flag::Last => row.is_some_and(|r| r.index + 1 == r.count),
             Flag::Odd => row.is_some_and(|r| r.index % 2 == 1),
+            Flag::Scrollbar => row.is_some_and(|r| r.scrollbar),
         }
     }
 
@@ -232,6 +235,13 @@ impl Scene<'_> {
                 .filter(|t| t.track > 0)
                 .map(|t| t.track.to_string())
                 .unwrap_or_default(),
+            // In a row its song's year, elsewhere the playing song's; empty without one (#135).
+            Var::Year => self
+                .row_song(row)
+                .or(t)
+                .filter(|t| t.year > 0)
+                .map(|t| t.year.to_string())
+                .unwrap_or_default(),
             Var::QueueIndex => t
                 .map(|_| (m.queue_position + 1).to_string())
                 .unwrap_or_default(),
@@ -256,10 +266,14 @@ impl Scene<'_> {
             },
             Var::Volume => m.settings.volume.min(100).to_string(),
             Var::Status => self.page.and_then(|p| p.status.clone()).unwrap_or_default(),
+            // An album's or artist's page: its name, not "Album" or "Artist" (#144).
             Var::PageTitle => self
                 .page
                 .and_then(|p| p.hero.as_ref().map(|h| h.title.clone()))
-                .unwrap_or_else(|| screen_title(m)),
+                .unwrap_or_else(|| match m.screen {
+                    Screen::Album | Screen::Artist => crate::source_label(m),
+                    _ => screen_title(m),
+                }),
             Var::PageBody => self
                 .page
                 .and_then(|p| p.hero.as_ref().map(|h| h.body.clone()))
@@ -702,6 +716,30 @@ fn draw_art(c: &mut Canvas, s: &Scene, b: Bx, source: &ArtSource, radius: &f32, 
     }
 }
 
+/// A list's scrollbar: its track and a thumb for the `rows` shown of `count` from `start`.
+fn scrollbar(
+    c: &mut Canvas,
+    s: &Scene,
+    sc: &Scroll,
+    b: Bx,
+    (rows, count, start): (usize, usize, usize),
+) {
+    let x = b.x + sc.x;
+    if let Some(t) = sc.track {
+        c.rect(x, b.y, sc.w, b.h, s.paint(t));
+    }
+    let th = (b.h * rows as f32 / count as f32).max(8.).round();
+    let span = (count - rows) as f32;
+    let y = b.y + ((b.h - th) * start as f32 / span).round();
+    let thumb = Bx {
+        x,
+        y,
+        w: sc.w,
+        h: th,
+    };
+    shape(c, thumb, sc.w / 2., 0., s.paint(sc.thumb));
+}
+
 fn element(c: &mut Canvas, s: &Scene, el: &El, ox: f32, oy: f32, row: Option<&Row>) {
     match el {
         El::Rect {
@@ -889,6 +927,7 @@ fn element(c: &mut Canvas, s: &Scene, el: &El, ox: f32, oy: f32, row: Option<&Ro
                     count,
                     focused: focus == Some(index),
                     current: *source == ListSource::Rows && s.row_current(item),
+                    scrollbar: scroll.is_some() && count > *rows,
                 };
                 let mark = c.draw.len();
                 s.label_end.set(None);
@@ -898,28 +937,8 @@ fn element(c: &mut Canvas, s: &Scene, el: &El, ox: f32, oy: f32, row: Option<&Ro
                     c.mark_focus(mark);
                 }
             }
-            if let Some(sc) = scroll {
-                if count > *rows {
-                    let x = b.x + sc.x;
-                    if let Some(t) = sc.track {
-                        c.rect(x, b.y, sc.w, b.h, s.paint(t));
-                    }
-                    let th = (b.h * *rows as f32 / count as f32).max(8.).round();
-                    let span = (count - rows) as f32;
-                    let y = b.y + ((b.h - th) * start as f32 / span).round();
-                    shape(
-                        c,
-                        Bx {
-                            x,
-                            y,
-                            w: sc.w,
-                            h: th,
-                        },
-                        sc.w / 2.,
-                        0.,
-                        s.paint(sc.thumb),
-                    );
-                }
+            if let Some(sc) = scroll.as_ref().filter(|_| count > *rows) {
+                scrollbar(c, s, sc, b, (*rows, count, start));
             }
         }
         El::Group { dx, dy, children } => nodes(c, s, children, ox + dx, oy + dy, row),
