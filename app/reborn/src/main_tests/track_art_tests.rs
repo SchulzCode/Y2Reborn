@@ -81,12 +81,91 @@ fn the_restored_key_is_not_cover_flows() {
 }
 
 #[test]
+fn the_restored_cover_survives_play() {
+    let model = restored();
+    let key = restored_key(&model.queue[0]);
+    let (_, owner) = restored_picture(&model, false, key, Some(vec![1, 2, 3, 4])).unwrap();
+    // Play opens the same song: `load` keeps a cover whose owner is the song it opens.
+    let playing = AppModel {
+        generation: 1,
+        playback: PlaybackState::Buffering,
+        ..restored()
+    };
+    assert!(crate::runtime::keeps_art(
+        Some(owner),
+        art_owner_of(&playing)
+    ));
+    // Another song in its place does not inherit it.
+    let mut next = restored();
+    next.queue[0].id = 8;
+    assert!(!crate::runtime::keeps_art(Some(owner), art_owner_of(&next)));
+}
+
+/// The cover's life from boot to Next, with the real decisions in the order `Runtime` takes them:
+/// `show_art` sets the flag and the owner, `load` does `art &= keeps_art(owner, art_owner_of(model))`,
+/// the decoder's artwork is accepted by `artwork_matches_current`.
+#[test]
+fn the_cover_stays_from_boot_through_play_and_seeks_and_goes_with_next() {
+    use crate::runtime::keeps_art;
+    let load = |art: &mut bool, owner: Option<crate::runtime::ArtOwner>, model: &AppModel| {
+        *art &= keeps_art(owner, art_owner_of(model));
+    };
+
+    // Boot: the restored song, paused; its cover arrives from the thumbnail worker.
+    let mut model = restored();
+    model.queue.push(Track {
+        id: 9,
+        ..Default::default()
+    });
+    model.queue_entry_ids.push(QueueEntryId(2));
+    let key = restored_key(&model.queue[0]);
+    let (_, shown) = restored_picture(&model, false, key, Some(vec![1, 2, 3, 4])).unwrap();
+    let mut art = true; // `show_art` sets the flag
+    let mut owner = Some(shown); // and the owner
+
+    // Play: the same song opens (generation 1), then the decoder publishes its picture.
+    model.generation = 1;
+    model.playback = PlaybackState::Buffering;
+    load(&mut art, owner, &model);
+    assert!(art, "Play must not put the restored cover away");
+    assert!(crate::artwork_matches_current(
+        &model,
+        1,
+        QueueEntryId(1),
+        7
+    ));
+    owner = Some((QueueEntryId(1), 7)); // what `show_art` records for that event
+    assert_eq!(
+        owner,
+        art_owner_of(&model),
+        "the decoder's owner is the restored song's"
+    );
+
+    // Seeks restart the same song again and again.
+    for generation in 2..5 {
+        model.generation = generation;
+        load(&mut art, owner, &model);
+        assert!(art, "seek {generation}");
+    }
+
+    // Next opens another song: its cover is not this one's.
+    model.queue_position = 1;
+    model.generation = 5;
+    load(&mut art, owner, &model);
+    assert!(!art);
+}
+
+#[test]
 fn a_late_picture_is_shown_only_for_the_song_still_waiting_for_it() {
     let model = restored();
     let key = restored_key(&model.queue[0]);
     let picture = || Some(vec![1, 2, 3, 4]);
 
-    assert_eq!(restored_picture(&model, false, key, picture()), picture());
+    // It comes with its song as the owner, so that Play keeps it on screen.
+    assert_eq!(
+        restored_picture(&model, false, key, picture()),
+        Some((vec![1, 2, 3, 4], (QueueEntryId(1), 7)))
+    );
     // A song without a cover shows the placeholder.
     assert_eq!(restored_picture(&model, false, key, None), None);
     // Play was pressed meanwhile: the decoder publishes the picture itself.
