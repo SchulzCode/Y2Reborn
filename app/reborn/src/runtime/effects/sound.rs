@@ -153,6 +153,56 @@ impl Runtime {
         Ok(())
     }
 
+    /// `Effect::MeasureHeadphones`: the codec measures the load in the jack on a short thread (it
+    /// blocks for about a second). It refuses an open stream: music playing is asked to pause
+    /// first, and a held pause gives its stream back.
+    pub(crate) fn on_measure_headphones(&mut self) -> Result<(), String> {
+        if self.headphone_measure.is_some() {
+            return Ok(());
+        }
+        if matches!(
+            self.model.playback,
+            PlaybackState::Playing | PlaybackState::Buffering
+        ) {
+            self.ui.flash("Pause music, then measure again.");
+            return Ok(());
+        }
+        self.release_hold_with(true);
+        let (send, receive) = std::sync::mpsc::channel();
+        std::thread::Builder::new()
+            .name("headphones".into())
+            .spawn(move || {
+                let _ = send.send(reborn_platform::jack::measure_headphones());
+            })
+            .map_err(|e| e.to_string())?;
+        self.headphone_measure = Some(receive);
+        self.ui.headphone_load = reborn_core::platform::HeadphoneLoad::Measuring;
+        Ok(())
+    }
+
+    /// Each pass: the measurement's answer; a refusal says why and keeps the last load.
+    pub(crate) fn headphones_tick(&mut self) {
+        let Some(reply) = &self.headphone_measure else {
+            return;
+        };
+        let answer = match reply.try_recv() {
+            Ok(answer) => answer,
+            Err(std::sync::mpsc::TryRecvError::Empty) => return,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => Err(String::new()),
+        };
+        self.headphone_measure = None;
+        self.ui.headphone_load = match answer {
+            Ok(load) => load,
+            Err(refusal) => {
+                if !refusal.is_empty() {
+                    self.ui.flash(refusal);
+                }
+                reborn_platform::jack::headphone_load()
+            }
+        };
+        self.dirty.mark_render();
+    }
+
     /// `Effect::AllowLoudVolume`.
     pub(crate) fn on_allow_loud_volume(&mut self) -> Result<(), String> {
         self.model.settings.loud_ok = true;

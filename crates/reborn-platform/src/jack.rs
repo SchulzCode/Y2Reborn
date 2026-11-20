@@ -3,8 +3,9 @@
 //! the card's jack input, "Y2Audio Headphone" (SW_HEADPHONE_INSERT). A plug
 //! turns a playing speaker off in the kernel already; Reborn follows with the
 //! headphone route, and pauses on an unplug as the stock player does.
+use reborn_core::platform::HeadphoneLoad;
 use std::fs::{self, File, OpenOptions};
-use std::io::{self, Read};
+use std::io::{self, Read, Write};
 use std::os::unix::fs::OpenOptionsExt;
 use std::os::unix::io::AsRawFd;
 use std::path::{Path, PathBuf};
@@ -46,6 +47,72 @@ fn state_path(devices: &Path) -> Option<PathBuf> {
         .collect::<Vec<_>>();
     found.sort();
     found.into_iter().next()
+}
+
+/// The DAC's `y2_hp` group when it offers the load measurement.
+fn measure_group(devices: &Path) -> Option<PathBuf> {
+    state_path(devices)
+        .and_then(|jack| jack.parent().map(Path::to_path_buf))
+        .filter(|group| group.join("hpload_measure").exists())
+}
+
+/// What the codec offers: no measurement, nothing yet, or the load it measured last.
+pub fn headphone_load() -> HeadphoneLoad {
+    load_at(Path::new(DEVICES))
+}
+
+fn load_at(devices: &Path) -> HeadphoneLoad {
+    let Some(group) = measure_group(devices) else {
+        return HeadphoneLoad::Unavailable;
+    };
+    match fs::read_to_string(group.join("hpload_dc"))
+        .ok()
+        .as_deref()
+        .and_then(parse_load)
+    {
+        Some((left, right)) => HeadphoneLoad::Measured { left, right },
+        None => HeadphoneLoad::Unmeasured,
+    }
+}
+
+/// Measure the load in the jack; the driver takes about a second. It refuses while a stream is
+/// open, so a refusal is tried again shortly (the wheel's click may hold a stream for a moment).
+pub fn measure_headphones() -> Result<HeadphoneLoad, String> {
+    let devices = Path::new(DEVICES);
+    let group = measure_group(devices).ok_or("Headphone measurement isn't available.")?;
+    for attempt in 0..4 {
+        let written = OpenOptions::new()
+            .write(true)
+            .open(group.join("hpload_measure"))
+            .and_then(|mut file| file.write_all(b"1\n"));
+        match written.map_err(|e| e.raw_os_error()) {
+            Ok(()) => break,
+            Err(Some(libc::EBUSY)) if attempt < 3 => {
+                std::thread::sleep(std::time::Duration::from_millis(400));
+            }
+            Err(errno) => return Err(refusal(errno)),
+        }
+    }
+    match load_at(devices) {
+        measured @ HeadphoneLoad::Measured { .. } => Ok(measured),
+        _ => Err(refusal(None)),
+    }
+}
+
+/// The driver's refusal in the owner's words.
+fn refusal(errno: Option<i32>) -> String {
+    match errno {
+        Some(libc::EBUSY) => "Pause music, then measure again.",
+        Some(libc::ENXIO) => "No headphones in the jack.",
+        _ => "Couldn't measure. Push the plug fully in and try again.",
+    }
+    .into()
+}
+
+/// `hpload_dc`: "19 18 raw 121 120" is 19 ohms left and 18 right; "none" before a measurement.
+fn parse_load(text: &str) -> Option<(u16, u16)> {
+    let mut ohms = text.split_whitespace().map(str::parse::<u16>);
+    Some((ohms.next()?.ok()?, ohms.next()?.ok()?))
 }
 
 /// Whether the kernel's poll has read the detector yet (`state=` 0 or 1).
@@ -140,6 +207,40 @@ mod tests {
         fs::write(root.join("0-0030/y2_hp/jack"), "state=1\n").unwrap();
         assert_eq!(state_path(&root), Some(root.join("0-0030/y2_hp/jack")));
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn the_load_is_offered_only_by_a_driver_that_measures_it() {
+        let root = std::env::temp_dir().join(format!("reborn-hpload-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("1-0030/y2_hp")).unwrap();
+        fs::write(root.join("1-0030/y2_hp/jack"), "state=1\n").unwrap();
+        assert_eq!(load_at(&root), HeadphoneLoad::Unavailable);
+        fs::write(root.join("1-0030/y2_hp/hpload_measure"), "").unwrap();
+        fs::write(root.join("1-0030/y2_hp/hpload_dc"), "none\n").unwrap();
+        assert_eq!(load_at(&root), HeadphoneLoad::Unmeasured);
+        fs::write(root.join("1-0030/y2_hp/hpload_dc"), "33 32 raw 135 134\n").unwrap();
+        assert_eq!(
+            load_at(&root),
+            HeadphoneLoad::Measured {
+                left: 33,
+                right: 32
+            }
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn the_drivers_refusals_read_as_meant() {
+        assert_eq!(parse_load("19 18 raw 121 120\n"), Some((19, 18)));
+        assert_eq!(parse_load("none\n"), None);
+        assert_eq!(parse_load(""), None);
+        assert_eq!(
+            refusal(Some(libc::EBUSY)),
+            "Pause music, then measure again."
+        );
+        assert_eq!(refusal(Some(libc::ENXIO)), "No headphones in the jack.");
+        assert!(refusal(Some(libc::EIO)).starts_with("Couldn't measure"));
     }
 
     #[test]

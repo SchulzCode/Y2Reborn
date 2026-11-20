@@ -1129,6 +1129,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         m.settings.hp_level = reborn_core::HpLevel::Medium;
         m.navigation.focus = 2;
     });
+    case!(
+        "27d-output-measure-headphones",
+        at(Screen::Output, ""),
+        |ui, m| {
+            ui.headphone_load = reborn_core::platform::HeadphoneLoad::Unmeasured;
+            m.navigation.focus = 5;
+        }
+    );
+    case!(
+        "27e-output-headphones-measured",
+        at(Screen::Output, ""),
+        |ui, m| {
+            ui.headphone_load = reborn_core::platform::HeadphoneLoad::Measured {
+                left: 33,
+                right: 32,
+            };
+            m.navigation.focus = 5;
+        }
+    );
     case!("27c-sound-wired", at(Screen::SettingsAudio, ""), |_, m| {
         m.settings.hp_level = reborn_core::HpLevel::Medium;
         m.navigation.focus = 4;
