@@ -1611,6 +1611,8 @@ pub enum Effect {
     /// The listener agreed to wired volumes above the safe level.
     AllowLoudVolume,
     SetDacFilter(DacFilter),
+    /// Measure the load in the headphone jack (Settings → Sound → Output).
+    MeasureHeadphones,
     SetBrightness(u8),
     SetCrossfade(u32),
     SetBalance(i8),

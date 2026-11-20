@@ -347,6 +347,9 @@ struct Runtime {
     whats_new_reply:
         Option<std::sync::mpsc::Receiver<Result<Vec<reborn_core::whats_new::Line>, String>>>,
     whats_new_asked: bool,
+    /// The headphone load being measured (it blocks for about a second).
+    headphone_measure:
+        Option<std::sync::mpsc::Receiver<Result<reborn_core::platform::HeadphoneLoad, String>>>,
     radio_replies: (
         std::sync::mpsc::Sender<RadioReply>,
         std::sync::mpsc::Receiver<RadioReply>,

@@ -483,6 +483,14 @@ fn output(ui: &Ui, m: &AppModel) -> Page {
     rows.push(
         row("DAC Filter", "dac_filter", m.settings.dac_filter.label()).with_kind(RowKind::Chevron),
     );
+    // Only a kernel that measures the load offers it.
+    if ui.headphone_load != reborn_core::platform::HeadphoneLoad::Unavailable {
+        rows.push(row(
+            "Measure Headphones",
+            "hp_measure",
+            ui.headphone_load.label(),
+        ));
+    }
     Page::rows(rows)
 }
 
