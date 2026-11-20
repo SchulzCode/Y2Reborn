@@ -46,11 +46,12 @@ impl Files for Mem {
 
 const CLASSIC: &str = include_str!("../../../../skins/classic/skin.json");
 /// Every shipped skin's manifest.
-const SHIPPED: [&str; 17] = [
+const SHIPPED: [&str; 18] = [
     include_str!("../../../../skins/big-type/skin.json"),
     include_str!("../../../../skins/bunny-bow/skin.json"),
     include_str!("../../../../skins/cassette/skin.json"),
     include_str!("../../../../skins/classic/skin.json"),
+    include_str!("../../../../skins/gallery/skin.json"),
     include_str!("../../../../skins/luna-xp/skin.json"),
     include_str!("../../../../skins/mini-blue/skin.json"),
     include_str!("../../../../skins/mini-gold/skin.json"),

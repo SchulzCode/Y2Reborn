@@ -36,7 +36,7 @@ see [When something goes wrong](#when-something-goes-wrong).
 
 ## The fastest start: change a shipped skin
 
-Reborn comes with 17 skins, and each is a complete example. The easiest way to make your own is to copy one and
+Reborn comes with 18 skins, and each is a complete example. The easiest way to make your own is to copy one and
 change it:
 
 1. Download a skin folder from [`skins/`](https://github.com/SchulzCode/Y2Reborn/tree/main/skins) on GitHub, for
@@ -558,11 +558,11 @@ Write these in curly braces inside `text`, for example `"{artist} · {album}"`.
 
 ### The shipped skins
 
-Reborn ships 17 skins in [`skins/`](https://github.com/SchulzCode/Y2Reborn/tree/main/skins): Classic, Nano Glass,
+Reborn ships 18 skins in [`skins/`](https://github.com/SchulzCode/Y2Reborn/tree/main/skins): Classic, Nano Glass,
 Walkman, Terminal, Winamp, Paper, Big Type, Cassette, Neon Night, Zune, Bunny Bow, Mini Silver, Pink, Blue, Green
-and Gold, and Luna XP (contributed by eNKay). Each is a complete example to read and copy. Classic's pictures are
-made by `tools/assets/build_classic_skin.py` and most others by `tools/assets/build_skins.py`; Luna XP is written by
-hand.
+and Gold, Luna XP (contributed by eNKay) and Gallery (contributed by samanz). Each is a complete example to read and
+copy. Classic's pictures are made by `tools/assets/build_classic_skin.py` and most others by
+`tools/assets/build_skins.py`; Luna XP and Gallery are written by hand.
 
 For developers with SSH access to a player: `rebornctl theme` lists the installed skins with their problems, and
 `rebornctl theme Ember` (or `theme reborn`) switches.

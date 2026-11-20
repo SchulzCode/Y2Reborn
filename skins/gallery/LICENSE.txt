@@ -1,0 +1,10 @@
+Gallery skin for Y2Reborn, by samanz.
+
+Pictures: images/bloom.png (the soft glow behind every screen) was drawn with code for this skin and
+is released under CC0 1.0 (public domain).
+
+Fonts, all under the SIL Open Font License 1.1 (licence files in fonts/):
+- DM Sans (Medium, Bold): subsets of the original (Latin), made with pyftsubset. DM Sans has no
+  Reserved Font Name.
+- Syne ExtraBold: subset of the original (Latin). Syne has no Reserved Font Name.
+- IBM Plex Mono Medium: the unmodified original font file, as its Reserved Font Name "Plex" requires.
