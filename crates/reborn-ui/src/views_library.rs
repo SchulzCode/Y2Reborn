@@ -209,6 +209,9 @@ pub fn browse(
         return empty(c, ui, m, interactive);
     }
     match m.screen {
+        Screen::Albums if crate::album_wall(m) => {
+            crate::views_wall::albums(c, ui, m, tracks, interactive)
+        }
         Screen::Albums | Screen::Audiobooks if crate::cover_flow(m) => {
             crate::views_coverflow::albums(c, ui, m, tracks, interactive)
         }

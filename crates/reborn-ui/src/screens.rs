@@ -145,6 +145,8 @@ fn layout_keys(m: &AppModel, page: Option<&Page>, empty: bool) -> &'static [&'st
         Screen::Lyrics | Screen::WhatsNew => &[],
         Screen::NowPlaying if m.current().is_some() => &["now_playing"],
         Screen::Home => &["home", "list"],
+        // Customize > Wall: albums only, before Cover Flow.
+        Screen::Albums if crate::album_wall(m) && !empty => std::slice::from_ref(&"wall"),
         // Customize > Cover Flow: albums and audiobooks alike (8.36).
         Screen::Albums | Screen::Audiobooks if crate::cover_flow(m) && !empty => &["cover_flow"],
         Screen::Albums => &["albums", "list"],

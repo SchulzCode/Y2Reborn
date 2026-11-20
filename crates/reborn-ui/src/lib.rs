@@ -59,6 +59,7 @@ mod views_search;
 mod views_settings;
 mod views_system;
 pub mod views_videos;
+mod views_wall;
 pub mod whats_new;
 
 use reborn_core::{
@@ -964,6 +965,10 @@ pub struct Levels {
 /// a row (8.36; Albums only before).
 pub(crate) fn cover_flow(m: &AppModel) -> bool {
     m.settings.album_view == reborn_core::AlbumView::CoverFlow
+}
+/// Customize > Wall is on: Albums show every cover, six across, whatever Cover Flow says.
+pub(crate) fn album_wall(m: &AppModel) -> bool {
+    m.settings.album_wall
 }
 /// An artist tag as shown: names joined by ";" read with commas (#40).
 fn names_or_unknown(value: &str) -> std::borrow::Cow<'_, str> {

@@ -1692,6 +1692,7 @@ fn settings_has_eight_places_and_customize_three_pages_with_pickers() {
         labels(&ui, &m),
         [
             "Cover Flow",
+            "Wall",
             "Sort Albums",
             "Artist's Albums",
             "Artists List",
@@ -1704,6 +1705,18 @@ fn settings_has_eight_places_and_customize_three_pages_with_pickers() {
         select_key(&mut ui, &mut m, "album_view"),
         Effect::SetAlbumView(reborn_core::AlbumView::Grid)
     );
+    assert_eq!(row(&ui, &m, "album_wall").kind, RowKind::Toggle(false));
+    assert_eq!(
+        select_key(&mut ui, &mut m, "album_wall"),
+        Effect::SetAlbumWall(true)
+    );
+    m.settings.album_wall = true;
+    assert_eq!(row(&ui, &m, "album_wall").kind, RowKind::Toggle(true));
+    assert_eq!(
+        select_key(&mut ui, &mut m, "album_wall"),
+        Effect::SetAlbumWall(false)
+    );
+    m.settings.album_wall = false;
     assert_eq!(row(&ui, &m, "album_order").secondary, "By Title");
     assert_eq!(
         select_key(&mut ui, &mut m, "album_order"),
@@ -3667,6 +3680,114 @@ fn cover_flow_shows_where_you_are_in_its_title() {
     let text = drawn_text(&ui.draw(&m, &m.library.tracks, false));
     assert!(text.contains(&format!("Albums · 2 of {count}")), "{text}");
     assert_eq!(text.matches(&format!("2 of {count}")).count(), 1, "{text}");
+}
+
+#[test]
+fn the_wall_shows_albums_when_on_whatever_cover_flow_says_and_never_audiobooks() {
+    use reborn_core::AlbumView::{CoverFlow, Grid};
+    let mut ui = radios();
+    ui.motion_fixed = true;
+    // The Wall dims every cover but the focused one, each a 78 px cell.
+    let wall = |q: &[reborn_graphics::Quad]| {
+        q.iter()
+            .any(|q| q.w == 78. && q.h == 78. && q.color == 0x00000060)
+    };
+    let flow = |q: &[reborn_graphics::Quad]| q.iter().filter(|q| q.warp.is_some()).count() >= 2;
+    let mut m = app(Screen::Albums);
+    let tracks = m.library.tracks.clone();
+    // Off: Cover Flow and the grid as before.
+    assert!(!m.settings.album_wall);
+    let quads = ui.draw(&m, &tracks, false);
+    assert!(flow(&quads) && !wall(&quads));
+    m.settings.album_view = Grid;
+    let quads = ui.draw(&m, &tracks, false);
+    assert!(!flow(&quads) && !wall(&quads));
+    // On: the Wall, with Cover Flow on or off.
+    m.settings.album_wall = true;
+    for view in [CoverFlow, Grid] {
+        m.settings.album_view = view;
+        let quads = ui.draw(&m, &tracks, false);
+        assert!(wall(&quads) && !flow(&quads), "{view:?}");
+        assert_eq!(crate::focus_target_count(&quads), 1);
+    }
+    // Audiobooks follow Cover Flow only.
+    let mut m = app(Screen::Audiobooks);
+    with_book(&mut m);
+    for t in m.library.tracks.iter_mut().filter(|t| t.book) {
+        t.artwork = true;
+    }
+    let tracks = m.library.tracks.clone();
+    m.settings.album_wall = true;
+    let quads = ui.draw(&m, &tracks, false);
+    assert!(flow(&quads) && !wall(&quads));
+    m.settings.album_view = Grid;
+    let quads = ui.draw(&m, &tracks, false);
+    assert!(!flow(&quads) && !wall(&quads));
+    // Opening an album from the Wall is no Cover Flow flight.
+    for on in [false, true] {
+        let mut ui = radios();
+        let mut m = app(Screen::Albums);
+        let tracks = m.library.tracks.clone();
+        m.settings.album_wall = on;
+        ui.action(&mut m, &tracks, Action::Select);
+        assert_eq!(m.screen, Screen::Album);
+        assert_eq!(ui.transition_progress().is_none(), on);
+    }
+}
+
+#[test]
+fn the_wall_lays_covers_edge_to_edge_and_keeps_the_lifted_focus_on_screen() {
+    use reborn_graphics::Tex;
+    let mut ui = radios();
+    ui.motion_fixed = true;
+    let mut m = app(Screen::Albums);
+    m.settings.album_wall = true;
+    // Forty albums of one song: seven rows, more than the screen holds.
+    let tracks: Vec<Track> = (0..40)
+        .map(|i| Track {
+            id: i,
+            source_id: "internal".into(),
+            title: format!("Song {i}"),
+            artist: "Artist".into(),
+            album: format!("Album {i:02}"),
+            album_artist: "Artist".into(),
+            path: format!("/data/music/album{i}/song.flac").into(),
+            filename: "song.flac".into(),
+            artwork: true,
+            online: true,
+            ..Default::default()
+        })
+        .collect();
+    ui.set_resident_thumbs(tracks.iter().map(art_key));
+    for focus in [0, 17, 39] {
+        m.navigation.focus = focus;
+        let quads = ui.draw(&m, &tracks, false);
+        let covers: Vec<_> = quads
+            .iter()
+            .filter(|q| matches!(q.tex, Tex::Thumb(_)))
+            .collect();
+        // Only the rows on screen are drawn, well within the thumbnail atlas.
+        assert!(covers.len() >= 24 && covers.len() <= 36, "{focus}");
+        let left = covers.iter().map(|q| q.x).fold(f32::MAX, f32::min);
+        let right = covers.iter().map(|q| q.x + q.w).fold(0., f32::max);
+        assert!(left <= 3. && right >= crate::theme::WIDTH - 3.);
+        // One focused cover, larger than the rest and fully on screen.
+        assert_eq!(crate::focus_target_count(&quads), 1);
+        let lifted = quads.iter().find(|q| q.focus_target).unwrap();
+        assert!(lifted.w > 90.);
+        assert!(lifted.y >= 38. && lifted.y + lifted.h <= crate::theme::HEIGHT);
+        assert!(drawn_text(&quads).contains(&format!("{} of 40", focus + 1)));
+    }
+    // Moving the focus glides the wall (Beta 7.2's motion, on in the player).
+    let ui = Ui {
+        ui_motion: true,
+        ..radios()
+    };
+    m.navigation.focus = 0;
+    ui.draw(&m, &tracks, false);
+    m.navigation.focus = 30;
+    ui.draw(&m, &tracks, false);
+    assert!(ui.gliding());
 }
 
 #[test]

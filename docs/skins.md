@@ -473,6 +473,7 @@ The screen names `screens` can use. Each falls back as described in
 | `playlists`, `playlist`, `search` | Playlists, one playlist, Search |
 | `radio`, `radio_stations`, `radio_categories`, `radio_info` | Radio, a station list, countries or genres, Station Info |
 | `cover_flow` | Albums in Cover Flow (only this name): see [step 5](#step-5-cover-flow-and-square-covers) |
+| `wall` | Albums as the Wall, Customize → Wall On (only this name) |
 | `equalizer` | the equalizer (only this name) |
 | `settings`, `wifi`, `bluetooth`, `sound`, `balance`, `playback`, `crossfade`, `output`, `headphone_level`, `dac_filter`, `display`, `theme`, `customize`, `home_menu`, `screen_off`, `library`, `computer` | Settings and its pages; `theme` is the Skin picker |
 | `updates`, `time_zone`, `date_time`, `error_reports`, `maintenance`, `about`, `storage`, `battery`, `sleep`, `service`, `diagnostics`, `diagnostic`, `value`, `song_info` | System pages and the service menu |

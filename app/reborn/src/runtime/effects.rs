@@ -294,6 +294,10 @@ impl Runtime {
                 self.model.settings.album_order = order;
                 self.checkpoint();
             }
+            Effect::SetAlbumWall(on) => {
+                self.model.settings.album_wall = on;
+                self.checkpoint();
+            }
             Effect::SetArtistAlbums(order) => {
                 self.model.settings.artist_albums = order;
                 self.checkpoint();

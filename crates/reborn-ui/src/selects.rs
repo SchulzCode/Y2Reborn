@@ -269,6 +269,7 @@ impl Ui {
             "fm_radio" => Effect::Radio(reborn_core::RadioRequest::FmShow(!m.settings.fm_radio)),
             "speaker" => Effect::SetSpeaker(!m.settings.speaker),
             "album_view" => Effect::SetAlbumView(m.settings.album_view.next()),
+            "album_wall" => Effect::SetAlbumWall(!m.settings.album_wall),
             "album_order" => Effect::SetAlbumOrder(m.settings.album_order.next()),
             "artists_list" => Effect::SetArtistsList(m.settings.artists_list.next()),
             "crossfade" => Effect::SetCrossfade(match m.settings.crossfade_ms {

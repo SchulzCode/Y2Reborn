@@ -48,6 +48,7 @@ pub(crate) fn page(ui: &Ui, m: &AppModel) -> Page {
             row("Cover Flow", "album_view", "").with_kind(RowKind::Toggle(
                 m.settings.album_view == AlbumView::CoverFlow,
             )),
+            row("Wall", "album_wall", "").with_kind(RowKind::Toggle(m.settings.album_wall)),
             row(
                 "Sort Albums",
                 "album_order",
@@ -111,6 +112,7 @@ fn hint(key: &str) -> Option<&'static str> {
         "customize:browsing" => "How albums and artists are listed, and how lists end.",
         "customize:buttons" => "What each button does, in layouts you can go back from.",
         "album_view" => "Albums and audiobooks as covers sliding past, or as a list.",
+        "album_wall" => "Albums as a wall of covers, six across, whatever Cover Flow says.",
         "album_order" => "Albums A to Z by title, or each artist's albums together.",
         "choose:artist_albums" => {
             "How an artist's albums are ordered, on their page and in Albums by artist."

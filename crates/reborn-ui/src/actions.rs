@@ -24,8 +24,9 @@ impl Ui {
             .lyrics_action(m, action)
             .or_else(|| self.whats_new_action(m, action))
             .unwrap_or_else(|| self.action_inner(m, tracks, action));
-        // Cover Flow and the album page hand the centre cover to each other.
-        if m.settings.album_view == reborn_core::AlbumView::CoverFlow && !self.motion_fixed {
+        // Cover Flow and the album page hand the centre cover to each other
+        // (not the Wall, which shows Albums in Cover Flow's place).
+        if crate::cover_flow(m) && !crate::album_wall(m) && !self.motion_fixed {
             let kind = match (before.0, m.screen) {
                 (Screen::Albums, Screen::Album) => Some(flow::TransitionKind::Open),
                 (Screen::Album, Screen::Albums) => Some(flow::TransitionKind::Close),

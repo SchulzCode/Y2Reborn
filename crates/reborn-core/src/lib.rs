@@ -882,6 +882,10 @@ pub struct Settings {
     /// How Albums orders them (#56).
     #[serde(default)]
     pub album_order: AlbumOrder,
+    /// Albums as a wall of covers, six across, whatever Cover Flow says: Customize > Wall.
+    /// Audiobooks follow Cover Flow.
+    #[serde(default)]
+    pub album_wall: bool,
     /// How an artist's albums are ordered (Y2Reborn #75).
     #[serde(default)]
     pub artist_albums: ArtistAlbums,
@@ -1277,6 +1281,7 @@ impl Default for Settings {
             brightness: default_brightness(),
             album_view: AlbumView::CoverFlow,
             album_order: AlbumOrder::Title,
+            album_wall: false,
             artist_albums: ArtistAlbums::OldestFirst,
             now_playing_wheel: NowPlayingWheel::Volume,
             artists_list: ArtistsList::All,
@@ -1617,6 +1622,7 @@ pub enum Effect {
     SetGapless(bool),
     SetAlbumView(AlbumView),
     SetAlbumOrder(AlbumOrder),
+    SetAlbumWall(bool),
     SetArtistAlbums(ArtistAlbums),
     SetButtons(Box<buttons::ButtonSettings>),
     SetArtistsList(ArtistsList),
