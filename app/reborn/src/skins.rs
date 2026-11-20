@@ -183,7 +183,7 @@ mod tests {
         };
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../skins");
         let found = scan(&[root]);
-        assert_eq!(found.len(), 19);
+        assert_eq!(found.len(), 20);
         for info in found {
             let skin = load(&info.dir, &info.id, &png).unwrap();
             assert!(skin.warnings.is_empty(), "{}: {:?}", info.id, skin.warnings);
