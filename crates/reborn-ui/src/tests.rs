@@ -3533,6 +3533,50 @@ fn update_download_and_scanning_show_a_sweeping_ring_without_a_made_up_percentag
 }
 
 #[test]
+fn a_spinner_in_view_asks_for_the_panel_rate_and_a_scan_behind_a_list_does_not() {
+    let mut ui = Ui {
+        ui_motion: true,
+        ..radios()
+    };
+    ui.spin_fixed = Some(0.3);
+    // The first scan: Albums is empty and its ring turns at the panel's rate.
+    let mut m = app(Screen::Albums);
+    m.library.tracks.clear();
+    m.library.scanning = true;
+    ui.observe(&m);
+    ui.draw(&m, &[], false);
+    assert!(ui.gliding(), "a spinner in view keeps the full frame rate");
+    // The same scan behind a full list: once the list rests, the calm rate.
+    let mut m = app(Screen::Tracks);
+    m.library.scanning = true;
+    ui.observe(&m);
+    let tracks = m.library.tracks.clone();
+    ui.draw(&m, &tracks, false);
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    ui.draw(&m, &tracks, false);
+    ui.draw(&m, &tracks, false);
+    assert!(ui.animating() && !ui.gliding());
+}
+
+#[test]
+fn the_spinner_segment_keeps_its_length_while_it_slides() {
+    let lit = |phase: f32| {
+        let mut c = crate::canvas::Canvas::new();
+        c.spinner(240., 128., 44., 0xFFFFFFFF, 0x202020FF, phase);
+        let frame = |i: usize| {
+            c.draw
+                .get(i)
+                .and_then(|q| maskdata::ARCS.iter().position(|a| *a == q.src))
+                .map_or(0, |at| at + 1)
+        };
+        // The track ring, the bright head, the track over the tail.
+        frame(1) - frame(2)
+    };
+    let lengths: std::collections::BTreeSet<_> = (30..70).map(|i| lit(i as f32 / 100.)).collect();
+    assert_eq!(lengths.len(), 1, "{lengths:?}");
+}
+
+#[test]
 fn crossfade_gets_its_own_option_icon() {
     let ui = radios();
     let mut m = app(Screen::NowPlaying);

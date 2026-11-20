@@ -104,7 +104,7 @@ impl Ui {
 
     /// Motion that wants the panel's full frame rate: Cover Flow's glide and
     /// the cover's flight, and (Beta 7.2) every eased value on its way, a
-    /// screen sliding in and the playing wave. Spinners stay at the calm rate.
+    /// screen sliding in, the playing wave and a spinner in view.
     pub fn gliding(&self) -> bool {
         // A film's pictures come at their own times: the loop looks for one at the panel's
         // rate, but only a new picture is a reason to draw (`in_motion` leaves films out).
@@ -357,8 +357,11 @@ impl Ui {
         next
     }
 
-    /// A 0..1 phase for spinners, one turn about every 1.6 s.
+    /// A 0..1 phase for spinners, one turn about every 1.6 s. A frame that
+    /// draws a spinner marks live motion, like the playing wave, so a ring in
+    /// view turns at the panel's rate; work behind a list keeps the calm rate.
     pub fn spin_phase(&self) -> f32 {
+        self.mark_live();
         if let Some(fixed) = self.spin_fixed {
             return fixed;
         }
