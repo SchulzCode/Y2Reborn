@@ -9,6 +9,9 @@ use crate::{canvas::Icon, text::Face};
 use serde::Deserialize;
 use std::collections::{BTreeMap, HashMap, HashSet};
 
+/// Cells a list shows at once: within the covers one frame asks for (64).
+const LIST_CELLS_MAX: f32 = 48.;
+
 /// Text must reach this contrast on the skin's background; below the
 /// recommended level a skin still loads but carries a warning.
 const CONTRAST_MIN: f32 = 3.0;
@@ -86,6 +89,7 @@ struct Spec {
     knob_radius: Option<f32>,
     gap: Option<f32>,
     rows: Option<f32>,
+    columns: Option<f32>,
     row_height: Option<f32>,
     color: Option<String>,
     dim: Option<String>,
@@ -143,6 +147,7 @@ impl Spec {
             tracking,
             knob_radius,
             rows,
+            columns,
             row_height,
             color,
             top,
@@ -218,6 +223,7 @@ pub(super) fn fields(kind: &str) -> Option<&'static [&'static str]> {
             "y",
             "w",
             "rows",
+            "columns",
             "row_height",
             "source",
             "row",
@@ -675,6 +681,15 @@ impl Compiler<'_> {
                 if !(1. ..=24.).contains(&rows) || rows.fract() != 0. {
                     return Err(format!("{at}: \"rows\" is 1 to 24"));
                 }
+                let columns = num(e.columns, "columns", Some(1.))?;
+                if !(1. ..=8.).contains(&columns) || columns.fract() != 0. {
+                    return Err(format!("{at}: \"columns\" is 1 to 8"));
+                }
+                if rows * columns > LIST_CELLS_MAX {
+                    return Err(format!(
+                        "{at}: \"rows\" times \"columns\" is at most {LIST_CELLS_MAX}"
+                    ));
+                }
                 let row_h = num(e.row_height, "row_height", None)?;
                 if !(8. ..=360.).contains(&row_h) {
                     return Err(format!("{at}: \"row_height\" is 8 to 360"));
@@ -700,7 +715,7 @@ impl Compiler<'_> {
                         },
                     }),
                 };
-                El::List {
+                let list = El::List {
                     b: Bx {
                         x: num(e.x, "x", Some(0.))?,
                         y: num(e.y, "y", Some(0.))?,
@@ -708,6 +723,7 @@ impl Compiler<'_> {
                         h: rows * row_h,
                     },
                     rows: rows as usize,
+                    columns: columns as usize,
                     row_h,
                     source: match e.source.as_deref().unwrap_or("rows") {
                         "rows" => ListSource::Rows,
@@ -720,7 +736,16 @@ impl Compiler<'_> {
                     row: plain,
                     focused,
                     scroll,
+                };
+                if let El::List {
+                    columns: 2..,
+                    source: ListSource::Facts | ListSource::Sheet,
+                    ..
+                } = list
+                {
+                    return Err(format!("{at}: \"columns\" is only for source \"rows\""));
                 }
+                list
             }
             "group" => {
                 let items = e

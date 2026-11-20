@@ -530,6 +530,8 @@ pub(crate) enum El {
     List {
         b: Bx,
         rows: usize,
+        /// Cells across a row: 1, or more for a wall of covers.
+        columns: usize,
         row_h: f32,
         source: ListSource,
         row: Vec<Node>,
@@ -680,15 +682,16 @@ impl Skin {
     pub(crate) fn bg(&self) -> u32 {
         self.palette.bg
     }
-    /// Visible rows of the first list in `key`'s layout.
+    /// Items the first list in `key`'s layout shows at once: its rows times its columns.
     pub(crate) fn list_rows(&self, key: &str) -> Option<usize> {
         fn find(nodes: &[Node]) -> Option<usize> {
             nodes.iter().find_map(|n| match &n.el {
                 El::List {
                     rows,
+                    columns,
                     source: ListSource::Rows,
                     ..
-                } => Some(*rows),
+                } => Some(rows * columns),
                 El::Group { children, .. } => find(children),
                 _ => None,
             })

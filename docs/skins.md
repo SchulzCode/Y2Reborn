@@ -167,6 +167,9 @@ Now a `list` screen, used for every list in Reborn: the main menu, your music, s
 - The **`list`** element shows `rows` rows of `row_height` pixels and scrolls by itself.
 - **`row`** is drawn for every row and **`focused`** for the selected one. Inside a row, `x` and `y` count from the
   row's top-left corner.
+- **`columns`** (1 to 8, default 1) lays the rows out side by side: each row is a cell `w / columns` wide, filled
+  left to right, and the list scrolls by whole lines of cells. Every turn of the wheel still moves one row, so a
+  list with `"columns": 4` is a wall of covers (Poster's `albums`). `rows` times `columns` is at most 48.
 - `{screen}` is the screen's name ("Albums", "Settings"). It is empty on Home.
 
 And the row part, under `parts` next to `titlebar`:
@@ -496,7 +499,7 @@ row, a `group` or a `part` they count from that row's or group's corner.
 | `icon` | `x y size icon` · `color` | one of the [icons](#icons) |
 | `bar` | `x y w h value` · `track` `fill` (colours) or `track_image` `fill_image` (+ `slice`) · `radius` · `vertical` · `knob` (colour) `knob_radius` | a bar for `value` `progress`, `volume`, `battery` or `brightness` |
 | `art` | `x y size` (at most 360) · `source` (`current`: the cover playing, a station's logo; `row`: inside list rows) · `radius` | a cover |
-| `list` | `x y w rows row_height row` · `focused` · `source` (`rows`, `facts`, `sheet`) · `scrollbar {x, w, track, thumb}` | the screen's list: `rows` its rows, `facts` a page's label and value pairs, `sheet` the choices of a menu or question |
+| `list` | `x y w rows row_height row` · `focused` · `columns` (1–8, `rows` only) · `source` (`rows`, `facts`, `sheet`) · `scrollbar {x, w, track, thumb}` | the screen's list: `rows` its rows, `facts` a page's label and value pairs, `sheet` the choices of a menu or question; with `columns`, cells side by side |
 | `group` | `elements` · `x y` | its elements, moved by `x y` |
 | `part` | `name` · `x y` | a part from `parts`, moved by `x y` |
 | `native` | `part` (`screen`: Reborn's drawing of this screen; `status`: Reborn's battery and radio icons) · `x y` · `recolor` (default true: in your palette) · `captions` (Cover Flow; false: you write them) | Reborn's own drawing |
