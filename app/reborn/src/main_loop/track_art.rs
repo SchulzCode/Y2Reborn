@@ -1,6 +1,7 @@
 //! What the cover worker is asked to decode for a song: a list thumbnail, Cover Flow's centre cover
 //! and Now Playing's picture for the song a restart brings back.
 use super::*;
+use crate::runtime::{art_owner_of, ArtOwner};
 
 /// The worker's job for `track`'s picture, filed under the renderer's `thumb` key.
 pub(super) fn job(model: &AppModel, track: &Track, thumb: u64, cache: PathBuf) -> artwork::Job {
@@ -42,19 +43,28 @@ pub(super) fn restored_job(
     Some(job(model, track, key, cache.to_path_buf()))
 }
 
+/// A source came or went: the restored song is asked for again. On a cold start the first request
+/// runs before the SD card is mounted, when its song cannot be read, and without this the cover
+/// stayed away until Play.
+pub(super) fn sources_changed(asked: &mut Option<u64>) {
+    *asked = None;
+}
+
 /// The restored song's picture when it still belongs on screen: playback has not started (Play
 /// moves the generation on and the decoder publishes its own), nothing else was shown, and it is
-/// still the current song.
+/// still the current song. It comes with its song as the owner (`ArtOwner`), so that Play, which
+/// opens the same song again, keeps it on screen until the decoder publishes the same picture.
 pub(super) fn restored_picture(
     model: &AppModel,
     art: bool,
     thumb: u64,
     rgba: Option<Vec<u8>>,
-) -> Option<Vec<u8>> {
+) -> Option<(Vec<u8>, ArtOwner)> {
     let current = model.current()?;
-    (!art && model.generation == 0 && restored_key(current) == thumb)
-        .then_some(rgba)
-        .flatten()
+    if art || model.generation != 0 || restored_key(current) != thumb {
+        return None;
+    }
+    Some((rgba?, art_owner_of(model)?))
 }
 
 #[cfg(test)]

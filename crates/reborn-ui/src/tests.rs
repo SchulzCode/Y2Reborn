@@ -8160,3 +8160,18 @@ fn films_have_their_own_place_and_never_stand_among_the_songs() {
     songs.library.tracks = tracks.clone();
     assert!(!ui.rows(&songs, &tracks).iter().any(|r| r.key == "track:0"));
 }
+
+#[test]
+fn a_song_opened_again_after_a_seek_keeps_its_quality_tag() {
+    use crate::views_playing::{quality_label, starting};
+    let track = library().remove(0);
+    let mut m = app(Screen::NowPlaying);
+    m.playback = PlaybackState::Buffering;
+    assert!(starting(&m), "a song being opened says Starting…");
+    // The same song again after a seek: no orange note over `LOSSLESS · 44.1 kHz`.
+    m.reopening = true;
+    assert!(!starting(&m));
+    assert!(quality_label(&track).is_some_and(|label| label.starts_with("LOSSLESS")));
+    m.playback = PlaybackState::Playing;
+    assert!(!starting(&m));
+}

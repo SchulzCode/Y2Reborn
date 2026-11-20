@@ -103,10 +103,7 @@ pub fn now_playing(
     let source_offline = !radio
         && !m.sources.is_empty()
         && !m.sources.iter().any(|s| s.id == t.source_id && s.online);
-    if source_offline
-        || m.playback == PlaybackState::Error
-        || m.playback == PlaybackState::Buffering
-    {
+    if source_offline || m.playback == PlaybackState::Error || starting(m) {
         let note = if source_offline {
             "SD card removed · reinsert it"
         } else if m.playback == PlaybackState::Error && radio {
@@ -284,6 +281,12 @@ pub(crate) fn sleep_note(m: &AppModel) -> Option<String> {
             minutes => format!("Sleeps in {minutes}"),
         },
     )
+}
+
+/// A song is being opened, so the info line says "Starting…". Not when the song on screen is
+/// opened again after a seek: the quality tag stays and does not flash orange (#151).
+pub(crate) fn starting(m: &AppModel) -> bool {
+    m.playback == PlaybackState::Buffering && !m.reopening
 }
 
 /// `FLAC · 96 KHZ`: what the file is, in a sentence the listener understands.

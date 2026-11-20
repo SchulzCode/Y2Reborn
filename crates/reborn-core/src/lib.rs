@@ -1486,6 +1486,11 @@ pub struct AppModel {
     /// headphones are in and the speaker is on (#28). Set by the runtime.
     #[serde(skip)]
     pub speaker_active: bool,
+    /// The song on screen is opened again after a seek (`Buffering` for a moment): Now Playing
+    /// keeps its quality tag instead of "Starting…". Set by the runtime, ended by the decoder's
+    /// start or the next song (#151).
+    #[serde(skip)]
+    pub reopening: bool,
     #[serde(skip)]
     pub screen: Screen,
     pub settings: Settings,
@@ -1857,6 +1862,7 @@ impl AppModel {
     pub fn apply(&mut self, event: Event) {
         match event {
             Event::TrackStarted { generation } if generation == self.generation => {
+                self.reopening = false;
                 self.playback = PlaybackState::Playing
             }
             Event::TrackEnded { generation } if generation == self.generation => {
@@ -1878,12 +1884,14 @@ impl AppModel {
                     (Some(next_position), _) if next_position > self.queue_position => {
                         self.queue_position = next_position;
                         self.position_ms = output_position_ms;
+                        self.reopening = false;
                         self.playback = PlaybackState::Buffering;
                     }
                     // Repeat All: the decoder went on from the end to the start.
                     (Some(_), Some(id)) if self.settings.repeat == RepeatMode::All => {
                         self.wrap_to(id);
                         self.position_ms = output_position_ms;
+                        self.reopening = false;
                         self.playback = PlaybackState::Buffering;
                     }
                     _ => {}
@@ -2123,6 +2131,20 @@ mod tests {
         m.invalidate();
         m.apply(Event::TrackStarted { generation: 0 });
         assert_eq!(m.playback, PlaybackState::Stopped)
+    }
+    #[test]
+    fn a_reopened_song_stays_reopening_until_the_decoder_starts_it() {
+        let mut m = AppModel {
+            generation: 3,
+            playback: PlaybackState::Buffering,
+            reopening: true,
+            ..Default::default()
+        };
+        // A report of an earlier opening is not this one's start.
+        m.apply(Event::TrackStarted { generation: 2 });
+        assert!(m.reopening && m.playback == PlaybackState::Buffering);
+        m.apply(Event::TrackStarted { generation: 3 });
+        assert!(!m.reopening && m.playback == PlaybackState::Playing);
     }
     #[test]
     fn queue_boundaries() {

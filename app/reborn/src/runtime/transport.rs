@@ -1,4 +1,5 @@
 //! The transport: loading a track, seeking, pause and resume, the next track, the jack and outputs.
+use super::{art_owner_of, keeps_art};
 use crate::*;
 
 impl Runtime {
@@ -163,9 +164,11 @@ impl Runtime {
         self.loaded_dsp = Some(loaded);
         self.model.generation = generation;
         self.model.playback = PlaybackState::Buffering;
+        self.model.reopening = false;
         self.active_transport_generation =
             bluetooth_pcm.as_ref().map(|pcm| pcm.transport_generation);
-        self.art = false;
+        // The same song opened again (a seek, a resume) keeps its cover on screen.
+        self.art &= keeps_art(self.art_owner, art_owner_of(&self.model));
         self.dirty.mark_both();
         Ok(())
     }
@@ -209,7 +212,13 @@ impl Runtime {
         ) {
             return;
         }
-        if let Err(error) = self.with_model_action(|runtime| runtime.load()) {
+        let result = self.with_model_action(|runtime| {
+            runtime.load()?;
+            // The song on screen opens again at the target: no "Starting…" over its tag.
+            runtime.model.reopening = runtime.model.playback == PlaybackState::Buffering;
+            Ok(())
+        });
+        if let Err(error) = result {
             self.fail("playback", error);
         }
     }

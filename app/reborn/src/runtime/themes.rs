@@ -1,4 +1,5 @@
 //! Skins and themes: the roots, the scan and applying one.
+use super::ArtOwner;
 use crate::*;
 
 impl Runtime {
@@ -142,7 +143,10 @@ impl Runtime {
     /// Show a cover or a station's logo (square, as decoded) as Now Playing's picture: rounded
     /// in Reborn's own look, square in a skin, which rounds it itself with `radius` (Y2Reborn
     /// #81: a skin's square frame showed the corners Reborn had cut off).
-    pub(crate) fn show_art(&mut self, rgba: Vec<u8>) {
+    ///
+    /// `owner`: the song it is the cover of, `None` for a logo (`load` keeps a cover for the
+    /// song it belongs to, instead of blanking it until the decoder publishes it again).
+    pub(crate) fn show_art(&mut self, rgba: Vec<u8>, owner: Option<ArtOwner>) {
         self.art_square = rgba;
         let Some(renderer) = self.graphics.as_mut() else {
             return;
@@ -153,6 +157,7 @@ impl Runtime {
         }
         if renderer.artwork(&shaped).is_ok() {
             self.art = true;
+            self.art_owner = owner;
             self.dirty.mark_render();
         }
     }
@@ -166,7 +171,7 @@ impl Runtime {
         self.ui.collection_art.set(None);
         if self.art {
             let rgba = std::mem::take(&mut self.art_square);
-            self.show_art(rgba);
+            self.show_art(rgba, self.art_owner);
         }
     }
 }

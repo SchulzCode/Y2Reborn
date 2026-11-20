@@ -350,6 +350,7 @@ pub(crate) fn run() -> Result<(), String> {
         radio_art: None,
         radio_art_pending: None,
         resume_art: None,
+        art_owner: None,
         playlist_worker: playlists::Worker::spawn(Some(root.join("cache/playlists.json"))),
         headless,
         last_activity: Instant::now(),
@@ -869,6 +870,7 @@ impl MainLoop {
             self.observation_pending = None;
         }
         rt.background_ticks();
+        // A station's logo (no owner) or the restored song's cover (with its song), shown below.
         let mut logo = None;
         if let Some(worker) = &mut rt.thumbs {
             // Upload finished thumbnails (a few per pass, so a burst never
@@ -887,7 +889,7 @@ impl MainLoop {
                     }
                     if let Some(rgba) = reply.rgba.filter(|_| rt.graphics.is_some()) {
                         rt.ui.accent = reborn_ui::art::accent_from_rgba(&rgba);
-                        logo = Some(rgba);
+                        logo = Some((rgba, None));
                     }
                     continue;
                 }
@@ -895,9 +897,9 @@ impl MainLoop {
                     // The song restored at boot: its cover before the first Play.
                     let song = &rt.model;
                     let shown = track_art::restored_picture(song, rt.art, reply.thumb, reply.rgba);
-                    if let Some(rgba) = shown.filter(|_| rt.graphics.is_some()) {
+                    if let Some((rgba, owner)) = shown.filter(|_| rt.graphics.is_some()) {
                         rt.ui.accent = reborn_ui::art::accent_from_rgba(&rgba);
-                        logo = Some(rgba);
+                        logo = Some((rgba, Some(owner)));
                     }
                     continue;
                 }
@@ -1019,8 +1021,8 @@ impl MainLoop {
                 }
             }
         }
-        if let Some(rgba) = logo {
-            rt.show_art(rgba);
+        if let Some((rgba, owner)) = logo {
+            rt.show_art(rgba, owner);
         }
     }
 
@@ -1393,7 +1395,7 @@ impl MainLoop {
                 } => {
                     if artwork_matches_current(&rt.model, generation, entry_id, track_id) {
                         rt.ui.accent = reborn_ui::art::accent_from_rgba(&bytes);
-                        rt.show_art(bytes.to_vec());
+                        rt.show_art(bytes.to_vec(), Some((entry_id, track_id)));
                     }
                 }
                 playback::PlaybackEvent::Core(event) => {
@@ -2030,6 +2032,7 @@ impl MainLoop {
                     if let Some(worker) = &mut rt.thumbs {
                         worker.forget_failures();
                     }
+                    track_art::sources_changed(&mut rt.resume_art);
                     if g != rt.model.generation {
                         rt.playback.stop(rt.model.generation)
                     }
