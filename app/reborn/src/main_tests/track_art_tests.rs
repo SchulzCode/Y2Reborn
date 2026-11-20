@@ -33,6 +33,22 @@ fn the_restored_song_asks_for_its_picture_once() {
 }
 
 #[test]
+fn the_restored_song_is_asked_again_when_the_sd_card_mounts_after_the_first_request() {
+    let model = restored();
+    let mut asked = None;
+    // Cold start: asked before the card is there, the reply is empty and nothing is shown.
+    assert!(ask(&model, false, &mut asked).is_some());
+    assert!(ask(&model, false, &mut asked).is_none());
+    // The card mounts: the same song is asked for again, once.
+    sources_changed(&mut asked);
+    assert!(ask(&model, false, &mut asked).is_some());
+    assert!(ask(&model, false, &mut asked).is_none());
+    // A cover that is on screen is not asked for again after a source change.
+    sources_changed(&mut asked);
+    assert!(ask(&model, true, &mut asked).is_none());
+}
+
+#[test]
 fn the_picture_is_not_asked_for_when_something_else_shows_or_will_show_it() {
     let mut asked = None;
     assert!(

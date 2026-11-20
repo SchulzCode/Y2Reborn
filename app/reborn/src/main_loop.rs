@@ -2032,6 +2032,7 @@ impl MainLoop {
                     if let Some(worker) = &mut rt.thumbs {
                         worker.forget_failures();
                     }
+                    track_art::sources_changed(&mut rt.resume_art);
                     if g != rt.model.generation {
                         rt.playback.stop(rt.model.generation)
                     }

@@ -43,6 +43,13 @@ pub(super) fn restored_job(
     Some(job(model, track, key, cache.to_path_buf()))
 }
 
+/// A source came or went: the restored song is asked for again. On a cold start the first request
+/// runs before the SD card is mounted, when its song cannot be read, and without this the cover
+/// stayed away until Play.
+pub(super) fn sources_changed(asked: &mut Option<u64>) {
+    *asked = None;
+}
+
 /// The restored song's picture when it still belongs on screen: playback has not started (Play
 /// moves the generation on and the decoder publishes its own), nothing else was shown, and it is
 /// still the current song. It comes with its song as the owner (`ArtOwner`), so that Play, which
