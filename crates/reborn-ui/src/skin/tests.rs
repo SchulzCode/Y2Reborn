@@ -1090,3 +1090,102 @@ fn the_guides_example_skins_together_use_every_part_of_the_engine() {
     }
     assert!(missing.is_empty(), "no example skin shows: {missing:?}");
 }
+
+/// A list of `rows` rows of three 160-pixel cells, 40 high, under a 30-pixel bar: the focused cell
+/// is an accent square and the scrollbar sits at x 474, 4 wide.
+fn wall(columns: &str) -> String {
+    format!(
+        r##"{{"list": [
+  {{"type": "list", "x": 0, "y": 30, "w": 480, "rows": 2, {columns} "row_height": 40,
+   "row": [{{"type": "text", "x": 4, "y": 0, "w": 150, "h": 40, "text": "{{label}}"}}],
+   "focused": [{{"type": "rect", "x": 0, "y": 0, "w": 40, "h": 40, "color": "accent"}}],
+   "scrollbar": {{"x": 474, "w": 4, "thumb": "accent"}}}}
+]}}"##
+    )
+}
+
+/// The accent quads of a frame: the focused cell (40 wide) and the scrollbar's thumb (4 wide).
+fn accent_boxes(quads: &[reborn_graphics::Quad]) -> Vec<(f32, f32, f32, f32)> {
+    quads
+        .iter()
+        .filter(|q| q.color == 0x2A69_D2FF)
+        .map(|q| (q.x, q.y, q.w, q.h))
+        .collect()
+}
+
+#[test]
+fn a_list_with_columns_lays_its_items_out_left_to_right_and_scrolls_by_whole_rows() {
+    let mut ui = skinned(compile_test(&wall(r#""columns": 3,"#)).unwrap());
+    let tracks = library(30);
+    let mut m = model(Screen::Tracks);
+    // The wheel moves one cell: the fifth song is the middle of the second row.
+    for _ in 0..4 {
+        ui.action(&mut m, &tracks, reborn_core::Action::NavigateDown);
+    }
+    assert_eq!(m.navigation.focus, 4);
+    let quads = ui.draw(&m, &tracks, false);
+    let focus = accent_boxes(&quads)[0];
+    assert_eq!((focus.0, focus.1), (160., 70.));
+    assert_eq!(crate::focus_target_count(&quads), 1);
+    // Two rows of three show six songs; the eighth moves the window down one whole row, so
+    // the fourth song is the top left cell and the eighth sits in the bottom row's middle.
+    for _ in 0..3 {
+        ui.action(&mut m, &tracks, reborn_core::Action::NavigateDown);
+    }
+    assert_eq!(m.navigation.focus, 7);
+    let quads = ui.draw(&m, &tracks, false);
+    let focus = accent_boxes(&quads)[0];
+    assert_eq!((focus.0, focus.1), (160., 70.));
+    // The scrollbar counts lines of cells: two of them shown of all the lines, one line down.
+    let lines = ui.row_count(&m, &tracks).div_ceil(3);
+    let thumb: Vec<_> = accent_boxes(&quads)
+        .into_iter()
+        .filter(|b| b.0 >= 474.)
+        .collect();
+    let top = thumb.iter().map(|b| b.1).fold(f32::MAX, f32::min);
+    let bottom = thumb.iter().map(|b| b.1 + b.3).fold(0., f32::max);
+    assert_eq!(bottom - top, (80. * 2. / lines as f32).max(8.).round());
+    let step = (80. - (bottom - top)) / (lines - 2) as f32;
+    assert_eq!(top, 30. + step.round(), "one line down");
+}
+
+#[test]
+fn a_list_with_columns_asks_the_model_to_keep_every_cell_in_view() {
+    let ui = skinned(compile_test(&wall(r#""columns": 3,"#)).unwrap());
+    let tracks = library(30);
+    let m = model(Screen::Tracks);
+    // Six cells show at once, so the wheel scrolls only past the sixth song and the covers of
+    // all six are asked for.
+    assert_eq!(ui.visible_count(&m, &tracks), 6);
+}
+
+#[test]
+fn one_column_draws_exactly_what_a_list_without_columns_draws() {
+    let tracks = library(30);
+    let mut m = model(Screen::Tracks);
+    m.navigation.focus = 12;
+    m.navigation.scroll = 10;
+    let frame = |skin: Skin| format!("{:?}", skinned(skin).draw(&m, &tracks, false));
+    let plain = compile_test(&wall("")).unwrap();
+    let one = compile_test(&wall(r#""columns": 1,"#)).unwrap();
+    assert_eq!(frame(plain), frame(one));
+    let classic_one = CLASSIC.replace("\"row_height\"", "\"columns\": 1, \"row_height\"");
+    assert_ne!(classic_one, CLASSIC);
+    let one = compile("classic", &classic_one, &classic_files()).unwrap();
+    assert_eq!(frame(classic()), frame(one));
+}
+
+#[test]
+fn columns_are_checked_like_every_other_field() {
+    let fails = |columns: &str| compile_test(&wall(columns)).unwrap_err();
+    assert!(fails(r#""columns": 0,"#).contains("\"columns\" is 1 to 8"));
+    assert!(fails(r#""columns": 2.5,"#).contains("\"columns\" is 1 to 8"));
+    let many = r##"{"list": [{"type": "list", "w": 480, "rows": 7, "columns": 8, "row_height": 20,
+        "row": [{"type": "text", "w": 60, "h": 20, "text": "{label}"}]}]}"##;
+    assert!(compile_test(many).unwrap_err().contains("at most 48"));
+    let facts = r##"{"page": [{"type": "list", "w": 480, "rows": 2, "columns": 2, "row_height": 20,
+        "source": "facts", "row": [{"type": "text", "w": 60, "h": 20, "text": "{label}"}]}]}"##;
+    assert!(compile_test(facts)
+        .unwrap_err()
+        .contains("only for source \"rows\""));
+}
