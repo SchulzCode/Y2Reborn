@@ -458,6 +458,8 @@ pub struct Ui {
     /// Reborn Light: Reborn's own look in light colours (Y2Linux #112, `light`).
     pub light: bool,
     pub whats_new: whats_new::View,
+    /// The headphone jack's load (Settings → Sound → Output → Measure Headphones).
+    pub headphone_load: reborn_core::platform::HeadphoneLoad,
     pub notice: String,
     pub notice_until: Option<Instant>,
     pub wifi: WifiView,

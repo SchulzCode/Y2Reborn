@@ -258,6 +258,7 @@ impl Runtime {
                 self.configure_wired();
                 self.checkpoint();
             }
+            Effect::MeasureHeadphones => self.on_measure_headphones()?,
             Effect::SetBrightness(percent) => {
                 self.model.settings.brightness = percent.clamp(reborn_core::BRIGHTNESS_MIN, 100);
                 if !self.headless {

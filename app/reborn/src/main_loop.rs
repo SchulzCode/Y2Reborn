@@ -161,6 +161,10 @@ pub(crate) fn run() -> Result<(), String> {
     // The player animates (Beta 7.2); previews and tests draw still frames.
     let mut ui = Ui::default();
     ui.ui_motion = true;
+    if !headless {
+        // A load the codec measured earlier is still in the driver.
+        ui.headphone_load = reborn_platform::jack::headphone_load();
+    }
     // The early splash keeps the display, showing real startup progress, until
     // the first complete UI frame below is ready. That frame is the hand-off:
     // it is presented under a full boot-screen cover that dissolves at once.
@@ -333,6 +337,7 @@ pub(crate) fn run() -> Result<(), String> {
         radio_sequence: 0,
         whats_new_reply: None,
         whats_new_asked: false,
+        headphone_measure: None,
         radio_replies: std::sync::mpsc::channel(),
         radio_directory: Arc::new(Mutex::new(None)),
         radio_live: None,
@@ -1613,6 +1618,7 @@ impl MainLoop {
         }
         rt.radio_tick();
         rt.whats_new_tick();
+        rt.headphones_tick();
         rt.lost_peer_tick();
         rt.scrobble_tick();
         rt.note_history();
