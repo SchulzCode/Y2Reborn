@@ -1,7 +1,7 @@
 # Y2Reborn
 
 **The music player for the Innioasis Y2 running [Y2Linux](https://github.com/SchulzCode/Y2Linux).** Made for the
-click wheel: smooth at 60 frames per second, quick with large libraries, and it looks the way you want with seventeen
+click wheel: smooth at 60 frames per second, quick with large libraries, and it looks the way you want with eighteen
 skins. Written in Rust, it decodes with FFmpeg, draws with OpenGL ES on the Y2's GPU and keeps its library in SQLite.
 
 <p align="center">
@@ -49,8 +49,8 @@ skins. Written in Rust, it decodes with FFmpeg, draws with OpenGL ES on the Y2's
   ([guide](https://github.com/SchulzCode/Y2Linux/blob/main/docs/LASTFM.md)).
 
 **Making it yours**
-- **Seventeen skins** (Classic, Nano Glass, Walkman, Terminal, Winamp, Paper, Big Type, Cassette, Neon Night, Zune,
-  Bunny Bow, Luna XP and five Mini colours), and more by copying a skin folder into `Skins` on the player
+- **Eighteen skins** (Classic, Nano Glass, Walkman, Terminal, Winamp, Paper, Big Type, Cassette, Neon Night, Zune,
+  Bunny Bow, Luna XP, Gallery and five Mini colours), and more by copying a skin folder into `Skins` on the player
   ([how to make one](docs/skins.md)).
 - Customize: Cover Flow on or off, how albums are sorted, lists that wrap around, a wheel click, haptic ticks, and
   Buttons: give any button, hold or turn of the wheel any command, in the menus, on Now Playing and with the screen
@@ -74,8 +74,8 @@ skins. Written in Rust, it decodes with FFmpeg, draws with OpenGL ES on the Y2's
 </p>
 
 <p align="center">
-  <img src="docs/images/reborn-skins.png" alt="Now Playing in eight of the seventeen skins" width="100%">
-  <br><em>Now Playing in eight of the seventeen skins</em>
+  <img src="docs/images/reborn-skins.png" alt="Now Playing in eight of the eighteen skins" width="100%">
+  <br><em>Now Playing in eight of the eighteen skins</em>
 </p>
 
 *The pictures come from Reborn's own drawing code with sample music (`reborn-preview`, 1.0 Beta 9.2.13).*
@@ -132,7 +132,7 @@ display, audio and power behaviour need the device.
 | --- | --- |
 | `app/reborn` | The player binary, `rebornctl`, `reborn-bench` and `reborn-preview` |
 | `crates/` | `reborn-core` (state), `reborn-ui`, `reborn-graphics`, `reborn-audio`, `reborn-media` (FFmpeg membrane), `reborn-library` (SQLite), `reborn-platform` (Y2Linux API), `reborn-control`, `reborn-observability` |
-| `skins/` | The seventeen shipped skins |
+| `skins/` | The eighteen shipped skins |
 | `assets/` | Fonts, UI art and media test fixtures |
 | `tools/` | Cross build, previews, asset generation, qualification helpers |
 | `vendor/` | Vendored, checksummed crate sources |
