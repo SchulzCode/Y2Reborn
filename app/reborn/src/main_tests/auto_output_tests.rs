@@ -167,3 +167,123 @@ fn a_failed_switch_is_tried_again_a_few_times_then_the_jack_stays() {
     assert!(auto.next(&gone, &AudioOutput::Wired).is_none());
     assert_eq!(auto.next(&s, &AudioOutput::Wired).as_deref(), Some("AA"));
 }
+fn holds(auto: &mut AutoOutput, address: &str) {
+    auto.started(address.into());
+    assert_eq!(
+        auto.settle(&AudioOutput::Bluetooth(address.into()), false),
+        vec![(address.to_string(), true)]
+    );
+}
+#[test]
+fn a_drop_and_reconnect_inside_one_pass_routes_the_peer_again() {
+    // The main loop can get the drop and the reconnect in one pass; only the last snapshot
+    // reaches `next`, and the peer then stayed "routed" while the output was the speaker.
+    let mut auto = AutoOutput::default();
+    let s = status("AA", "/a");
+    assert_eq!(auto.next(&s, &AudioOutput::Wired).as_deref(), Some("AA"));
+    holds(&mut auto, "AA");
+    let mut gone = s.clone();
+    gone.devices[0].connected = false;
+    auto.observe(&gone);
+    auto.observe(&s);
+    assert_eq!(auto.next(&s, &AudioOutput::Wired).as_deref(), Some("AA"));
+}
+#[test]
+fn a_lost_peer_is_forgotten_even_when_no_snapshot_showed_the_drop() {
+    let mut auto = AutoOutput::default();
+    let s = status("AA", "/a");
+    holds(&mut auto, "AA");
+    assert!(auto.next(&s, &AudioOutput::Wired).is_none());
+    auto.forget("aa");
+    assert_eq!(auto.next(&s, &AudioOutput::Wired).as_deref(), Some("AA"));
+}
+#[test]
+fn a_switch_whose_start_is_rolled_back_is_tried_again() {
+    // The switch is accepted when its start is queued; opening the stream can still fail and
+    // put the output back on the jack (the A2DP open takes up to 8 s).
+    let mut auto = AutoOutput::default();
+    let s = status("AA", "/a");
+    assert_eq!(auto.next(&s, &AudioOutput::Wired).as_deref(), Some("AA"));
+    auto.started("AA".into());
+    // Still starting: nothing is decided, nothing is routed.
+    assert!(auto.settle(&AudioOutput::Wired, true).is_empty());
+    assert!(auto.routed.is_empty());
+    // Rolled back to the jack: a failed switch after all, tried again after a rest.
+    assert_eq!(
+        auto.settle(&AudioOutput::Wired, false),
+        vec![("AA".to_string(), false)]
+    );
+    assert!(!auto.routed.contains("AA"));
+    assert!(auto.next(&s, &AudioOutput::Wired).is_none());
+    auto.failures.get_mut("AA").unwrap().1 = Instant::now() - AUTO_OUTPUT_RETRY;
+    assert_eq!(auto.next(&s, &AudioOutput::Wired).as_deref(), Some("AA"));
+    // And it holds the next time: routed, so a hand-picked jack sticks again.
+    holds(&mut auto, "AA");
+    assert!(auto.next(&s, &AudioOutput::Wired).is_none());
+}
+#[test]
+fn rolled_back_starts_give_up_after_the_same_few_tries() {
+    let mut auto = AutoOutput::default();
+    let s = status("AA", "/a");
+    for _ in 0..AUTO_OUTPUT_TRIES {
+        auto.started("AA".into());
+        auto.settle(&AudioOutput::Wired, false);
+        if let Some(failure) = auto.failures.get_mut("AA") {
+            failure.1 = Instant::now() - AUTO_OUTPUT_RETRY;
+        }
+    }
+    assert!(auto.next(&s, &AudioOutput::Wired).is_none());
+    assert!(auto.routed.contains("AA"));
+}
+#[test]
+fn a_working_bluetooth_output_still_settles_as_routed() {
+    // The start finished while the output is on the peer, whatever order the pass ran in.
+    let mut auto = AutoOutput::default();
+    holds(&mut auto, "AA");
+    assert!(auto.routed.contains("AA"));
+    assert!(auto.in_flight.is_empty());
+}
+#[test]
+fn the_reason_a_peer_is_not_routed_is_reported_once_per_change() {
+    let mut auto = AutoOutput::default();
+    let mut s = status("AA", "/a");
+    s.pcms[0].rate = None;
+    let wired = AudioOutput::Wired;
+    let first = auto.why_held(&s, &wired);
+    assert_eq!(first.len(), 1);
+    assert!(first[0].1.starts_with("not_ready"), "{first:?}");
+    assert!(auto.why_held(&s, &wired).is_empty(), "unchanged: silent");
+    s.pcms[0].rate = Some(44_100);
+    assert_eq!(auto.why_held(&s, &wired)[0].1, "eligible");
+    auto.started("AA".into());
+    assert_eq!(auto.why_held(&s, &wired)[0].1, "switch_starting");
+    auto.settle(&wired, false);
+    holds(&mut auto, "AA");
+    // Routed and on it: nothing to explain.
+    assert_eq!(
+        auto.why_held(&s, &AudioOutput::Bluetooth("AA".into()))[0].1,
+        "eligible"
+    );
+    // The owner picked the jack: that is a reason too, and the one a stuck output shows.
+    assert_eq!(
+        auto.why_held(&s, &wired)[0].1,
+        "routed_but_output_is_not_it"
+    );
+}
+#[test]
+fn a_peer_is_logged_when_it_changes_not_every_snapshot() {
+    let mut auto = AutoOutput::default();
+    let mut s = status("AA", "/a");
+    assert_eq!(auto.changed_peers(&s).len(), 1);
+    assert!(auto.changed_peers(&s).is_empty());
+    s.pcms[0].transport_generation = 2;
+    let changed = auto.changed_peers(&s);
+    assert_eq!(changed.len(), 1);
+    assert_eq!(changed[0].fact["pcm"]["generation"], 2);
+    s.devices[0].connected = false;
+    let dropped = auto.changed_peers(&s);
+    assert!(!dropped[0].connected);
+    assert_eq!(dropped[0].was_connected, Some(true));
+    s.available = false;
+    assert!(auto.changed_peers(&s).is_empty());
+}
