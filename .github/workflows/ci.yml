@@ -1,0 +1,215 @@
+# Checks every pull request, so a reviewer sees at a glance whether the change passes what the contributing
+# rules ask for (AGENTS.md): formatting, clippy without a warning, the tests, and Y2Linux's platform gate
+# (the code-quality ratchet over both repositories, the platform's golden tests and Reborn's contract test).
+#
+# The same file lives in Y2Reborn and Y2Linux. The repository the run belongs to is checked out at the change
+# under test, the other one at its main branch, side by side as the scripts expect.
+#
+# Two jobs run in parallel:
+#   reborn    fmt, clippy, tests of the Y2Reborn workspace (needs FFmpeg, built once and cached).
+#   platform  tools/development/platform-gate.sh of Y2Linux (no FFmpeg).
+# Only a run on main (push, weekly, manual) saves the caches; pull requests only read them, so they cannot
+# push each other out of the repository's 10 GB. The weekly run keeps the caches from expiring (unused for 7 days).
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '23 4 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  # No incremental state and no debug info: a much smaller target/ (it is cached) and faster links.
+  CARGO_INCREMENTAL: '0'
+  CARGO_PROFILE_DEV_DEBUG: '0'
+  # The repository this run belongs to is checked out at the change; the other one at main.
+  THIS_IS_REBORN: ${{ endsWith(github.repository, '/Y2Reborn') }}
+  # A run that may save caches (not a pull request: its cache would only serve that pull request).
+  SAVES_CACHE: ${{ github.event_name != 'pull_request' }}
+
+jobs:
+  reborn:
+    name: Y2Reborn (fmt, clippy, tests)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ env.THIS_IS_REBORN == 'true' && github.repository || 'SchulzCode/Y2Reborn' }}
+          ref: ${{ env.THIS_IS_REBORN == 'true' && github.ref || 'main' }}
+          path: Y2Reborn
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ env.THIS_IS_REBORN == 'true' && 'SchulzCode/Y2Linux' || github.repository }}
+          ref: ${{ env.THIS_IS_REBORN == 'true' && 'main' || github.ref }}
+          path: Y2Linux
+
+      - name: Packages
+        run: |
+          sudo apt-get update -qq
+          # The list of devenv/Dockerfile; dbus for the AVRCP test that registers on a private bus.
+          sudo apt-get install -y -qq --no-install-recommends \
+            build-essential clang pkg-config nasm yasm python3 python3-pil zlib1g-dev dbus \
+            libdbus-1-dev libsqlite3-dev libasound2-dev libdrm-dev libgbm-dev libegl-dev libgles-dev \
+            libblkid-dev libmount-dev uuid-dev
+
+      # Reborn links FFmpeg, pinned in FFMPEG_VERSION (the archive's hash in Y2Linux's ffmpeg9.py). Built once
+      # as shared libraries without programs, as devenv/Dockerfile does, and cached by version.
+      - name: FFmpeg version
+        id: ffmpeg
+        run: echo "version=$(tr -d '[:space:]' < Y2Reborn/FFMPEG_VERSION)" >> "$GITHUB_OUTPUT"
+      - name: FFmpeg cache
+        id: ffmpeg-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/ffmpeg
+          key: ffmpeg-${{ steps.ffmpeg.outputs.version }}-${{ runner.os }}-ubuntu-24.04
+      - name: Build FFmpeg
+        if: steps.ffmpeg-cache.outputs.cache-hit != 'true'
+        env:
+          VERSION: ${{ steps.ffmpeg.outputs.version }}
+        run: |
+          sha=$(sed -n 's/^ARCHIVE_SHA256 = "\([0-9a-f]\{64\}\)"$/\1/p' Y2Linux/tools/production/ffmpeg9.py)
+          [ -n "$sha" ] || { echo 'no pinned FFmpeg hash in Y2Linux' >&2; exit 1; }
+          curl -sSfL --retry 3 -o /tmp/ffmpeg.tar.xz "https://ffmpeg.org/releases/ffmpeg-$VERSION.tar.xz"
+          echo "$sha  /tmp/ffmpeg.tar.xz" | sha256sum -c -
+          tar -xJf /tmp/ffmpeg.tar.xz -C /tmp
+          cd "/tmp/ffmpeg-$VERSION"
+          ./configure --prefix="$HOME/ffmpeg" --enable-shared --disable-static --disable-programs \
+            --disable-doc --disable-network
+          make -j"$(nproc)"
+          make install
+      - name: Save FFmpeg cache
+        if: env.SAVES_CACHE == 'true' && steps.ffmpeg-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/ffmpeg
+          key: ${{ steps.ffmpeg-cache.outputs.cache-primary-key }}
+      - name: FFmpeg environment
+        run: |
+          echo "PKG_CONFIG_PATH=$HOME/ffmpeg/lib/pkgconfig" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=$HOME/ffmpeg/lib" >> "$GITHUB_ENV"
+
+      - name: Rust toolchain
+        working-directory: Y2Reborn
+        run: rustup toolchain install   # the pinned one of rust-toolchain.toml, with rustfmt and clippy
+      - name: Build cache
+        id: target-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: Y2Reborn/target
+          key: reborn-target-${{ runner.os }}-ubuntu-24.04-${{ hashFiles('Y2Reborn/Cargo.lock', 'Y2Reborn/rust-toolchain.toml', 'Y2Reborn/FFMPEG_VERSION') }}
+          restore-keys: reborn-target-${{ runner.os }}-ubuntu-24.04-
+
+      - name: Format
+        working-directory: Y2Reborn
+        run: cargo fmt --all --check
+      - name: Clippy
+        working-directory: Y2Reborn
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Tests
+        working-directory: Y2Reborn
+        run: cargo test --workspace --no-fail-fast
+
+      # Keep the dependencies only: the workspace's own crates change with every pull request.
+      - name: Prune build cache
+        if: env.SAVES_CACHE == 'true' && steps.target-cache.outputs.cache-hit != 'true'
+        working-directory: Y2Reborn
+        run: |
+          cargo metadata --no-deps --format-version 1 \
+            | python3 -c 'import json,sys; print(" ".join("-p " + p["name"] for p in json.load(sys.stdin)["packages"]))' \
+            | xargs cargo clean
+          du -sh target
+      - name: Save build cache
+        if: env.SAVES_CACHE == 'true' && steps.target-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: Y2Reborn/target
+          key: ${{ steps.target-cache.outputs.cache-primary-key }}
+
+  platform:
+    name: Y2Linux platform gate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ env.THIS_IS_REBORN == 'true' && github.repository || 'SchulzCode/Y2Reborn' }}
+          ref: ${{ env.THIS_IS_REBORN == 'true' && github.ref || 'main' }}
+          path: Y2Reborn
+      # The whole history: record-compat.py compares with the last `release:` commit.
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ env.THIS_IS_REBORN == 'true' && 'SchulzCode/Y2Linux' || github.repository }}
+          ref: ${{ env.THIS_IS_REBORN == 'true' && 'main' || github.ref }}
+          path: Y2Linux
+          fetch-depth: 0
+
+      - name: Packages
+        run: |
+          sudo apt-get update -qq
+          # No FFmpeg here; libblkid and libmount are linked by Reborn's platform crate (the contract test).
+          sudo apt-get install -y -qq --no-install-recommends build-essential pkg-config python3 libdbus-1-dev \
+            libblkid-dev libmount-dev uuid-dev
+      - name: Rust toolchain
+        working-directory: Y2Linux/platform
+        run: rustup toolchain install   # 1.99.0 with the armv7 target, rustfmt and clippy
+      - name: Build cache
+        id: target-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: Y2Linux/platform/target
+          key: platform-target-${{ runner.os }}-ubuntu-24.04-${{ hashFiles('Y2Linux/platform/Cargo.lock', 'Y2Linux/platform/rust-toolchain.toml') }}
+          restore-keys: platform-target-${{ runner.os }}-ubuntu-24.04-
+
+      # The golden cases copy their fixtures below the temporary directory and the SD card's
+      # `capacity_state` ("Undersized" when the filesystem is under 0.9 of the 32 GB partition) comes from
+      # that filesystem's real size: it only matches on a small /tmp, so give the gate one.
+      - name: Small temporary directory
+        run: |
+          sudo mkdir -p /mnt/y2tmp
+          sudo mount -t tmpfs -o size=2g,mode=1777 tmpfs /mnt/y2tmp
+          echo "TMPDIR=/mnt/y2tmp" >> "$GITHUB_ENV"
+
+      # fmt, clippy, the armv7 type check, the code-quality ratchet, the platform's tests, its golden cases,
+      # the /data record compatibility and Reborn's contract test; prints GATE OK or GATE FAIL <stage>.
+      - name: Platform gate
+        working-directory: Y2Linux
+        run: tools/development/platform-gate.sh
+      # The gate prints only "GATE FAIL Reborn contract" when that last stage fails; this shows why.
+      - name: Reborn contract test, in full
+        if: failure()
+        working-directory: Y2Reborn
+        run: cargo test --offline -p reborn-platform reborn_reads_the_platform
+      # The gate runs `cargo fmt` (it rewrites); a difference means the change was not formatted.
+      - name: Formatted
+        working-directory: Y2Linux
+        run: git diff --exit-code
+
+      - name: Prune build cache
+        if: env.SAVES_CACHE == 'true' && steps.target-cache.outputs.cache-hit != 'true'
+        working-directory: Y2Linux/platform
+        run: |
+          names=$(cargo metadata --no-deps --format-version 1 \
+            | python3 -c 'import json,sys; print(" ".join("-p " + p["name"] for p in json.load(sys.stdin)["packages"]))')
+          # shellcheck disable=SC2086 # "-p name -p name", one word each
+          cargo clean $names
+          # shellcheck disable=SC2086
+          cargo clean $names --target armv7-unknown-linux-gnueabihf
+          du -sh target
+      - name: Save build cache
+        if: env.SAVES_CACHE == 'true' && steps.target-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: Y2Linux/platform/target
+          key: ${{ steps.target-cache.outputs.cache-primary-key }}
