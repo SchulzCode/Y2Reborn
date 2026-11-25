@@ -89,6 +89,10 @@ pub enum Screen {
     Playlists,
     /// Settings > Last.fm: sign-in, scrobbling and the scrobbler log.
     LastFm,
+    Audiobookshelf,
+    AudiobookshelfLibraries,
+    AudiobookshelfBooks,
+    AudiobookshelfBook,
     /// One playlist; the navigation filter holds its file's path.
     Playlist,
     /// About & Updates > Error Reports; filter "info": what is sent, "save":

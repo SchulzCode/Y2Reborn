@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 mod artwork;
+mod audiobookshelf;
 mod background;
 mod books;
 mod buttons;
@@ -344,6 +345,8 @@ struct Runtime {
     history_track: Option<Track>,
     dirty: DirtyState,
     root: PathBuf,
+    /// Remote audiobook requests and downloads never run on the UI thread.
+    audiobookshelf: Option<reborn_platform::audiobookshelf::worker::Worker>,
     /// Internet radio: saved favorites, the station playing, directory replies.
     radio_favorites: Vec<reborn_core::RadioStation>,
     radio_current: Option<reborn_core::RadioStation>,
@@ -506,6 +509,13 @@ struct DirtyState {
 }
 
 impl DirtyState {
+    fn initial() -> Self {
+        Self {
+            render: true,
+            persistence: false,
+        }
+    }
+
     fn mark_render(&mut self) {
         self.render = true;
     }

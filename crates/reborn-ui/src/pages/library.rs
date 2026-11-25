@@ -29,6 +29,7 @@ pub(super) fn page(ui: &Ui, m: &AppModel, tracks: &[Track]) -> Page {
             row("Storage", "storage", storage).with_kind(RowKind::Chevron),
             row("Wi-Fi Share", "wifi_share", "Copy music from a phone").with_kind(RowKind::Chevron),
             row("Last.fm", "lastfm", lastfm_summary(ui, m)).with_kind(RowKind::Chevron),
+            row("Audiobookshelf", "audiobookshelf", "").with_kind(RowKind::Chevron),
         ])
     }
 }
@@ -63,5 +64,14 @@ fn share(ui: &Ui) -> Page {
             body: format!("Code {}", share.code),
         }),
         ..Page::rows(vec![row("Stop Sharing", "share_stop", activity)])
+    }
+}
+
+/// Last.fm's row: the account, the log file, or Off.
+fn lastfm_summary(ui: &Ui, m: &AppModel) -> String {
+    match &ui.lastfm.user {
+        Some(user) => user.clone(),
+        None if m.settings.scrobble_log => "Log file".to_owned(),
+        None => "Off".to_owned(),
     }
 }

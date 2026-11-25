@@ -1,4 +1,5 @@
 pub mod allocation_counts;
+pub mod audiobookshelf;
 pub mod avrcp;
 pub mod bluetooth;
 pub mod client;

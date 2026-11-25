@@ -15,7 +15,12 @@ impl Runtime {
             self.model.playback,
             PlaybackState::Playing | PlaybackState::Buffering
         );
-        let busy = self.model.platform.busy.is_some() || self.ui.wifi.scan.active();
+        let busy = self.model.platform.busy.is_some()
+            || self.ui.wifi.scan.active()
+            || self
+                .audiobookshelf
+                .as_ref()
+                .is_some_and(|worker| worker.busy());
         let on_battery =
             self.model.platform.battery.charging == reborn_core::platform::ChargingState::OnBattery;
         if !reborn_core::platform::wifi_idle_power_down(
