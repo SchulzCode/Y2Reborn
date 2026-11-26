@@ -638,7 +638,7 @@ fn sd_present_in(class: &Path) -> bool {
         })
 }
 
-/// The computer has the SD card as a USB drive, or is about to (SD Card as USB Drive): the player lets
+/// The computer has the SD card as a USB drive, or is about to (SD Card as a USB Stick): the player lets
 /// go of it, as when it is pulled, so the platform can unmount it.
 pub fn sd_lent() -> bool {
     let boot = fs::read_to_string("/proc/sys/kernel/random/boot_id").unwrap_or_default();

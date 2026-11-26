@@ -291,7 +291,7 @@ pub enum SdCard {
     /// Mounted read-only because its check did not finish in time.
     Unchecked(VolumeSpace),
     Ready(VolumeSpace),
-    /// Open on the computer as a USB drive (SD Card as USB Drive): the player
+    /// Open on the computer as a USB drive (SD Card as a USB Stick): the player
     /// leaves it alone until the computer ejects it or the cable is pulled.
     OnComputer,
 }
@@ -576,7 +576,7 @@ pub struct PlatformSnapshot {
     pub usb: UsbTransfer,
     /// Durable file changes, coalesced into incremental scans by the app.
     pub usb_refresh_generation: u64,
-    /// Settings → Storage → SD Card as USB Drive; None on a platform without it.
+    /// Settings → Storage → SD Card as a USB Stick; None on a platform without it.
     pub sd_disk: Option<bool>,
     pub sleep: SleepState,
     pub bluetooth_quality: BluetoothQuality,

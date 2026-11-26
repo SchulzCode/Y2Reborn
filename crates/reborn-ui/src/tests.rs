@@ -5918,7 +5918,7 @@ fn the_sd_card_as_a_usb_drive_is_a_switch_on_storage_where_the_platform_has_it()
     m.platform.snapshot.sd_disk = Some(false);
     assert_eq!(
         toggle(&ui, &m),
-        Some(("SD Card as USB Drive".into(), RowKind::Toggle(false)))
+        Some(("SD Card as a USB Stick".into(), RowKind::Toggle(false)))
     );
     assert_eq!(
         select_key(&mut ui, &mut m, "sd_disk"),

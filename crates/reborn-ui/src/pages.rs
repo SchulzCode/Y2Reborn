@@ -916,7 +916,7 @@ fn pc_transfer(m: &AppModel) -> Page {
             ),
         }
     };
-    // The SD card is a drive of its own on the computer (SD Card as USB Drive).
+    // The SD card is a drive of its own on the computer (SD Card as a USB Stick).
     let page = if m.platform.snapshot.storage.sd == SdCard::OnComputer {
         page.fact("SD Card", "A drive on the computer")
     } else {
@@ -1292,7 +1292,7 @@ fn storage(m: &AppModel) -> Page {
     // (Y2Linux docs/planning/SD-DISK-MODE-PLAN.md); only on a platform that has it.
     if let Some(on) = s.sd_disk {
         page.rows
-            .push(row("SD Card as USB Drive", "sd_disk", "").with_kind(RowKind::Toggle(on)));
+            .push(row("SD Card as a USB Stick", "sd_disk", "").with_kind(RowKind::Toggle(on)));
     }
     page = page.fact(
         "Internal Storage",

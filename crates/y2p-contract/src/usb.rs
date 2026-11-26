@@ -45,7 +45,7 @@ pub struct Receipt {
 #[derive(Deserialize, Debug, Default, PartialEq)]
 #[serde(default)]
 pub struct SdDisk {
-    /// The switch (Settings → Storage → SD Card as USB Drive).
+    /// The switch (Settings → Storage → SD Card as a USB Stick).
     #[serde(deserialize_with = "lenient::is_true")]
     pub enabled: bool,
     /// Off, Idle, Lending, Lent or Kept.

@@ -8,7 +8,7 @@ use crate::{
     text::{self, Face},
     theme::{color, HEIGHT, WIDTH},
     views_settings::internal_note,
-    Ui,
+    RowKind, Ui,
 };
 use reborn_core::{
     platform::{human_bytes, SdCard, VolumeSpace},
@@ -418,6 +418,11 @@ fn actions(c: &mut Canvas, top: f32, page: &Page, focus: usize, interactive: boo
             face,
             if row.enabled { color::TEXT } else { color::DIM },
         );
+        // A switch is drawn as one (SD Card as a USB Stick), every other row leads on.
+        if let RowKind::Toggle(on) = row.kind {
+            components::toggle(c, WIDTH - 22., y + 22., on);
+            continue;
+        }
         let value = text::fit(Face::R11, &row.secondary, 190.);
         c.text_mid_right(WIDTH - 40., y + 22., &value, Face::R11, color::MUTED);
         components::chevron(c, WIDTH - 22., y + 22.);
