@@ -3082,6 +3082,15 @@ fn storage_battery_and_pc_transfer_present_user_states() {
     m.platform.snapshot.storage.sd = SdCard::NeedsRepair;
     let text = visible_text(&ui, &m);
     assert!(text.contains("Check it on a computer") && !text.contains("No SD card"));
+    // Lent to the computer as a USB stick: there, not missing.
+    m.platform.snapshot.storage.sd = SdCard::OnComputer;
+    let text = visible_text(&ui, &m);
+    assert!(text.contains("On the computer · Eject it there") && !text.contains("No SD card"));
+    let drawn = drawn_text(&ui.draw(&m, &m.library.tracks.clone(), false));
+    assert!(
+        drawn.contains("On the computer") && !drawn.contains("No SD card"),
+        "{drawn}"
+    );
 
     let mut m = app(Screen::Battery);
     m.platform.battery.level = LowBattery::Critical;

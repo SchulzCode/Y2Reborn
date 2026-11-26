@@ -233,6 +233,8 @@ fn missing_note(m: &AppModel, internal: bool) -> &'static str {
         SdCard::Error => "Card can't be read",
         SdCard::NeedsRepair => "Needs repair · Check it on a computer",
         SdCard::CheckTimedOut => "Check took too long · Insert it again",
+        // Lent to the computer (SD Card as a USB Stick): there, not missing.
+        SdCard::OnComputer => "On the computer · Eject it there",
         _ => "No SD card",
     }
 }
