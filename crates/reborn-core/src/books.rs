@@ -91,16 +91,12 @@ pub fn is_book(track: &Track) -> bool {
             || GENRES.contains(&fold(&track.genre).as_str()))
 }
 
-/// The folder that may hold a book's series: the book's own folder when the
-/// book is a file among others there (`.m4b`), else the folder above it;
-/// only one below the Audiobooks folder.
-fn series_folder(track: &Track, dir: &Path) -> Option<std::path::PathBuf> {
+/// The folder that may hold a book's series: the book's own folder when
+/// other books share it (`.m4b` files side by side), else the folder above
+/// it (`Series/Book/Book.m4b` too); only one below the Audiobooks folder.
+fn series_folder(track: &Track, dir: &Path, shared_dir: bool) -> Option<std::path::PathBuf> {
     let mark = marker(&track.path)?;
-    let folder = if is_m4b(&track.path) {
-        dir
-    } else {
-        dir.parent()?
-    };
+    let folder = if shared_dir { dir } else { dir.parent()? };
     (folder.components().count() > mark + 1).then(|| folder.to_path_buf())
 }
 
@@ -250,29 +246,35 @@ fn shared<'a>(mut values: impl Iterator<Item = &'a str>) -> Option<&'a str> {
 
 /// Every book in `tracks` (only online books), A to Z by title.
 pub fn books(tracks: &[Track]) -> Vec<Book> {
-    type Group = (
-        std::path::PathBuf,
-        bool,
-        Option<std::path::PathBuf>,
-        Vec<usize>,
-    );
-    let mut groups: HashMap<String, Group> = HashMap::new();
+    let mut groups: HashMap<String, (std::path::PathBuf, bool, Vec<usize>)> = HashMap::new();
     for (i, t) in tracks.iter().enumerate() {
         if t.book && t.online {
             let (key, dir, alone) = identity(t);
             groups
                 .entry(key)
-                .or_insert_with(|| {
-                    let folder = series_folder(t, &dir);
-                    (dir, alone, folder, vec![])
-                })
-                .3
+                .or_insert_with(|| (dir, alone, vec![]))
+                .2
                 .push(i);
         }
     }
+    // How many books each folder holds (several `.m4b` books share one).
+    let mut per_dir: HashMap<(&str, &Path), usize> = HashMap::new();
+    for (dir, _, parts) in groups.values() {
+        *per_dir
+            .entry((&tracks[parts[0]].source_id, dir))
+            .or_default() += 1;
+    }
+    let shared_dir: HashMap<String, bool> = groups
+        .iter()
+        .map(|(key, (dir, _, parts))| {
+            let source = tracks[parts[0]].source_id.as_str();
+            (key.clone(), per_dir[&(source, dir.as_path())] > 1)
+        })
+        .collect();
     let mut books: Vec<Book> = groups
         .into_iter()
-        .map(|(key, (dir, alone, folder, mut parts))| {
+        .map(|(key, (dir, alone, mut parts))| {
+            let folder = series_folder(&tracks[parts[0]], &dir, shared_dir[&key]);
             order(tracks, &mut parts);
             let all = || parts.iter().map(|&i| &tracks[i]);
             let title = shared(all().map(|t| t.album.as_str()))
@@ -1144,6 +1146,7 @@ mod tests {
             file("/m/Audiobooks/Die drei ???/001 Der Phantomsee/CD 1/01.mp3"),
             file("/m/Audiobooks/Discworld/02 The Light Fantastic.m4b"),
             file("/m/Audiobooks/Discworld/01 The Colour of Magic.m4b"),
+            file("/m/Audiobooks/Die drei ???/011 Im Folder/011 Im Folder.m4b"),
             file("/m/Audiobooks/Frank Herbert/Dune/01.mp3"),
             file("/m/Audiobooks/Momo/01.mp3"),
             file("/m/Audiobooks/Loose.m4b"),
@@ -1178,9 +1181,10 @@ mod tests {
             [
                 "001 Der Phantomsee",
                 "002 Der Super-Papagei",
-                "010 Der Fluch"
+                "010 Der Fluch",
+                "011 Im Folder"
             ],
-            "numbers as numbers"
+            "numbers as numbers; an .m4b alone in its folder belongs to the folder above"
         );
     }
 
