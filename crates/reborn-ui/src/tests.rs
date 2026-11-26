@@ -789,8 +789,7 @@ fn now_playing_shows_the_chapter_the_book_and_what_is_left() {
             "Next Chapter",
             "Speed",
             "Sleep Timer",
-            "Up Next",
-            "Lyrics"
+            "Up Next"
         ]
     );
     // Previous/Next Chapter (Y2Linux #103): 30 s in, Previous restarts this part's chapter and
