@@ -125,7 +125,10 @@ typedef struct {
   char date[128], genre[512];
   uint64_t open_us, probe_us, io_bytes;
   uint32_t info_runs;
+  /* An audiobook's series and its place in it (Y2Linux #144). */
+  char series[512], series_part[64];
 } RbMetadata;
+_Static_assert(sizeof(RbMetadata) == 4912, "RbMetadata ABI");
 
 #define RB_EQ_BANDS 20
 typedef struct {
@@ -1259,6 +1262,17 @@ static void extract_metadata(RbMedia *m, RbMetadata *meta) {
        album_artist && *album_artist ? album_artist : tag(m, "album artist"));
   text(meta->date, sizeof(meta->date), alias(m, "date", "year"));
   text(meta->genre, sizeof(meta->genre), tag(m, "genre"));
+  /* Audiobook series (Y2Linux #144): SERIES / SERIES-PART (ID3 TXXX, MP4
+   * freeform, Vorbis; Audiobookshelf, Mp3tag), ID3 MVNM / MVIN (FFmpeg keeps
+   * the frame names; MP4 ©mvn it drops), then the grouping (©grp, TIT1). */
+  const char *series = alias(m, "series", "mvnm");
+  if (!*series)
+    series = alias(m, "movementname", "grouping");
+  text(meta->series, sizeof(meta->series), series);
+  const char *part = alias(m, "series-part", "series_part");
+  if (!*part)
+    part = alias(m, "mvin", "movement");
+  text(meta->series_part, sizeof(meta->series_part), part);
   text(meta->codec, sizeof(meta->codec), avcodec_get_name(p->codec_id));
   /* A film names both codecs, picture first ("h264/aac"): the library tells films by the "/". */
   if (m->video_path)

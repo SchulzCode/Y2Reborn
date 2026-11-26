@@ -12,12 +12,17 @@
 //! in one folder they are separate books unless they share an album tag
 //! (`Book Part 1.m4b`, `Book Part 2.m4b`). A file lying directly in the
 //! Audiobooks folder is a book of its own.
+//!
+//! Books form a series (Y2Linux #144) when two or more share a SERIES (or
+//! MVNM, or grouping) tag, or else the folder that holds them below the
+//! Audiobooks folder (`Audiobooks/<Series>/<Book>/`, `Audiobooks/<Series>/*.m4b`).
+//! A series plays in the tagged order (SERIES-PART, MVIN), then by title.
 use crate::{sort::fold, Track};
 use serde::{Deserialize, Serialize};
 use std::{cmp::Ordering, collections::HashMap, path::Path};
 
 /// Folder names (folded) that hold audiobooks.
-const FOLDERS: [&str; 7] = [
+const FOLDERS: [&str; 11] = [
     "audiobooks",
     "audiobook",
     "audio books",
@@ -25,15 +30,23 @@ const FOLDERS: [&str; 7] = [
     "horbuch",
     "hoerbuecher",
     "hoerbuch",
+    "horspiele",
+    "horspiel",
+    "hoerspiele",
+    "hoerspiel",
 ];
 /// Genres (folded) that mark a file as a book.
-const GENRES: [&str; 6] = [
+const GENRES: [&str; 10] = [
     "audiobook",
     "audiobooks",
     "audio book",
     "horbuch",
     "horbucher",
     "hoerbuch",
+    "horspiel",
+    "horspiele",
+    "hoerspiel",
+    "audio drama",
 ];
 
 fn is_m4b(path: &Path) -> bool {
@@ -76,6 +89,19 @@ pub fn is_book(track: &Track) -> bool {
         && (marker(&track.path).is_some()
             || is_m4b(&track.path)
             || GENRES.contains(&fold(&track.genre).as_str()))
+}
+
+/// The folder that may hold a book's series: the book's own folder when the
+/// book is a file among others there (`.m4b`), else the folder above it;
+/// only one below the Audiobooks folder.
+fn series_folder(track: &Track, dir: &Path) -> Option<std::path::PathBuf> {
+    let mark = marker(&track.path)?;
+    let folder = if is_m4b(&track.path) {
+        dir
+    } else {
+        dir.parent()?
+    };
+    (folder.components().count() > mark + 1).then(|| folder.to_path_buf())
 }
 
 /// The book a file belongs to: its stable key, the folder it is named after
@@ -132,6 +158,88 @@ pub struct Book {
     pub duration_ms: u64,
     /// A part with a cover, for the book's picture.
     pub art: Option<usize>,
+    /// The series it belongs to, when another book shares it.
+    pub series: Option<Series>,
+}
+
+/// A book's series (Y2Linux #144).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Series {
+    /// Stable identity: the folded tag, or the source and the folder.
+    pub key: String,
+    pub name: String,
+    /// The tagged place in thousandths (`2.5` is 2500); `None` untagged.
+    pub part: Option<u64>,
+}
+
+/// The first number in a series-part tag ("3", "2.5", "3/10", "Book 4") in
+/// thousandths.
+fn part_of(tag: &str) -> Option<u64> {
+    let start = tag.find(|c: char| c.is_ascii_digit())?;
+    let rest = &tag[start..];
+    let end = rest
+        .char_indices()
+        .find(|&(i, c)| !(c.is_ascii_digit() || (c == '.' || c == ',') && i > 0))
+        .map_or(rest.len(), |(i, _)| i);
+    let number: f64 = rest[..end]
+        .trim_end_matches(['.', ','])
+        .replace(',', ".")
+        .parse()
+        .ok()?;
+    (number < 1e12).then(|| (number * 1000.).round() as u64)
+}
+
+/// A book's series candidate before the "two books" rule: the tag all parts
+/// share, else the folder above the book.
+fn candidate(tracks: &[Track], parts: &[usize], folder: Option<&Path>) -> Option<Series> {
+    let all = || parts.iter().map(|&i| &tracks[i]);
+    let part = shared(all().map(|t| t.series_part.as_str())).and_then(part_of);
+    if let Some(name) = shared(all().map(|t| t.series.as_str())) {
+        return Some(Series {
+            key: format!("tag:{}", fold(name)),
+            name: name.to_owned(),
+            part,
+        });
+    }
+    let folder = folder?;
+    Some(Series {
+        key: format!("dir:{}|{}", tracks[parts[0]].source_id, folder.display()),
+        name: folder.file_name()?.to_string_lossy().into_owned(),
+        part,
+    })
+}
+
+/// Keeps a series only where two or more books share it, named as the
+/// first of them (A to Z) spells it.
+fn keep_shared_series(books: &mut [Book]) {
+    let mut seen: HashMap<String, (usize, String)> = HashMap::new();
+    for s in books.iter().filter_map(|b| b.series.as_ref()) {
+        seen.entry(s.key.clone()).or_insert((0, s.name.clone())).0 += 1;
+    }
+    for b in books {
+        match b.series.as_mut().map(|s| (&seen[&s.key], s)) {
+            Some(((count, _), _)) if *count < 2 => b.series = None,
+            Some(((_, name), s)) => s.name.clone_from(name),
+            None => {}
+        }
+    }
+}
+
+/// The books of the series `key` in their order: the tagged place first
+/// (untagged after), then the title with numbers compared as numbers.
+pub fn series_books<'a>(books: &'a [Book], key: &str) -> Vec<&'a Book> {
+    let mut list: Vec<&Book> = books
+        .iter()
+        .filter(|b| b.series.as_ref().is_some_and(|s| s.key == key))
+        .collect();
+    list.sort_by(|a, b| {
+        let place = |x: &Book| x.series.as_ref().and_then(|s| s.part).unwrap_or(u64::MAX);
+        place(a)
+            .cmp(&place(b))
+            .then_with(|| natural(&a.title, &b.title))
+            .then_with(|| a.key.cmp(&b.key))
+    });
+    list
 }
 
 /// The value every item shares, if there is one and it is not empty.
@@ -142,20 +250,29 @@ fn shared<'a>(mut values: impl Iterator<Item = &'a str>) -> Option<&'a str> {
 
 /// Every book in `tracks` (only online books), A to Z by title.
 pub fn books(tracks: &[Track]) -> Vec<Book> {
-    let mut groups: HashMap<String, (std::path::PathBuf, bool, Vec<usize>)> = HashMap::new();
+    type Group = (
+        std::path::PathBuf,
+        bool,
+        Option<std::path::PathBuf>,
+        Vec<usize>,
+    );
+    let mut groups: HashMap<String, Group> = HashMap::new();
     for (i, t) in tracks.iter().enumerate() {
         if t.book && t.online {
             let (key, dir, alone) = identity(t);
             groups
                 .entry(key)
-                .or_insert_with(|| (dir, alone, vec![]))
-                .2
+                .or_insert_with(|| {
+                    let folder = series_folder(t, &dir);
+                    (dir, alone, folder, vec![])
+                })
+                .3
                 .push(i);
         }
     }
     let mut books: Vec<Book> = groups
         .into_iter()
-        .map(|(key, (dir, alone, mut parts))| {
+        .map(|(key, (dir, alone, folder, mut parts))| {
             order(tracks, &mut parts);
             let all = || parts.iter().map(|&i| &tracks[i]);
             let title = shared(all().map(|t| t.album.as_str()))
@@ -177,6 +294,7 @@ pub fn books(tracks: &[Track]) -> Vec<Book> {
                 all().map(|t| t.duration_ms).sum()
             };
             let art = parts.iter().copied().find(|&i| tracks[i].artwork);
+            let series = candidate(tracks, &parts, folder.as_deref());
             Book {
                 key,
                 title,
@@ -184,10 +302,12 @@ pub fn books(tracks: &[Track]) -> Vec<Book> {
                 parts,
                 duration_ms,
                 art,
+                series,
             }
         })
         .collect();
     books.sort_by_cached_key(|b| (fold(&b.title), fold(&b.author), b.key.clone()));
+    keep_shared_series(&mut books);
     books
 }
 
@@ -1000,5 +1120,100 @@ mod tests {
         assert!(subdivision("CD1") && subdivision("Disc 02") && subdivision("Part 3"));
         assert!(subdivision("Side A") && subdivision("Teil 2"));
         assert!(!subdivision("Discovery") && !subdivision("Part of Me") && !subdivision("CD"));
+    }
+
+    fn series_of(books: &[Book], title: &str) -> Option<String> {
+        let b = books.iter().find(|b| b.title == title).unwrap();
+        b.series.as_ref().map(|s| s.name.clone())
+    }
+
+    #[test]
+    fn horspiele_folders_and_genre_are_books() {
+        assert!(file("/m/Hörspiele/Die drei ???/001/01.mp3").book);
+        assert!(file("/m/Hoerspiele/Momo/01.mp3").book);
+        let mut tagged = file("/m/Music/Drama/01.mp3");
+        tagged.genre = "Hörspiel".into();
+        assert!(is_book(&tagged));
+    }
+
+    #[test]
+    fn a_folder_of_two_books_is_their_series_and_one_book_stays_alone() {
+        let tracks = [
+            file("/m/Audiobooks/Die drei ???/010 Der Fluch/01.mp3"),
+            file("/m/Audiobooks/Die drei ???/002 Der Super-Papagei/01.mp3"),
+            file("/m/Audiobooks/Die drei ???/001 Der Phantomsee/CD 1/01.mp3"),
+            file("/m/Audiobooks/Discworld/02 The Light Fantastic.m4b"),
+            file("/m/Audiobooks/Discworld/01 The Colour of Magic.m4b"),
+            file("/m/Audiobooks/Frank Herbert/Dune/01.mp3"),
+            file("/m/Audiobooks/Momo/01.mp3"),
+            file("/m/Audiobooks/Loose.m4b"),
+            file("/m/Music/A.m4b"),
+            file("/m/Music/B.m4b"),
+        ];
+        let books = books(&tracks);
+        assert_eq!(
+            series_of(&books, "010 Der Fluch").as_deref(),
+            Some("Die drei ???")
+        );
+        assert_eq!(
+            series_of(&books, "01 The Colour of Magic").as_deref(),
+            Some("Discworld"),
+            "loose .m4b files in one folder"
+        );
+        assert_eq!(series_of(&books, "Dune"), None, "one book is no series");
+        assert_eq!(series_of(&books, "Momo"), None, "directly below Audiobooks");
+        assert_eq!(series_of(&books, "Loose"), None);
+        assert_eq!(
+            series_of(&books, "A"),
+            None,
+            "outside an Audiobooks folder: tags only"
+        );
+        let key = books.iter().find_map(|b| b.series.clone()).unwrap().key;
+        let titles: Vec<_> = series_books(&books, &key)
+            .iter()
+            .map(|b| b.title.clone())
+            .collect();
+        assert_eq!(
+            titles,
+            [
+                "001 Der Phantomsee",
+                "002 Der Super-Papagei",
+                "010 Der Fluch"
+            ],
+            "numbers as numbers"
+        );
+    }
+
+    #[test]
+    fn series_tags_group_anywhere_and_order_by_their_part() {
+        let mut tracks = vec![
+            file("/m/Music/Pratchett/Mort.m4b"),
+            file("/m/Music/Pratchett/Equal Rites.m4b"),
+            file("/m/Music/Pratchett/Sourcery.m4b"),
+            file("/m/Music/Other/Guards! Guards!.m4b"),
+        ];
+        for (t, part) in tracks.iter_mut().zip(["4", "3/41", "", "8"]) {
+            t.series = "Discworld".into();
+            t.series_part = part.into();
+        }
+        tracks[3].series = "DISCWORLD ".into();
+        let books = books(&tracks);
+        let key = books[0].series.clone().unwrap().key;
+        assert!(books
+            .iter()
+            .all(|b| b.series.as_ref().unwrap().name == "Discworld"));
+        let titles: Vec<_> = series_books(&books, &key)
+            .iter()
+            .map(|b| b.title.clone())
+            .collect();
+        assert_eq!(
+            titles,
+            ["Equal Rites", "Mort", "Guards! Guards!", "Sourcery"],
+            "case and spaces fold; untagged last"
+        );
+        assert_eq!(part_of("2.5"), Some(2500));
+        assert_eq!(part_of("Book 10"), Some(10_000));
+        assert_eq!(part_of("1,5"), Some(1500));
+        assert_eq!(part_of("x"), None);
     }
 }

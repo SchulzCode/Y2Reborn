@@ -1801,6 +1801,7 @@ fn settings_has_eight_places_and_customize_three_pages_with_pickers() {
             "Artist's Albums",
             "Artists List",
             "Lists Wrap Around",
+            "Audiobook Series",
             "FM Radio"
         ]
     );
@@ -7283,6 +7284,105 @@ fn an_album_opened_from_a_genre_shows_that_genres_songs_and_offers_the_rest() {
     assert!(m.navigation.filter.ends_with("genre:Jazz"));
 }
 
+/// "Die drei ???": three episodes in a Hörspiele folder, each its own book (Y2Linux #144).
+fn with_series(m: &mut AppModel) {
+    for (n, episode) in [
+        "010 Der Fluch",
+        "002 Der Super-Papagei",
+        "001 Der Phantomsee",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut t = m.library.tracks[0].clone();
+        t.id = 200 + n as i64;
+        t.title = "Teil 1".into();
+        t.album = episode.into();
+        t.album_artist = "Europa".into();
+        t.duration_ms = 60_000;
+        t.filename = "01.mp3".into();
+        t.path = format!("/data/music/Hörspiele/Die drei ???/{episode}/01.mp3").into();
+        t.book = reborn_core::books::is_book(&t);
+        m.library.tracks.push(t);
+    }
+}
+
+#[test]
+fn a_series_is_one_row_that_opens_its_books_in_order() {
+    use reborn_core::books::{books, Shelf};
+    let mut ui = radios();
+    let mut m = app(Screen::Audiobooks);
+    with_book(&mut m);
+    with_series(&mut m);
+    let tracks = m.library.tracks.clone();
+    let labels = |ui: &Ui, m: &AppModel| -> Vec<String> {
+        ui.rows(m, &tracks).into_iter().map(|r| r.label).collect()
+    };
+    assert_eq!(labels(&ui, &m), ["Die drei ???", "Momo"], "new: A to Z");
+    let series = ui.rows(&m, &tracks)[0].clone();
+    assert_eq!(series.secondary, "3 books · Europa");
+    // The series row has no hold menu.
+    m.navigation.focus = 0;
+    ui.model_action(&mut m, Action::ContextMenu);
+    assert_eq!(m.navigation.modal, None);
+    m.navigation.focus = 0;
+    assert_eq!(select_key(&mut ui, &mut m, &series.key), Effect::None);
+    assert_eq!(m.screen, Screen::Audiobooks);
+    assert_eq!(crate::screens::screen_title(&m), "Die drei ???");
+    assert_eq!(
+        labels(&ui, &m),
+        [
+            "001 Der Phantomsee",
+            "002 Der Super-Papagei",
+            "010 Der Fluch"
+        ]
+    );
+    m.navigation.focus = 1;
+    let episode = ui.rows(&m, &tracks)[1].key.clone();
+    select_key(&mut ui, &mut m, &episode);
+    assert_eq!(m.screen, Screen::Book);
+    ui.action(&mut m, &tracks, Action::Back);
+    assert_eq!(
+        (m.screen, m.navigation.focus),
+        (Screen::Audiobooks, 1),
+        "back in the series"
+    );
+    ui.action(&mut m, &tracks, Action::Back);
+    assert_eq!(
+        labels(&ui, &m),
+        ["Die drei ???", "Momo"],
+        "back on Audiobooks"
+    );
+    // Momo started: books in progress come first.
+    let momo = books(&tracks)
+        .into_iter()
+        .find(|b| b.title == "Momo")
+        .unwrap();
+    let mut shelf = Shelf::default();
+    shelf.record(&momo, &tracks, 0, 30_000, 1.0, 1);
+    m.library.shelf = shelf;
+    assert_eq!(labels(&ui, &m), ["Momo", "Die drei ???"]);
+    // Customize > Browsing > Audiobook Series off: every book on its own.
+    m.screen = Screen::Customize;
+    m.navigation.filter = "browsing".into();
+    assert_eq!(
+        select_key(&mut ui, &mut m, "audiobook_series"),
+        Effect::SetAudiobookSeries(false)
+    );
+    m.settings.audiobook_series = false;
+    m.screen = Screen::Audiobooks;
+    m.navigation.filter.clear();
+    assert_eq!(
+        labels(&ui, &m),
+        [
+            "Momo",
+            "001 Der Phantomsee",
+            "002 Der Super-Papagei",
+            "010 Der Fluch"
+        ]
+    );
+}
+
 #[test]
 fn audiobooks_use_cover_flow_with_albums() {
     let ui = radios();
@@ -7299,6 +7399,15 @@ fn audiobooks_use_cover_flow_with_albums() {
     let text = drawn_text(&flow);
     assert!(text.contains("Momo"), "{text}");
     assert!(!text.contains("songs ·"), "{text}");
+    // A series is a cover too, and opens a Cover Flow of its books (Y2Reborn #185).
+    with_series(&mut m);
+    let tracks = m.library.tracks.clone();
+    let text = drawn_text(&ui.draw(&m, &tracks, false));
+    assert!(text.contains("Die drei ???"), "{text}");
+    m.navigation.filter = ui.rows(&m, &tracks)[0].key.clone();
+    let inside = ui.draw(&m, &tracks, false);
+    assert!(inside.iter().filter(|q| q.warp.is_some()).count() >= 2);
+    assert!(drawn_text(&inside).contains("001 Der Phantomsee"));
     m.settings.album_view = reborn_core::AlbumView::Grid;
     let list = ui.draw(&m, &tracks, false);
     assert!(list.iter().all(|q| q.warp.is_none()));

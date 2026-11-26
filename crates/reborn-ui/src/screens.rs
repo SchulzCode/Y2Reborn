@@ -763,7 +763,9 @@ pub fn screen_title(m: &AppModel) -> String {
         }
         Screen::SettingsDisplay => "Display".into(),
         Screen::Customize => crate::customize::title(&m.navigation.filter),
-        Screen::Audiobooks => "Audiobooks".into(),
+        Screen::Audiobooks => crate::views_books::parse_series(&m.navigation.filter)
+            .map_or("Audiobooks", |(_, name)| name)
+            .into(),
         Screen::Videos => "Videos".into(),
         Screen::Book => "Audiobook".into(),
         Screen::SettingsSystem => "Service".into(),

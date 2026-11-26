@@ -128,6 +128,7 @@ mod tests {
             parts: parts.to_vec(),
             duration_ms: 0,
             art: None,
+            series: None,
         }
     }
 

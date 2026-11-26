@@ -323,6 +323,7 @@ impl Ui {
             k if k.starts_with("set:") => crate::customize::chosen(m, k)?,
             "wrap_around" => Effect::SetWrapAround(m.settings.wrap_around.next()),
             "home_audiobooks" => Effect::SetAudiobooksOnHome(!m.settings.audiobooks_on_home),
+            "audiobook_series" => Effect::SetAudiobookSeries(!m.settings.audiobook_series),
             k if k.starts_with("btn_") => self.button_select(m, k)?,
             "haptics" => Effect::SetHaptics(m.settings.haptics.next()),
             "wheel_click" => Effect::SetWheelClick(m.settings.wheel_click.next()),

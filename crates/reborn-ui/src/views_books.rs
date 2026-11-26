@@ -22,6 +22,9 @@ pub(crate) type BookCache = ((usize, usize), Vec<Book>);
 #[derive(PartialEq)]
 pub(crate) struct RowsStamp {
     library: (usize, usize),
+    /// The page: all books, or one series (`series_filter`), and whether series group.
+    filter: String,
+    series: bool,
     shelf: books::Shelf,
     chapters: usize,
     playing: Option<String>,
@@ -74,12 +77,16 @@ impl Ui {
         let playing = m.book.as_ref().map(|l| l.key.clone());
         let fresh = matches!(&*self.book_rows.borrow(), Some((s, _))
             if s.library == crate::library_stamp(tracks)
+                && s.filter == m.navigation.filter
+                && s.series == m.settings.audiobook_series
                 && s.shelf == m.library.shelf
                 && s.chapters == m.library.chapters.len()
                 && s.playing == playing);
         if !fresh {
             let stamp = RowsStamp {
                 library: crate::library_stamp(tracks),
+                filter: m.navigation.filter.clone(),
+                series: m.settings.audiobook_series,
                 shelf: m.library.shelf.clone(),
                 chapters: m.library.chapters.len(),
                 playing: playing.clone(),
@@ -170,35 +177,100 @@ pub(crate) fn status(m: &AppModel, tracks: &[Track], book: &Book) -> String {
     }
 }
 
+/// The prefix of a series' row key and of its page's filter.
+pub(crate) const SERIES: &str = "series:";
+
+/// A series' row key and its page's filter: the key, then its name for the
+/// page's title.
+fn series_filter(s: &books::Series) -> String {
+    format!("{SERIES}{}\u{1f}{}", s.key, s.name)
+}
+
+/// The series a filter opens: (key, name).
+pub(crate) fn parse_series(filter: &str) -> Option<(&str, &str)> {
+    filter.strip_prefix(SERIES)?.split_once('\u{1f}')
+}
+
+/// Where a book stands: 0 in progress (with when it was last heard), 1 new,
+/// 2 finished.
+fn standing(m: &AppModel, tracks: &[Track], b: &Book) -> (u8, i64) {
+    let saved = m.library.shelf.find(b, tracks).map(|(_, p)| p.clone());
+    let playing = m.book.as_ref().is_some_and(|l| l.key == b.key);
+    match saved {
+        _ if playing => (0, i64::MAX),
+        Some(p) if p.finished => (2, 0),
+        Some(p) => (0, p.updated),
+        None => (1, 0),
+    }
+}
+
+fn book_item(m: &AppModel, tracks: &[Track], b: &Book) -> Item {
+    let mut item =
+        Item::new(b.title.clone(), format!("book:{}", b.key)).with_secondary(status(m, tracks, b));
+    item.art = b.art;
+    item
+}
+
 /// Audiobooks: books in progress first (the last listened first), then the
-/// new ones A to Z, finished books last.
+/// new ones A to Z, finished books last. A series (Y2Linux #144) is one row,
+/// standing where its most recently heard (else its first new) book would;
+/// its page lists its books in series order.
 pub(crate) fn book_rows(ui: &Ui, m: &AppModel, tracks: &[Track]) -> Vec<Item> {
-    let mut books: Vec<(u8, i64, Book)> = ui
-        .books(tracks)
+    let all = ui.books(tracks);
+    if let Some((key, _)) = parse_series(&m.navigation.filter) {
+        return books::series_books(&all, key)
+            .into_iter()
+            .map(|b| book_item(m, tracks, b))
+            .collect();
+    }
+    let grouped = m.settings.audiobook_series;
+    let mut rows: Vec<((u8, i64, String), Item)> = vec![];
+    let mut series: std::collections::HashMap<&str, usize> = Default::default();
+    for b in &all {
+        let (group, recent) = standing(m, tracks, b);
+        let order = (group, -recent, String::new());
+        match b.series.as_ref().filter(|_| grouped) {
+            Some(s) => match series.get(s.key.as_str()) {
+                Some(&at) => rows[at].0 = rows[at].0.clone().min(order),
+                None => {
+                    series.insert(&s.key, rows.len());
+                    rows.push((order, Item::new(s.name.clone(), series_filter(s))));
+                }
+            },
+            None => rows.push((order, book_item(m, tracks, b))),
+        }
+    }
+    for (key, &at) in &series {
+        let members = books::series_books(&all, key);
+        let item = &mut rows[at].1;
+        item.art = members.iter().find_map(|b| b.art);
+        let author = members
+            .iter()
+            .map(|b| b.author.as_str())
+            .try_fold(None, |seen: Option<&str>, a| match seen {
+                Some(s) if s != a => Err(()),
+                _ => Ok(Some(a)),
+            })
+            .ok()
+            .flatten()
+            .filter(|a| !a.is_empty());
+        item.secondary = [
+            Some(components::count(members.len(), "book", "books")),
+            author.map(str::to_owned),
+        ]
         .into_iter()
-        .map(|b| {
-            let saved = m.library.shelf.find(&b, tracks).map(|(_, p)| p.clone());
-            let playing = m.book.as_ref().is_some_and(|l| l.key == b.key);
-            let (group, recent) = match saved {
-                _ if playing => (0, i64::MAX),
-                Some(p) if p.finished => (2, 0),
-                Some(p) => (0, p.updated),
-                None => (1, 0),
-            };
-            (group, -recent, b)
-        })
-        .collect();
-    // Stable: within a group the A to Z order of `books` stays.
-    books.sort_by_key(|(group, recent, _)| (*group, *recent));
-    books
-        .into_iter()
-        .map(|(_, _, b)| {
-            let mut item = Item::new(b.title.clone(), format!("book:{}", b.key))
-                .with_secondary(status(m, tracks, &b));
-            item.art = b.art;
-            item
-        })
-        .collect()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join(" · ");
+    }
+    // A new series stands among the new books A to Z by its name.
+    for (order, item) in &mut rows {
+        if order.0 == 1 {
+            order.2 = reborn_core::sort::fold(&item.label);
+        }
+    }
+    rows.sort_by(|a, b| a.0.cmp(&b.0));
+    rows.into_iter().map(|(_, item)| item).collect()
 }
 
 /// A book's page: Continue (or Play) and Start Over, then its chapters.

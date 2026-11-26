@@ -488,6 +488,10 @@ impl Ui {
             Self::back(m);
             return Effect::None;
         }
+        if key.starts_with(crate::views_books::SERIES) {
+            Self::go(m, Screen::Audiobooks, key);
+            return Effect::None;
+        }
         if let Some(book) = key.strip_prefix("book:") {
             Self::go(m, Screen::Book, book);
             return Effect::LoadChapters(book.to_owned());

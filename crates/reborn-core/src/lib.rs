@@ -464,6 +464,13 @@ pub struct Track {
     /// Release year from the date tag; 0 when the file has none (Y2Reborn #66).
     #[serde(default)]
     pub year: u16,
+    /// The series a book belongs to, from its SERIES, MVNM or grouping tag; empty
+    /// without one (Y2Linux #144). Only audiobooks use it.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub series: String,
+    /// The book's place in that series as tagged (SERIES-PART or MVIN: "3", "2.5", "3/10").
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub series_part: String,
     /// An audiobook part (`books::is_book`), set when the library loads; never
     /// stored, so the rule can change without a rescan.
     #[serde(default)]
@@ -933,6 +940,9 @@ pub struct Settings {
     /// Audiobooks stand on Home once the library holds one (Beta 8.19).
     #[serde(default = "default_true")]
     pub audiobooks_on_home: bool,
+    /// Audiobooks shows each series as one row that opens its books (Y2Linux #144).
+    #[serde(default = "default_true")]
+    pub audiobook_series: bool,
     /// Playlists shown in another order than their file's, by path.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub playlist_sort: std::collections::BTreeMap<String, PlaylistSort>,
@@ -1308,6 +1318,7 @@ impl Default for Settings {
             wheel_click: WheelClick::Off,
             speaker: true,
             audiobooks_on_home: true,
+            audiobook_series: true,
             playlist_sort: Default::default(),
             codec_revision: CODEC_REVISION,
             theme: String::new(),
@@ -1659,6 +1670,8 @@ pub enum Effect {
     /// Read the chapter marks of this book's files (its page opened).
     LoadChapters(String),
     SetAudiobooksOnHome(bool),
+    /// Customize > Browsing > Audiobook Series.
+    SetAudiobookSeries(bool),
     /// The playing book's speed (kept for that book).
     SetBookSpeed(u16),
     SetSleepTimer(SleepChoice),

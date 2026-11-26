@@ -255,6 +255,32 @@ def update_films() -> None:
     path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
 
 
+def make_series() -> list[str]:
+    """Series-tagged books (Y2Linux #144, 2026-11-26): an MP3 with ID3 TXXX
+    SERIES and SERIES-PART, and an M4B whose series is its grouping (©grp; the
+    MP4 muxer keeps no free-form SERIES)."""
+    source = ["-f", "lavfi", "-i", "sine=frequency=330:sample_rate=22050:duration=1",
+              "-af", "volume=0.04", "-ac", "1", "-metadata", "title=Series Book",
+              "-metadata", "album=Series Book", "-metadata", "genre=Audiobook",
+              "-metadata", "grouping=Fixture Group", "-fflags", "+bitexact"]
+    run(*source, "-metadata", "SERIES=Fixture Series", "-metadata", "SERIES-PART=2.5",
+        "-c:a", "libmp3lame", "-b:a", "24k", "-id3v2_version", "3", str(OUT / "book-series.mp3"))
+    run(*source, "-c:a", "aac", "-b:a", "24k", str(OUT / "book-series.m4b"))
+    return ["book-series.mp3", "book-series.m4b"]
+
+
+def update_series() -> None:
+    """Write only the series specimens and record them in the manifest."""
+    names = make_series()
+    path = OUT / "manifest.json"
+    manifest = json.loads(path.read_text())
+    for name in names:
+        data = (OUT / name).read_bytes()
+        manifest["files"][name] = {"sha256": hashlib.sha256(data).hexdigest(), "bytes": len(data)}
+    manifest["series_cases"] = {"generator_ffmpeg_version": ffmpeg_version(), "files": names}
+    path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+
+
 def update_books() -> None:
     """Write only the audiobook specimens and record them in the manifest,
     leaving every other fixture (and its hash) as it is."""
@@ -401,7 +427,9 @@ def main() -> None:
 if __name__ == "__main__":
     import sys
 
-    if sys.argv[1:] == ["--books"]:
+    if sys.argv[1:] == ["--series"]:
+        update_series()
+    elif sys.argv[1:] == ["--books"]:
         update_books()
     elif sys.argv[1:] == ["--covers"]:
         update_covers()

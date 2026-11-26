@@ -56,7 +56,7 @@ Settings
 ├ Customize                  Home Menu › · Browsing › · Buttons ›
 │  ├ Home Menu               the places on Home and their order
 │  ├ Browsing                Cover Flow · Sort Albums · Artist's Albums › · Artists List
-│  │                         · Lists Wrap Around › · FM Radio
+│  │                         · Lists Wrap Around › · Audiobook Series · FM Radio
 │  └ Buttons                 Layout › · In Menus › · On Now Playing › · Screen Off › · Save/Discard
 │                            (or Delete This Layout) · Hold Time › · Wheel Click · Haptics ›
 │                            (each layer: the player drawn, a button's page, its command picker)
@@ -74,6 +74,9 @@ Under it, **What's New** (Y2Linux #128) opens this version's release notes: the 
 for the player (before `<!-- github-only -->`), fetched once over Wi-Fi and kept in `state/whats-new.json`, read
 with the wheel (`Screen::WhatsNew`). **Show What's New After Updates** (off by default) opens them once on the first
 start of a new version, on Home or Now Playing; anywhere else a toast says where they are.
+
+Browsing's **Audiobook Series** (a switch, on by default, Y2Linux #144) shows a series on Audiobooks as one row
+that opens its books in series order (`books::series_books`); off, every book stands on its own.
 
 Browsing's **FM Radio** (a switch, on by default) decides whether Radio shows the player's own tuner. With it,
 Radio opens as a choice of **FM Radio** and **Internet Radio** (the internet stations' menu is `Screen::Radio`

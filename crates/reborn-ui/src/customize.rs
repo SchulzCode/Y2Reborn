@@ -70,6 +70,8 @@ pub(crate) fn page(ui: &Ui, m: &AppModel) -> Page {
                 current(m, "wrap_around"),
             )
             .with_kind(RowKind::Chevron),
+            row("Audiobook Series", "audiobook_series", "")
+                .with_kind(RowKind::Toggle(m.settings.audiobook_series)),
             row("FM Radio", "fm_radio", "").with_kind(RowKind::Toggle(m.settings.fm_radio)),
         ],
         _ => vec![
@@ -117,6 +119,7 @@ fn hint(key: &str) -> Option<&'static str> {
         }
         "artists_list" => "Everyone who sings on a song, or only each album's artist.",
         "choose:wrap_around" => "Whether a list goes on at the top after its last row.",
+        "audiobook_series" => "A series as one row that opens its books, in series order.",
         "fm_radio" => "Whether Radio shows FM. Turn it off on a player that receives no FM.",
         "wheel_click" => "A soft tick on each wheel step while no music plays.",
         "choose:haptics" => "A short buzz on each button press.",

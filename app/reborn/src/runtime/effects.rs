@@ -320,6 +320,10 @@ impl Runtime {
                 self.model.settings.audiobooks_on_home = on;
                 self.checkpoint();
             }
+            Effect::SetAudiobookSeries(on) => {
+                self.model.settings.audiobook_series = on;
+                self.checkpoint();
+            }
             Effect::SetBookFinished(key, finished) => self.set_book_finished(&key, finished)?,
             Effect::ForgetBook(key) => self.forget_book(&key)?,
             Effect::LoadChapters(key) => {

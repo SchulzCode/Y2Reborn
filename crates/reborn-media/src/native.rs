@@ -62,7 +62,12 @@ struct RawMetadata {
     probe_us: u64,
     io_bytes: u64,
     info_runs: u32,
+    series: [c_char; 512],
+    series_part: [c_char; 64],
 }
+// Pinned with RbMetadata in native/media.c (a _Static_assert there).
+const _: () = assert!(std::mem::size_of::<RawMetadata>() == RB_METADATA_SIZE);
+const RB_METADATA_SIZE: usize = 4912;
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct RawEqBand {
@@ -593,6 +598,9 @@ pub struct Metadata {
     pub probe_us: u64,
     pub io_bytes: u64,
     pub info_runs: u32,
+    /// An audiobook's series tag and its place in it (Y2Linux #144).
+    pub series: String,
+    pub series_part: String,
 }
 
 impl Metadata {
@@ -647,6 +655,8 @@ impl Metadata {
             probe_us: meta.probe_us,
             io_bytes: meta.io_bytes,
             info_runs: meta.info_runs,
+            series: text(&meta.series),
+            series_part: text(&meta.series_part),
         }
     }
 }
@@ -2327,6 +2337,20 @@ mod metadata_tests {
             assert_eq!(m.title, d.metadata.title);
             assert_eq!(m.source_bits, d.metadata.source_bits);
         }
+    }
+    #[test]
+    fn audiobook_series_tags_are_read_and_grouping_stands_in() {
+        let m = inspect("book-series.mp3");
+        assert_eq!(
+            (m.series.as_str(), m.series_part.as_str()),
+            ("Fixture Series", "2.5")
+        );
+        let m = inspect("book-series.m4b");
+        assert_eq!(
+            (m.series.as_str(), m.series_part.as_str()),
+            ("Fixture Group", "")
+        );
+        assert_eq!(inspect("m4a-aac.m4a").series, "", "no tag, no series");
     }
     #[test]
     fn wav_aiff_and_existing_mp4_vorbis_tags_use_the_same_mapping() {

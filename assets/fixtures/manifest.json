@@ -96,6 +96,14 @@
       "bytes": 21369,
       "sha256": "ad69ad2c2845060d6c9989329a34c6993c2e56cd8e783337db3aa3c6c00eb6d3"
     },
+    "book-series.m4b": {
+      "bytes": 2707,
+      "sha256": "2c06ef6902155978fff7bc803b11f9ee5ad8e1a8944fbc440a56c6f13bb37463"
+    },
+    "book-series.mp3": {
+      "bytes": 3576,
+      "sha256": "1e922b55eb115cb7202f46df41ce08ae0f8fe14237e7ff2b013bd02e7c7c60e1"
+    },
     "corrupt-metadata.mp3": {
       "bytes": 5160,
       "sha256": "4fcc6dfd14fa9ce15c277b6ca730ec84138488b43e4a2d3fd17549d742c4a3a2"
@@ -291,6 +299,13 @@
     "source_bits": 24
   },
   "schema": "org.y2reborn.audio-fixtures/v2",
+  "series_cases": {
+    "files": [
+      "book-series.mp3",
+      "book-series.m4b"
+    ],
+    "generator_ffmpeg_version": "9.1"
+  },
   "source_combinations": [
     "FLAC 16/44.1",
     "FLAC 16/48",

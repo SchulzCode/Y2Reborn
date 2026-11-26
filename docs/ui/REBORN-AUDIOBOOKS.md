@@ -167,3 +167,28 @@ Options (owner decision owed):
 
 Suggested: B first, A as an audiobook feature later. The reporter was told (comment
 6563558979) to keep the separate books or split into parts of up to ≈30 h.
+
+## Series (Y2Linux #144, Y2Reborn #185, 2026-11-26)
+
+Asked three times (Y2Linux #144, Y2Reborn #185, a comment on Y2Reborn #27): long series and audio dramas
+(Die drei ???, Discworld, Big Finish) were a flat list of 50–200 books. Owner decisions: a folder groups only
+when it holds two or more books; no Author level; on by default with a switch in Customize > Browsing.
+
+- **Core** (`reborn_core::books`): `Book.series` (`Series { key, name, part }`). The series is the SERIES tag
+  every part shares (key `tag:` + the folded name, so the spelling may differ per book), else the folder
+  above the book, below the Audiobooks folder (`series_folder`: the book's own folder for `.m4b` files, which
+  are books among others there). Without an Audiobooks folder only tags group (`/Music/A.m4b`, `/Music/B.m4b`
+  stay apart). `keep_shared_series` drops a series with one book and names it as its first book (A to Z)
+  spells it. `series_books` orders by the part (thousandths, untagged last), then `natural` title.
+  `Hörspiel(e)` / `Hoerspiel(e)` folders and the genres `Hörspiel`, `Audio Drama` now make books.
+- **Tags** (`media.c`): `series` ← SERIES, MVNM, movementname, grouping; `series_part` ← SERIES-PART,
+  series_part, MVIN, movement. FFmpeg 9 keeps ID3 TXXX and MP4 free-form (`----`) names as keys and maps
+  TIT1 / `©grp` to `grouping`; it drops MP4 `©mvn`/`©mvi`. `RbMetadata` grew at its end (4912 bytes, pinned
+  on both sides). Fixtures `book-series.mp3` (TXXX) and `book-series.m4b` (grouping): `fixtures.py --series`.
+- **Library**: columns `series`, `series_part` (additive), `METADATA_REVISION` 7. `books_only_reread` marks
+  every revision-6 row that is no book current at open, so the update re-reads the audiobooks only (the
+  volume revision still changes: the first scan walks every folder once).
+- **UI**: the series row's key and its page's filter are `series:<key>\u{1f}<name>` (`parse_series`; the
+  page's title is the name). The row stands where its best book would (in progress by recency, else new A
+  to Z by its name, else finished), shows "N books · author" and the first cover; it has no hold menu.
+  Cover Flow works on both levels unchanged. Search still finds books one by one.

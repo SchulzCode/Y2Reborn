@@ -28,9 +28,10 @@ const SQLITE_CANTOPEN_PERM_EXTENDED: i32 = rusqlite::ffi::SQLITE_CANTOPEN | (3 <
 pub const SCHEMA_VERSION: i64 = 1;
 /// 3: genre is read and stored; 4: Vorbis/APE "ALBUM ARTIST" (with a space) is
 /// read as the album artist; 5: the year (Y2Reborn #66); 6: a film the player cannot
-/// show (HEVC, AV1, …) is a film ("hevc/aac"), not a song. Every older row re-reads
+/// show (HEVC, AV1, …) is a film ("hevc/aac"), not a song; 7: an audiobook's series tags
+/// (Y2Linux #144), re-read for books only (`books_only_reread`). Every older row re-reads
 /// its tags once, in the background at the scanner's usual speed.
-const METADATA_REVISION: i64 = 6;
+const METADATA_REVISION: i64 = 7;
 /// Which files a walk takes (1: films too). A quick scan trusts a volume's folder records only
 /// when they were written under the same rules: `VOLUME_REVISION` is kept with them, so the
 /// first scan after this changes walks every folder once and finds the files left out before.
@@ -232,6 +233,15 @@ fn open(path: &Path) -> Result<Connection, OpenFailure> {
         c.execute_batch("ALTER TABLE tracks ADD COLUMN genre TEXT NOT NULL DEFAULT '';")
             .map_err(|e| classify_open_error(e, OpenStage::Migration))?;
     }
+    // Additive like year: an audiobook's series tags (METADATA_REVISION 7, Y2Linux #144).
+    if !has_column(&c, "series")? {
+        c.execute_batch(
+            "ALTER TABLE tracks ADD COLUMN series TEXT NOT NULL DEFAULT '';
+             ALTER TABLE tracks ADD COLUMN series_part TEXT NOT NULL DEFAULT '';",
+        )
+        .map_err(|e| classify_open_error(e, OpenStage::Migration))?;
+    }
+    books_only_reread(&c).map_err(|e| classify_open_error(e, OpenStage::Migration))?;
     quick_check(&c)?;
     // Additive indexes preserve the v1 file format and rollback compatibility.
     // Y2 20k-track measurements: ordered pages ~95 -> 5 ms, artist ~42 -> 5 ms,
@@ -269,6 +279,37 @@ fn year_of(date: &str) -> u16 {
         .unwrap_or(0)
 }
 
+/// Revision 7 only adds the series tags, which only books use: a revision-6
+/// row that is no book is current as it is, so a 120 000-song card re-reads
+/// its audiobooks, not every song.
+fn books_only_reread(c: &Connection) -> rusqlite::Result<()> {
+    let mut rows = c.prepare("SELECT id,path,genre FROM tracks WHERE metadata_revision=6")?;
+    let songs: Vec<i64> = rows
+        .query_map([], |r| {
+            let track = Track {
+                path: PathBuf::from(r.get::<_, String>(1)?),
+                genre: r.get(2)?,
+                ..Track::default()
+            };
+            Ok((r.get(0)?, reborn_core::books::is_book(&track)))
+        })?
+        .filter_map(|row| row.ok().filter(|(_, book)| !book).map(|(id, _)| id))
+        .collect();
+    if songs.is_empty() {
+        return Ok(());
+    }
+    let tx = c.unchecked_transaction()?;
+    {
+        let mut update = tx.prepare(&format!(
+            "UPDATE tracks SET metadata_revision={METADATA_REVISION} WHERE id=?1"
+        ))?;
+        for id in songs {
+            update.execute([id])?;
+        }
+    }
+    tx.commit()
+}
+
 /// Whether `tracks` has the column `name` (the additive migrations).
 fn has_column(c: &Connection, name: &str) -> Result<bool, OpenFailure> {
     let migration = |e| classify_open_error(e, OpenStage::Migration);
@@ -304,13 +345,15 @@ fn from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Track> {
         online: r.get(18)?,
         genre: r.get(19)?,
         year: r.get(20)?,
+        series: r.get(21)?,
+        series_part: r.get(22)?,
         book: false,
         own_album_artist: None,
     };
     track.book = reborn_core::books::is_book(&track);
     Ok(track)
 }
-const SELECT:&str="SELECT t.id,t.source_id,t.path,t.filename,t.size,t.mtime,t.title,t.artist,t.album,t.album_artist,t.track,t.disc,t.duration_ms,t.codec,t.sample_rate,t.channels,t.bitrate,t.artwork,s.online,t.genre,t.year FROM tracks t JOIN sources s ON s.id=t.source_id";
+const SELECT:&str="SELECT t.id,t.source_id,t.path,t.filename,t.size,t.mtime,t.title,t.artist,t.album,t.album_artist,t.track,t.disc,t.duration_ms,t.codec,t.sample_rate,t.channels,t.bitrate,t.artwork,s.online,t.genre,t.year,t.series,t.series_part FROM tracks t JOIN sources s ON s.id=t.source_id";
 fn list(c: &Connection, f: &Filter) -> Result<Vec<Track>, String> {
     let mut sql = format!("{SELECT} WHERE t.deleted=0");
     // Keep values bound, but expose actual predicates to SQLite so it can seek
@@ -642,12 +685,12 @@ fn batch_tracked(
 ) -> Result<(), String> {
     let tx = c.transaction().map_err(err)?;
     {
-        let mut q=tx.prepare_cached("INSERT INTO tracks(source_id,path,filename,size,mtime,title,artist,album,album_artist,track,disc,duration_ms,codec,sample_rate,channels,bitrate,artwork,seen,metadata_revision,genre,year) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21) ON CONFLICT(source_id,path) DO UPDATE SET filename=excluded.filename,size=excluded.size,mtime=excluded.mtime,title=excluded.title,artist=excluded.artist,album=excluded.album,album_artist=excluded.album_artist,track=excluded.track,disc=excluded.disc,duration_ms=excluded.duration_ms,codec=excluded.codec,sample_rate=excluded.sample_rate,channels=excluded.channels,bitrate=excluded.bitrate,artwork=excluded.artwork,seen=excluded.seen,metadata_revision=excluded.metadata_revision,genre=excluded.genre,year=excluded.year,deleted=0 WHERE tracks.deleted<>0 OR tracks.metadata_revision IS NOT excluded.metadata_revision OR
+        let mut q=tx.prepare_cached("INSERT INTO tracks(source_id,path,filename,size,mtime,title,artist,album,album_artist,track,disc,duration_ms,codec,sample_rate,channels,bitrate,artwork,seen,metadata_revision,genre,year,series,series_part) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23) ON CONFLICT(source_id,path) DO UPDATE SET filename=excluded.filename,size=excluded.size,mtime=excluded.mtime,title=excluded.title,artist=excluded.artist,album=excluded.album,album_artist=excluded.album_artist,track=excluded.track,disc=excluded.disc,duration_ms=excluded.duration_ms,codec=excluded.codec,sample_rate=excluded.sample_rate,channels=excluded.channels,bitrate=excluded.bitrate,artwork=excluded.artwork,seen=excluded.seen,metadata_revision=excluded.metadata_revision,genre=excluded.genre,year=excluded.year,series=excluded.series,series_part=excluded.series_part,deleted=0 WHERE tracks.deleted<>0 OR tracks.metadata_revision IS NOT excluded.metadata_revision OR
  tracks.filename IS NOT excluded.filename OR tracks.size IS NOT excluded.size OR tracks.mtime IS NOT excluded.mtime OR
  tracks.title IS NOT excluded.title OR tracks.artist IS NOT excluded.artist OR tracks.album IS NOT excluded.album OR
  tracks.album_artist IS NOT excluded.album_artist OR tracks.track IS NOT excluded.track OR tracks.disc IS NOT excluded.disc OR
  tracks.duration_ms IS NOT excluded.duration_ms OR tracks.codec IS NOT excluded.codec OR tracks.sample_rate IS NOT excluded.sample_rate OR
- tracks.channels IS NOT excluded.channels OR tracks.bitrate IS NOT excluded.bitrate OR tracks.artwork IS NOT excluded.artwork OR tracks.genre IS NOT excluded.genre OR tracks.year IS NOT excluded.year").map_err(err)?;
+ tracks.channels IS NOT excluded.channels OR tracks.bitrate IS NOT excluded.bitrate OR tracks.artwork IS NOT excluded.artwork OR tracks.genre IS NOT excluded.genre OR tracks.year IS NOT excluded.year OR tracks.series IS NOT excluded.series OR tracks.series_part IS NOT excluded.series_part").map_err(err)?;
         let mut presence = tx.prepare_cached("INSERT OR IGNORE INTO scan_seen SELECT id FROM tracks WHERE source_id=?1 AND path=?2").map_err(err)?;
         for t in tracks {
             q.execute(params![
@@ -671,7 +714,9 @@ fn batch_tracked(
                 seen,
                 METADATA_REVISION,
                 t.genre,
-                t.year
+                t.year,
+                t.series,
+                t.series_part
             ])
             .map_err(err)?;
             if mark_seen {
@@ -1703,6 +1748,8 @@ impl ScanBatch<'_> {
                     online: true,
                     genre: m.genre.trim().to_owned(),
                     year: year_of(&m.date),
+                    series: m.series.trim().to_owned(),
+                    series_part: m.series_part.trim().to_owned(),
                     // Not stored: `from_row` derives it when the catalog loads.
                     book: false,
                     own_album_artist: None,
@@ -3548,6 +3595,77 @@ mod ingest_regression_tests {
         assert_eq!(scan(&db).rescanned, 1, "re-read once");
         assert_eq!(scan(&db).reused, 1);
         assert_eq!(years(&db), [2024]);
+        db.shutdown(Duration::from_secs(5)).unwrap();
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn series_revision_rereads_only_the_audiobooks() {
+        let root =
+            std::env::temp_dir().join(format!("reborn-series-upgrade-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("Audiobooks/Fixture")).unwrap();
+        let log = Observer::new(&root.join("logs")).unwrap();
+        let source = Source {
+            id: "internal".into(),
+            kind: MediaSource::Internal,
+            root: root.clone(),
+            online: true,
+            mount: "fixture".into(),
+            mount_id: None,
+        };
+        fs::copy(fixture("metadata/tags.flac"), root.join("song.flac")).unwrap();
+        fs::copy(
+            fixture("book-series.mp3"),
+            root.join("Audiobooks/Fixture/01.mp3"),
+        )
+        .unwrap();
+        let series = |db: &Database| -> Vec<(String, String)> {
+            let mut all: Vec<_> = db
+                .list(Filter {
+                    limit: 10,
+                    ..Filter::default()
+                })
+                .unwrap()
+                .recv_timeout(Duration::from_secs(5))
+                .unwrap()
+                .unwrap()
+                .into_iter()
+                .map(|t| (t.series, t.series_part))
+                .collect();
+            all.sort();
+            all
+        };
+        let scan = |db: &Database| {
+            scan_sources_with_identity(
+                db,
+                std::slice::from_ref(&source),
+                &log,
+                &AtomicBool::new(false),
+                |_| true,
+            )
+            .unwrap()
+        };
+        let tagged = vec![
+            (String::new(), String::new()),
+            ("Fixture Series".to_owned(), "2.5".to_owned()),
+        ];
+        let db = Database::spawn(root.join("library.sqlite"), log.clone()).unwrap();
+        db.sources(vec![source.clone()]).unwrap();
+        assert_eq!(scan(&db).rescanned, 2);
+        assert_eq!(series(&db), tagged);
+        // A revision-6 library: no series columns yet.
+        db.execute_test_sql(
+            "UPDATE tracks SET metadata_revision=6; ALTER TABLE tracks DROP COLUMN series;
+             ALTER TABLE tracks DROP COLUMN series_part;"
+                .into(),
+        )
+        .unwrap();
+        db.shutdown(Duration::from_secs(5)).unwrap();
+        let db = Database::spawn(root.join("library.sqlite"), log.clone()).unwrap();
+        db.sources(vec![source.clone()]).unwrap();
+        let first = scan(&db);
+        assert_eq!((first.rescanned, first.reused), (1, 1), "the book only");
+        assert_eq!(series(&db), tagged);
         db.shutdown(Duration::from_secs(5)).unwrap();
         fs::remove_dir_all(root).unwrap();
     }

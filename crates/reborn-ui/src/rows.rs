@@ -326,6 +326,10 @@ impl Ui {
         {
             return self.playlist_context_rows(m, key.unwrap_or(""));
         }
+        // A series row opens its books; it has no menu of its own.
+        if key.is_some_and(|k| k.starts_with(crate::views_books::SERIES)) {
+            return vec![];
+        }
         if let Some(book) = key
             .and_then(|k| k.strip_prefix("book:"))
             .map(str::to_owned)
