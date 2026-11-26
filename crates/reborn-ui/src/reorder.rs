@@ -55,6 +55,9 @@ impl Ui {
         if let Some(effect) = self.brightness_input(m, action) {
             return Some(effect);
         }
+        if let Some(effect) = self.battery_history_input(m, action) {
+            return Some(effect);
+        }
         if let Some(effect) = self.book_speed_input(m, action) {
             return Some(effect);
         }

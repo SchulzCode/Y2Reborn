@@ -2,6 +2,7 @@
 
 mod accent;
 pub mod art;
+mod battery_history;
 mod boot;
 mod buttons_page;
 mod canvas;
@@ -630,6 +631,8 @@ pub struct Ui {
     pub themes: Vec<skin::SkinInfo>,
     /// Headphone profile files, as last scanned for the profile list.
     pub eq_profiles: Vec<reborn_core::eq::ProfileFile>,
+    /// What the battery history page shows (view, range, day).
+    battery_chart: battery_history::ChartView,
 }
 
 /// A dialog the player raises by itself.
@@ -716,6 +719,7 @@ fn route(key: &str) -> Option<Screen> {
         "home_menu" => Screen::HomeMenu,
         "system" => Screen::SettingsSystem,
         "battery" => Screen::Battery,
+        "battery_history" => Screen::BatteryHistory,
         "sleep" => Screen::Sleep,
         "storage" => Screen::Storage,
         "update" => Screen::Update,

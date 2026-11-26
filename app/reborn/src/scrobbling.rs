@@ -149,7 +149,7 @@ impl Runtime {
     }
     /// The wall clock now, when Y2Linux says it can be trusted (checked at
     /// most every 30 s).
-    fn trusted_unix(&mut self) -> Option<i64> {
+    pub(crate) fn trusted_unix(&mut self) -> Option<i64> {
         let fresh = self
             .clock_trusted
             .filter(|(at, _)| at.elapsed() < Duration::from_secs(30));

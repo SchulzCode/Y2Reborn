@@ -2,8 +2,10 @@
 mod art_owner;
 pub(crate) use art_owner::{art_owner_of, keeps_art, ArtOwner};
 mod audio;
+mod battery_history;
 #[cfg(test)]
 pub(crate) use audio::keep_live_parts;
+pub(crate) use battery_history::Writer as BatteryWriter;
 mod effects;
 mod idle;
 mod platform;

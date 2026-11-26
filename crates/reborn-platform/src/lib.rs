@@ -1,5 +1,6 @@
 pub mod allocation_counts;
 pub mod avrcp;
+pub mod battery_history;
 pub mod bluetooth;
 pub mod client;
 pub mod codecs;

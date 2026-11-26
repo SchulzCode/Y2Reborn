@@ -95,6 +95,7 @@ impl Runtime {
             );
             return Err(error);
         }
+        self.record_battery_sleep();
         self.sleep_prepared = true;
         self.sleep_prepared_since = Some(Instant::now());
         Ok(json!({"sleep_ready":true,"screen_off":self.model.screen_off}))

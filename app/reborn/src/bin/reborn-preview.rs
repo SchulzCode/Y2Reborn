@@ -482,6 +482,40 @@ fn storage_player(m: &mut AppModel) {
     m.navigation.focus = 0;
 }
 
+/// Eight days of a player that is used most days: music dark in the morning and afternoon with
+/// the screen lit now and then, asleep at night, a charge in the evening. A record every ten
+/// minutes.
+fn battery_history() -> std::sync::Arc<reborn_core::battery_history::Ledger> {
+    use reborn_core::battery_history::{Activity, Ledger, Record};
+    const NOW: i64 = 1_791_798_060;
+    let start = (NOW / 600) * 600 - 8 * 86_400;
+    let mut pct = 100.0f32;
+    let mut records = vec![];
+    for step in 0..(8 * 144) {
+        let t = start + step * 600;
+        let (hour, minute) = ((t % 86_400) / 3600, (t % 3600) / 60);
+        let (activity, per_hour) = match hour {
+            22 | 23 | 0 => (Activity::Charging, -35.0),
+            1..=6 => (Activity::Suspended, 0.12),
+            7 | 12 => (Activity::ScreenOn, 7.0),
+            8..=11 | 13..=16 if (20..30).contains(&minute) => (Activity::ScreenOn, 7.0),
+            8..=11 | 13..=16 => (Activity::Playing, 4.2),
+            17 if minute < 30 => (Activity::Awake, 1.5),
+            17 => (Activity::Suspended, 0.12),
+            _ => (Activity::Suspended, 0.12),
+        };
+        pct = (pct - per_hour / 6.0).clamp(8.0, 100.0);
+        records.push(Record::Level {
+            t,
+            pct: pct.round() as u8,
+            activity,
+            bt: false,
+            est: true,
+        });
+    }
+    std::sync::Arc::new(Ledger::from_records(records))
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Each state is drawn once: rasterise every CJK glyph it needs at once.
     reborn_ui::set_glyph_budget(None);
@@ -1221,6 +1255,46 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             m.platform.snapshot.storage.sd = reborn_core::platform::SdCard::ReadOnly(space);
         }
     });
+    case!(
+        "32d-battery-history",
+        at(Screen::BatteryHistory, ""),
+        |_, m| {
+            m.battery_history = battery_history();
+        }
+    );
+    case!(
+        "32e-battery-history-cursor",
+        at(Screen::BatteryHistory, ""),
+        |ui, m| {
+            m.battery_history = battery_history();
+            for _ in 0..3 {
+                ui.model_action(m, Action::WheelCounterClockwise(1));
+            }
+        }
+    );
+    case!(
+        "32f-battery-history-days",
+        at(Screen::BatteryHistory, ""),
+        |ui, m| {
+            m.battery_history = battery_history();
+            ui.model_action(m, Action::Select);
+            ui.model_action(m, Action::WheelCounterClockwise(1));
+        }
+    );
+    case!(
+        "32h-battery-history-a-day",
+        at(Screen::BatteryHistory, ""),
+        |ui, m| {
+            m.battery_history = battery_history();
+            ui.model_action(m, Action::Select);
+            ui.model_action(m, Action::WheelCounterClockwise(1));
+            ui.model_action(m, Action::Select);
+            for _ in 0..16 {
+                ui.model_action(m, Action::WheelCounterClockwise(1));
+            }
+        }
+    );
+    case!("32g-battery-history-empty", at(Screen::BatteryHistory, ""));
     case!(
         "32-storage-setup-waiting",
         at(Screen::Storage, ""),

@@ -270,6 +270,8 @@ pub(crate) fn run() -> Result<(), String> {
     )
     .map_err(|e| e.to_string())?;
     let background = background::Gate::new(&model.settings.music_directory, &model.sources);
+    let (battery_writer, battery_history) = runtime::BatteryWriter::open(&root);
+    model.battery_history = Arc::new(battery_history);
     let mut rt = Runtime {
         queued_platform: None,
         update_idle_since: None,
@@ -343,6 +345,7 @@ pub(crate) fn run() -> Result<(), String> {
         scrobbles_unstamped: vec![],
         scrobble_queue: reborn_platform::scrobble::Queue::new(root.join("state/scrobbles.jsonl")),
         clock_trusted: None,
+        battery_writer,
         lastfm: scrobbling::LastFm::load(&root),
         radio_logos: if headless {
             None
@@ -732,6 +735,7 @@ fn shut_down(
     rt.model.playback = PlaybackState::Paused;
     rt.pending_reconfiguration = None;
     rt.checkpoint();
+    rt.record_battery_down();
     shutdown_ready &= !rt.dirty.persistence;
     rt.scanner.stop();
     if let Err(error) = rt.db.shutdown(Duration::from_secs(2)) {
@@ -1993,6 +1997,7 @@ impl MainLoop {
                 );
             }
             rt.present_battery(power::battery(&next_power));
+            rt.record_battery();
             rt.power = next_power;
             if let Some((sd, sources)) = observation
                 .media
@@ -2159,6 +2164,7 @@ impl MainLoop {
                     .diagnostic(&rt.root.join("diagnostics"), rt.snapshot(), true);
             }
         }
+        rt.battery_history_tick();
         if self.checkpoint.elapsed() > CHECKPOINT_EVERY && rt.dirty.checkpoint_due() {
             rt.checkpoint();
             self.checkpoint = Instant::now();
