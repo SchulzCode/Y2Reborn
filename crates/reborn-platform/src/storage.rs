@@ -401,7 +401,12 @@ pub fn sources(music: &Path) -> Vec<Source> {
     let mountinfo =
         parse_mountinfo(&fs::read_to_string("/proc/self/mountinfo").unwrap_or_default());
     let mut result = vec![];
+    // A card on its way to the computer is still mounted: it is no source any more.
+    let lent = sd_lent();
     for (mount_path, internal) in [(internal_mount(music), true), ("/media/sd", false)] {
+        if !internal && lent {
+            continue;
+        }
         if let Some(m) = m.iter().find(|m| m.path == Path::new(mount_path)) {
             if !internal && !Path::new(&m.device).exists() {
                 continue;
@@ -633,14 +638,27 @@ fn sd_present_in(class: &Path) -> bool {
         })
 }
 
+/// The computer has the SD card as a USB drive, or is about to (SD Card as USB Drive): the player lets
+/// go of it, as when it is pulled, so the platform can unmount it.
+pub fn sd_lent() -> bool {
+    let boot = fs::read_to_string("/proc/sys/kernel/random/boot_id").unwrap_or_default();
+    usb_receipt_of(&boot)
+        .and_then(|r| r.sd_disk)
+        .is_some_and(|disk| disk.on_computer())
+}
+
+/// This boot's USB receipt (none before the platform wrote one this boot).
+fn usb_receipt_of(boot: &str) -> Option<Receipt> {
+    fs::read_to_string("/run/y2/usb-transfer.json")
+        .ok()
+        .and_then(|s| serde_json::from_str::<Receipt>(&s).ok())
+        .filter(|r| !boot.trim().is_empty() && r.of_boot(Some(boot.trim())))
+}
+
 /// Durable changes only: incomplete copies stay hidden and never trigger a scan.
 pub fn usb_changes() -> (u64, bool) {
-    let receipt = fs::read_to_string("/run/y2/usb-transfer.json")
-        .ok()
-        .and_then(|s| serde_json::from_str::<Receipt>(&s).ok());
     let boot = fs::read_to_string("/proc/sys/kernel/random/boot_id").unwrap_or_default();
-    receipt
-        .filter(|r| !boot.trim().is_empty() && r.of_boot(Some(boot.trim())))
+    usb_receipt_of(&boot)
         .map(|r| (r.refresh_generation.unwrap_or(0), r.active))
         .unwrap_or((0, false))
 }

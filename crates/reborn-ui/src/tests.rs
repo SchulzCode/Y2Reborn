@@ -5903,6 +5903,37 @@ fn lastfm_password_sign_in_never_shows_or_prints_the_password() {
 }
 
 #[test]
+fn the_sd_card_as_a_usb_drive_is_a_switch_on_storage_where_the_platform_has_it() {
+    use reborn_core::platform::SdCard;
+    let mut ui = radios();
+    let mut m = app(Screen::Storage);
+    let toggle = |ui: &Ui, m: &AppModel| {
+        ui.rows(m, &[])
+            .into_iter()
+            .find(|r| r.key == "sd_disk")
+            .map(|r| (r.label, r.kind))
+    };
+    assert_eq!(toggle(&ui, &m), None, "a platform without the drive");
+    m.platform.snapshot.sd_disk = Some(false);
+    assert_eq!(
+        toggle(&ui, &m),
+        Some(("SD Card as USB Drive".into(), RowKind::Toggle(false)))
+    );
+    assert_eq!(
+        select_key(&mut ui, &mut m, "sd_disk"),
+        Effect::Platform(PlatformTask::SdDisk(true))
+    );
+    m.platform.snapshot.sd_disk = Some(true);
+    assert_eq!(
+        select_key(&mut ui, &mut m, "sd_disk"),
+        Effect::Platform(PlatformTask::SdDisk(false))
+    );
+    // While the computer has it, Storage says where it is.
+    m.platform.snapshot.storage.sd = SdCard::OnComputer;
+    assert!(visible_text(&ui, &m).contains("On the computer"));
+}
+
+#[test]
 fn internal_storage_setup_is_offered_only_for_a_waiting_old_library_and_confirmed_red() {
     use reborn_core::platform::{InternalSetup, SetupWait};
     let mut ui = radios();

@@ -305,6 +305,7 @@ impl Ui {
             "repeat" => Effect::SetRepeat(next_repeat(m.settings.repeat)),
             "gapless" => Effect::SetGapless(!m.settings.gapless_enabled),
             "scrobble_log" => Effect::SetScrobbleLog(!m.settings.scrobble_log),
+            "sd_disk" => Effect::Platform(PlatformTask::SdDisk(!m.platform.snapshot.sd_disk?)),
             "update_notifications" => Effect::SetUpdateNotices(!m.settings.update_notifications),
             "whats_new_after_update" => {
                 Effect::SetWhatsNewAfterUpdate(!m.settings.whats_new_after_update)

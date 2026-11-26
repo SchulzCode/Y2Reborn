@@ -916,6 +916,12 @@ fn pc_transfer(m: &AppModel) -> Page {
             ),
         }
     };
+    // The SD card is a drive of its own on the computer (SD Card as USB Drive).
+    let page = if m.platform.snapshot.storage.sd == SdCard::OnComputer {
+        page.fact("SD Card", "A drive on the computer")
+    } else {
+        page
+    };
     match free {
         Some(free) => page.fact("Internal Storage", free),
         None => page,
@@ -1282,6 +1288,12 @@ fn storage(m: &AppModel) -> Page {
             .with_kind(RowKind::Chevron),
         );
     }
+    // The SD card as a drive on a computer instead of a second Music Transfer storage
+    // (Y2Linux docs/planning/SD-DISK-MODE-PLAN.md); only on a platform that has it.
+    if let Some(on) = s.sd_disk {
+        page.rows
+            .push(row("SD Card as USB Drive", "sd_disk", "").with_kind(RowKind::Toggle(on)));
+    }
     page = page.fact(
         "Internal Storage",
         match s.internal_setup {
@@ -1301,6 +1313,7 @@ fn storage(m: &AppModel) -> Page {
             SdCard::CheckTimedOut => "Check took too long · Insert it again".into(),
             SdCard::ReadOnly(_) => "Has errors · Playing only".into(),
             SdCard::Unchecked(_) => "Not checked · Playing only".into(),
+            SdCard::OnComputer => "On the computer · Eject it there".into(),
             SdCard::Unknown => "Checking…".into(),
         },
     );

@@ -638,7 +638,8 @@ impl Watchdog {
                                         power::status(),
                                         (!headless).then(|| {
                                             (
-                                                storage::sd_present(),
+                                                // A card lent to the computer is gone for the player.
+                                                storage::sd_present() && !storage::sd_lent(),
                                                 storage::sources(&request.music),
                                             )
                                         }),
@@ -2033,7 +2034,11 @@ impl MainLoop {
                     for s in &old {
                         if !sources.iter().any(|v| v.id == s.id) {
                             if matches!(s.kind, reborn_core::MediaSource::SdCard(_)) {
-                                rt.ui.flash("SD card removed");
+                                rt.ui.flash(if storage::sd_lent() {
+                                    "SD card opened on the computer"
+                                } else {
+                                    "SD card removed"
+                                });
                             }
                             self.log.add("sd_removals", 1.);
                             self.log.emit(

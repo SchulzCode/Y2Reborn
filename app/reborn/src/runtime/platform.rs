@@ -364,6 +364,22 @@ impl Runtime {
                                     ),
                                 });
                             }
+                            SdDisk(on) => {
+                                // Shown at once; the refresh that follows reads the platform's own.
+                                p.snapshot.sd_disk = Some(on);
+                                let connected = matches!(
+                                    p.snapshot.usb,
+                                    reborn_core::platform::UsbTransfer::Ready
+                                        | reborn_core::platform::UsbTransfer::Copying
+                                );
+                                self.ui.flash(match (on, connected) {
+                                    (true, true) => {
+                                        "Reconnect the cable to open the SD card as a drive"
+                                    }
+                                    (true, false) => "The SD card opens as a drive on a computer",
+                                    (false, _) => "The SD card opens in Music Transfer",
+                                });
+                            }
                             SetClock(_) => {
                                 // A time set by hand is never trusted: read
                                 // the platform's verdict again at once.

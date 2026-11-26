@@ -85,6 +85,11 @@ Library's **Wi-Fi Share** is a page of `Screen::SettingsLibrary` (filter "share"
 file browser as a QR code and in letters, and the six-digit code it asks for. Sharing runs exactly while that
 page is on screen; **Stop Sharing** is Back ([plan](REBORN-WIFI-SHARE.md)).
 
+Library's **Storage** page ends with **SD Card as USB Drive** (a switch, off by default; only when the platform
+reports `sd_disk`): a connected computer then gets the SD card as a USB drive instead of a second Music Transfer
+storage, and Storage says "On the computer · Eject it there" while it has it (Y2Linux
+`docs/planning/SD-DISK-MODE-PLAN.md`). It runs `y2-platform usb-sd-disk on|off`.
+
 Library's hint line names the audio the last scan left out because Reborn cannot play its type ("43 files can't
 be played here (WMA, DSD), so they aren't in your library.", Y2Reborn #104); without such files there is no line.
 

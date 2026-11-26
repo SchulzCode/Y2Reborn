@@ -30980,6 +30980,11 @@
     "refresh_generation": 0,
     "restarts": 0,
     "schema": "org.y2linux.usb-transfer/v1",
+    "sd_disk": {
+     "enabled": false,
+     "reason": null,
+     "state": "Off"
+    },
     "state": "Unavailable",
     "views": []
    }
@@ -31076,6 +31081,11 @@
     "refresh_generation": 0,
     "restarts": 0,
     "schema": "org.y2linux.usb-transfer/v1",
+    "sd_disk": {
+     "enabled": false,
+     "reason": null,
+     "state": "Off"
+    },
     "state": "Unavailable",
     "views": []
    }
@@ -31172,6 +31182,11 @@
     "refresh_generation": 0,
     "restarts": 0,
     "schema": "org.y2linux.usb-transfer/v1",
+    "sd_disk": {
+     "enabled": false,
+     "reason": null,
+     "state": "Off"
+    },
     "state": "Unavailable",
     "views": []
    }
@@ -31268,6 +31283,11 @@
     "refresh_generation": 0,
     "restarts": 0,
     "schema": "org.y2linux.usb-transfer/v1",
+    "sd_disk": {
+     "enabled": false,
+     "reason": null,
+     "state": "Off"
+    },
     "state": "Unavailable",
     "views": []
    }
@@ -31353,6 +31373,11 @@
     "refresh_generation": 0,
     "restarts": 0,
     "schema": "org.y2linux.usb-transfer/v1",
+    "sd_disk": {
+     "enabled": false,
+     "reason": null,
+     "state": "Off"
+    },
     "state": "Unavailable",
     "views": []
    }
@@ -31438,6 +31463,11 @@
     "refresh_generation": 0,
     "restarts": 0,
     "schema": "org.y2linux.usb-transfer/v1",
+    "sd_disk": {
+     "enabled": false,
+     "reason": null,
+     "state": "Off"
+    },
     "state": "Unavailable",
     "views": []
    }
@@ -31523,6 +31553,11 @@
     "refresh_generation": 0,
     "restarts": 0,
     "schema": "org.y2linux.usb-transfer/v1",
+    "sd_disk": {
+     "enabled": false,
+     "reason": null,
+     "state": "Off"
+    },
     "state": "Unavailable",
     "views": []
    }
@@ -31619,6 +31654,11 @@
     "refresh_generation": 0,
     "restarts": 0,
     "schema": "org.y2linux.usb-transfer/v1",
+    "sd_disk": {
+     "enabled": false,
+     "reason": null,
+     "state": "Off"
+    },
     "state": "Unavailable",
     "views": []
    }
@@ -31711,6 +31751,11 @@
     "refresh_generation": 0,
     "restarts": 0,
     "schema": "org.y2linux.usb-transfer/v1",
+    "sd_disk": {
+     "enabled": false,
+     "reason": null,
+     "state": "Off"
+    },
     "state": "Unavailable",
     "views": []
    }
@@ -31803,6 +31848,11 @@
     "refresh_generation": 0,
     "restarts": 0,
     "schema": "org.y2linux.usb-transfer/v1",
+    "sd_disk": {
+     "enabled": false,
+     "reason": null,
+     "state": "Off"
+    },
     "state": "Unavailable",
     "views": []
    }
@@ -31891,6 +31941,11 @@
     "refresh_generation": 0,
     "restarts": 0,
     "schema": "org.y2linux.usb-transfer/v1",
+    "sd_disk": {
+     "enabled": false,
+     "reason": null,
+     "state": "Off"
+    },
     "state": "Starting",
     "views": []
    }
@@ -31990,6 +32045,11 @@
     "refresh_generation": 0,
     "restarts": 0,
     "schema": "org.y2linux.usb-transfer/v1",
+    "sd_disk": {
+     "enabled": false,
+     "reason": null,
+     "state": "Off"
+    },
     "state": "Disconnected",
     "views": []
    }
@@ -32089,6 +32149,11 @@
     "refresh_generation": 0,
     "restarts": 0,
     "schema": "org.y2linux.usb-transfer/v1",
+    "sd_disk": {
+     "enabled": false,
+     "reason": null,
+     "state": "Off"
+    },
     "state": "Ready",
     "views": []
    }
@@ -32174,6 +32239,11 @@
     "refresh_generation": 0,
     "restarts": 1,
     "schema": "org.y2linux.usb-transfer/v1",
+    "sd_disk": {
+     "enabled": false,
+     "reason": null,
+     "state": "Off"
+    },
     "state": "Failed",
     "views": []
    }
@@ -32270,6 +32340,11 @@
     "refresh_generation": 0,
     "restarts": 2,
     "schema": "org.y2linux.usb-transfer/v1",
+    "sd_disk": {
+     "enabled": false,
+     "reason": null,
+     "state": "Off"
+    },
     "state": "Failed",
     "views": []
    }
@@ -32366,6 +32441,11 @@
     "refresh_generation": 0,
     "restarts": 5,
     "schema": "org.y2linux.usb-transfer/v1",
+    "sd_disk": {
+     "enabled": false,
+     "reason": null,
+     "state": "Off"
+    },
     "state": "Failed",
     "views": []
    }
@@ -32451,6 +32531,11 @@
     "refresh_generation": 0,
     "restarts": 1,
     "schema": "org.y2linux.usb-transfer/v1",
+    "sd_disk": {
+     "enabled": false,
+     "reason": null,
+     "state": "Off"
+    },
     "state": "Failed",
     "views": []
    }
@@ -32536,6 +32621,11 @@
     "refresh_generation": 0,
     "restarts": 1,
     "schema": "org.y2linux.usb-transfer/v1",
+    "sd_disk": {
+     "enabled": false,
+     "reason": null,
+     "state": "Off"
+    },
     "state": "Failed",
     "views": []
    }
@@ -32621,6 +32711,11 @@
     "refresh_generation": 0,
     "restarts": 1,
     "schema": "org.y2linux.usb-transfer/v1",
+    "sd_disk": {
+     "enabled": false,
+     "reason": null,
+     "state": "Off"
+    },
     "state": "Failed",
     "views": []
    }
@@ -32706,6 +32801,11 @@
     "refresh_generation": 0,
     "restarts": 0,
     "schema": "org.y2linux.usb-transfer/v1",
+    "sd_disk": {
+     "enabled": false,
+     "reason": null,
+     "state": "Off"
+    },
     "state": "Unavailable",
     "views": []
    }
@@ -32802,6 +32902,11 @@
     "refresh_generation": 0,
     "restarts": 2,
     "schema": "org.y2linux.usb-transfer/v1",
+    "sd_disk": {
+     "enabled": false,
+     "reason": null,
+     "state": "Off"
+    },
     "state": "Failed",
     "views": []
    }
@@ -32887,6 +32992,11 @@
     "refresh_generation": 0,
     "restarts": 0,
     "schema": "org.y2linux.usb-transfer/v1",
+    "sd_disk": {
+     "enabled": false,
+     "reason": null,
+     "state": "Off"
+    },
     "state": "Unavailable",
     "views": []
    }
@@ -32986,6 +33096,11 @@
     "refresh_generation": 0,
     "restarts": 0,
     "schema": "org.y2linux.usb-transfer/v1",
+    "sd_disk": {
+     "enabled": false,
+     "reason": null,
+     "state": "Off"
+    },
     "state": "Unavailable",
     "views": []
    }
@@ -33012,6 +33127,11 @@
     "refresh_generation": 0,
     "restarts": 0,
     "schema": "org.y2linux.usb-transfer/v1",
+    "sd_disk": {
+     "enabled": false,
+     "reason": null,
+     "state": "Off"
+    },
     "state": "Unavailable",
     "views": []
    }
@@ -33139,6 +33259,11 @@
     "refresh_generation": 0,
     "restarts": 0,
     "schema": "org.y2linux.usb-transfer/v1",
+    "sd_disk": {
+     "enabled": false,
+     "reason": null,
+     "state": "Off"
+    },
     "state": "Unavailable",
     "views": []
    }
@@ -33241,6 +33366,11 @@
     "refresh_generation": 0,
     "restarts": 0,
     "schema": "org.y2linux.usb-transfer/v1",
+    "sd_disk": {
+     "enabled": false,
+     "reason": null,
+     "state": "Off"
+    },
     "state": "Unavailable",
     "views": []
    }
@@ -33343,6 +33473,11 @@
     "refresh_generation": 0,
     "restarts": 0,
     "schema": "org.y2linux.usb-transfer/v1",
+    "sd_disk": {
+     "enabled": false,
+     "reason": null,
+     "state": "Off"
+    },
     "state": "Unavailable",
     "views": []
    }
@@ -33470,6 +33605,11 @@
     "refresh_generation": 0,
     "restarts": 0,
     "schema": "org.y2linux.usb-transfer/v1",
+    "sd_disk": {
+     "enabled": false,
+     "reason": null,
+     "state": "Off"
+    },
     "state": "Unavailable",
     "views": []
    }
@@ -33558,6 +33698,11 @@
     "refresh_generation": 0,
     "restarts": 0,
     "schema": "org.y2linux.usb-transfer/v1",
+    "sd_disk": {
+     "enabled": false,
+     "reason": null,
+     "state": "Off"
+    },
     "state": "Unavailable",
     "views": []
    }
@@ -33646,6 +33791,11 @@
     "refresh_generation": 0,
     "restarts": 0,
     "schema": "org.y2linux.usb-transfer/v1",
+    "sd_disk": {
+     "enabled": false,
+     "reason": null,
+     "state": "Off"
+    },
     "state": "Unavailable",
     "views": []
    }
@@ -33745,6 +33895,11 @@
     "refresh_generation": 0,
     "restarts": 0,
     "schema": "org.y2linux.usb-transfer/v1",
+    "sd_disk": {
+     "enabled": false,
+     "reason": null,
+     "state": "Off"
+    },
     "state": "Unavailable",
     "views": []
    }
@@ -33847,6 +34002,11 @@
     "refresh_generation": 0,
     "restarts": 0,
     "schema": "org.y2linux.usb-transfer/v1",
+    "sd_disk": {
+     "enabled": false,
+     "reason": null,
+     "state": "Off"
+    },
     "state": "Unavailable",
     "views": []
    }

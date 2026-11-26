@@ -272,6 +272,7 @@ fn execute(task: PlatformTask) -> Reply {
                     .map_err(|e| sd_repair_error(&e)),
             )
         }
+        SdDisk(on) => call(&["usb-sd-disk", if on { "on" } else { "off" }], 10),
         StorageBenchmark => call(
             &[
                 "bench-storage",
@@ -623,7 +624,11 @@ pub fn storage(status: &Value) -> StorageState {
         .or_else(|| volume(status, "/data"))
         .map(|v| space(&v))
         .unwrap_or_default();
+    let lent = usb_receipt(status)
+        .and_then(|receipt| receipt.sd_disk)
+        .is_some_and(|disk| disk.on_computer());
     let sd = match volume(status, "/media/sd") {
+        _ if lent => SdCard::OnComputer,
         None => SdCard::Unknown,
         Some(v) if v["state"] == "Ready" => SdCard::Ready(space(&v)),
         // Mounted read-only by the platform after its check (Y2Linux 8.27).
@@ -914,6 +919,9 @@ pub fn snapshot(status: &Value, caps: &Value) -> PlatformSnapshot {
         storage: storage(status),
         usb: usb(status),
         usb_refresh_generation: usb_refresh_generation(status),
+        sd_disk: usb_receipt(status)
+            .and_then(|receipt| receipt.sd_disk)
+            .map(|disk| disk.enabled),
         sleep: sleep(&status["power"]["sleep"]),
         bluetooth_quality: bluetooth_quality(&status["bluetooth"]["codec_settings"]),
         update: update(status, ota),
@@ -1970,6 +1978,29 @@ mod tests {
             update_problem("RECOVERY holds no Y2 recovery image"),
             UpdateProblem::NeedsComputer
         );
+    }
+
+    #[test]
+    fn an_sd_card_lent_to_the_computer_is_on_the_computer_and_the_switch_is_read() {
+        let mut v = status();
+        v["record"]["boot_id"] = json!("this-boot");
+        assert_eq!(
+            snapshot(&v, &json!({})).sd_disk,
+            None,
+            "a platform without the drive"
+        );
+        v["system"]["usb"]["file_transfer"] = json!({"schema":"org.y2linux.usb-transfer/v1",
+            "boot_id":"this-boot","mode":"mtp","state":"Ready",
+            "sd_disk":{"enabled":true,"state":"Lent","reason":null}});
+        assert_eq!(storage(&v).sd, SdCard::OnComputer);
+        assert_eq!(snapshot(&v, &json!({})).sd_disk, Some(true));
+        v["system"]["usb"]["file_transfer"]["sd_disk"] =
+            json!({"enabled":true,"state":"Kept","reason":"computer_ejected"});
+        assert_ne!(storage(&v).sd, SdCard::OnComputer);
+        // Another boot's receipt says nothing about this boot's card.
+        v["system"]["usb"]["file_transfer"]["boot_id"] = json!("old-boot");
+        v["system"]["usb"]["file_transfer"]["sd_disk"]["state"] = json!("Lent");
+        assert_ne!(storage(&v).sd, SdCard::OnComputer);
     }
 
     #[test]

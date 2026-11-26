@@ -36,6 +36,31 @@ pub struct Receipt {
     /// What the computer sees; none for views that cannot be read.
     #[serde(deserialize_with = "views")]
     pub views: Option<Vec<View>>,
+    /// The SD card as a USB drive (none: a platform without it).
+    #[serde(deserialize_with = "sd_disk")]
+    pub sd_disk: Option<SdDisk>,
+}
+
+/// `sd_disk`: the owner's switch and what became of the card in this connection.
+#[derive(Deserialize, Debug, Default, PartialEq)]
+#[serde(default)]
+pub struct SdDisk {
+    /// The switch (Settings → Storage → SD Card as USB Drive).
+    #[serde(deserialize_with = "lenient::is_true")]
+    pub enabled: bool,
+    /// Off, Idle, Lending, Lent or Kept.
+    #[serde(deserialize_with = "lenient::text")]
+    pub state: Option<String>,
+    /// Why the card is not lent (`sd_in_use`, `computer_ejected`, `not_fat`, …).
+    #[serde(deserialize_with = "lenient::text")]
+    pub reason: Option<String>,
+}
+
+impl SdDisk {
+    /// The computer has the card, or is about to: the player leaves it alone.
+    pub fn on_computer(&self) -> bool {
+        matches!(self.state.as_deref(), Some("Lending" | "Lent"))
+    }
 }
 
 impl Default for Receipt {
@@ -52,8 +77,17 @@ impl Default for Receipt {
             active: false,
             error: None,
             views: Some(Vec::new()),
+            sd_disk: None,
         }
     }
+}
+
+/// An object reads as `SdDisk` (its odd fields as their defaults); anything else is none.
+fn sd_disk<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<SdDisk>, D::Error> {
+    Ok(match Value::deserialize(deserializer)? {
+        object @ Value::Object(_) => Some(SdDisk::deserialize(object).unwrap_or_default()),
+        _ => None,
+    })
 }
 
 /// One item of `views`: a view's path, or something that is no view.
@@ -122,6 +156,21 @@ mod tests {
         assert_eq!(shown.shows("/media/sd"), Some(true));
         assert_eq!(read(json!({"views": [3]})).shows("/media/sd"), None);
         assert_eq!(read(json!({"views": 3})).shows("/media/sd"), None);
+    }
+
+    #[test]
+    fn the_sd_disk_part_reads_leniently() {
+        assert_eq!(read(json!({})).sd_disk, None);
+        let lent = read(json!({"sd_disk": {"enabled": true, "state": "Lent"}}));
+        assert!(lent
+            .sd_disk
+            .as_ref()
+            .is_some_and(|d| d.enabled && d.on_computer()));
+        let odd = read(json!({"sd_disk": {"enabled": "yes", "state": 3}})).sd_disk;
+        assert_eq!(odd, Some(SdDisk::default()));
+        assert_eq!(read(json!({"sd_disk": 3})).sd_disk, None);
+        let kept = read(json!({"sd_disk": {"enabled": true, "state": "Kept"}}));
+        assert!(!kept.sd_disk.is_some_and(|d| d.on_computer()));
     }
 
     #[test]

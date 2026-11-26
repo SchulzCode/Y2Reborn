@@ -782,6 +782,9 @@ pub enum PlatformTask {
     /// Repair the SD card the platform marked (read-only with errors, or
     /// refused); damaged files may be shortened or removed.
     SdRepair,
+    /// The SD card opens on a connected computer as a USB drive (true) or as
+    /// a second storage of the music transfer (false).
+    SdDisk(bool),
     /// Error reports on (true) or off; off also drops the waiting reports.
     ReportEnable(bool),
     /// A new random install ID.
