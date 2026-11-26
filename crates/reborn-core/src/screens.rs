@@ -63,6 +63,8 @@ pub enum Screen {
     Videos,
     SettingsSystem,
     Battery,
+    /// The battery over time and what the player was doing (Settings > System > Battery).
+    BatteryHistory,
     Sleep,
     Storage,
     Update,

@@ -38,6 +38,7 @@ pub fn screen(c: &mut Canvas, ui: &Ui, m: &AppModel, tracks: &[Track], interacti
         Screen::Storage => {
             crate::views_storage::screen(c, ui, m, tracks, &page, focus, interactive)
         }
+        Screen::BatteryHistory => crate::battery_history::draw(c, ui, m),
         Screen::Update if m.navigation.filter == pages::SOFTWARE_UPDATE => {
             update(c, ui, m, &page, focus, interactive)
         }
@@ -396,7 +397,7 @@ pub(crate) fn hero_mark(m: &AppModel) -> components::Mark {
         Screen::Bluetooth => Mark::Icon(Icon::Bluetooth),
         Screen::PcTransfer => Mark::Icon(Icon::Usb),
         Screen::NowPlaying => Mark::Icon(Icon::Note),
-        Screen::Battery => Mark::Icon(Icon::Bolt),
+        Screen::Battery | Screen::BatteryHistory => Mark::Icon(Icon::Bolt),
         Screen::Update | Screen::About => Mark::Icon(Icon::Download),
         Screen::Storage | Screen::SettingsLibrary => Mark::Icon(Icon::Drive),
         Screen::Radio | Screen::RadioStations | Screen::RadioCategories | Screen::RadioInfo => {

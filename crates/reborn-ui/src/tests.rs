@@ -221,7 +221,7 @@ fn visible_text(ui: &Ui, m: &AppModel) -> String {
     text
 }
 
-const NORMAL_SCREENS: [Screen; 34] = [
+const NORMAL_SCREENS: [Screen; 35] = [
     Screen::Home,
     Screen::Music,
     Screen::Albums,
@@ -249,6 +249,7 @@ const NORMAL_SCREENS: [Screen; 34] = [
     Screen::DateTime,
     Screen::SettingsSystem,
     Screen::Battery,
+    Screen::BatteryHistory,
     Screen::Sleep,
     Screen::Storage,
     Screen::Update,
@@ -1240,7 +1241,8 @@ fn album_back_returns_to_the_same_album_offset_and_focus() {
 fn every_interactive_screen_draws_exactly_one_focus() {
     let ui = radios();
     // Storage holds rows only with a cable in or its setup waiting (9.2.10).
-    let static_pages = [Screen::TrackInfo, Screen::Battery, Screen::Storage];
+    // The battery history has a cursor only once it has records (its own tests count it).
+    let static_pages = [Screen::TrackInfo, Screen::Storage, Screen::BatteryHistory];
     for screen in NORMAL_SCREENS.into_iter().chain([
         Screen::Maintenance,
         Screen::Diagnostics,

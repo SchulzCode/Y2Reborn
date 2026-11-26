@@ -367,6 +367,8 @@ struct Runtime {
     scrobbles_unstamped: Vec<reborn_core::scrobble::Counted>,
     scrobble_queue: reborn_platform::scrobble::Queue,
     clock_trusted: Option<(Instant, bool)>,
+    /// The battery history's batch waiting to be written (`runtime/battery_history.rs`).
+    battery_writer: runtime::BatteryWriter,
     /// Last.fm: the app's key, the listener's session, sign-in and sending.
     lastfm: scrobbling::LastFm,
     /// Station logos: downloads (once per logo) and the logo shown as Now

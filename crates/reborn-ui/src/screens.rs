@@ -113,6 +113,7 @@ fn native_screen(
         | Screen::SettingsDisplay
         | Screen::Customize
         | Screen::Storage
+        | Screen::BatteryHistory
         | Screen::LastFm
         | Screen::ErrorReports
         | Screen::Update => views_settings::screen(c, ui, m, tracks, interactive),
@@ -195,6 +196,7 @@ fn layout_keys(m: &AppModel, page: Option<&Page>, empty: bool) -> &'static [&'st
         Screen::Book => keys!("book"),
         Screen::SettingsSystem => keys!("service"),
         Screen::Battery => keys!("battery"),
+        Screen::BatteryHistory => keys!("battery"),
         Screen::Sleep => keys!("sleep"),
         Screen::Storage => keys!("storage"),
         Screen::Update => keys!("updates"),
@@ -768,6 +770,7 @@ pub fn screen_title(m: &AppModel) -> String {
         Screen::Book => "Audiobook".into(),
         Screen::SettingsSystem => "Service".into(),
         Screen::Battery => "Battery".into(),
+        Screen::BatteryHistory => "Battery History".into(),
         Screen::Sleep => "Sleep".into(),
         Screen::Storage => "Storage".into(),
         Screen::Update if m.navigation.filter == crate::pages::SOFTWARE_UPDATE => {

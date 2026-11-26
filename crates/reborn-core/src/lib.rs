@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 pub mod albums;
+pub mod battery_history;
 pub use buttons::{NowPlayingWheel, ScreenOffButtons};
 pub mod books;
 pub mod buttons;
@@ -1521,6 +1522,9 @@ pub struct AppModel {
     pub play_stats: play_stats::PlayStats,
     #[serde(skip)]
     pub screen_off: bool,
+    /// The battery history, for its page: the runtime keeps it up to date while that page is open.
+    #[serde(skip)]
+    pub battery_history: std::sync::Arc<battery_history::Ledger>,
     #[serde(skip)]
     pub last_error: Option<String>,
     #[serde(default)]

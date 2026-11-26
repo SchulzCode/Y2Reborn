@@ -257,6 +257,7 @@ pub fn page(ui: &Ui, m: &AppModel, tracks: &[Track]) -> Page {
         }
         Screen::SettingsSystem => system(ui, m),
         Screen::Battery => battery(m),
+        Screen::BatteryHistory => crate::battery_history::page(),
         Screen::Sleep => sleep(m),
         Screen::Storage => storage(m),
         Screen::Update if m.navigation.filter == SOFTWARE_UPDATE => update_status(ui, m),
@@ -1056,7 +1057,7 @@ fn battery(m: &AppModel) -> Page {
         ),
         None => page,
     };
-    page.fact(
+    let mut page = page.fact(
         "Status",
         match b.charging {
             ChargingState::Charging => "Charging",
@@ -1064,7 +1065,10 @@ fn battery(m: &AppModel) -> Page {
             ChargingState::OnBattery => "On battery",
             ChargingState::Unknown => "Checking…",
         },
-    )
+    );
+    page.rows
+        .push(row("History", "battery_history", "").with_kind(RowKind::Chevron));
+    page
 }
 
 pub(crate) fn eq_frequency(hz: f32) -> String {
@@ -1383,6 +1387,8 @@ fn system_menu(ui: &Ui, m: &AppModel) -> Page {
         // #53: a player without Wi-Fi keeps the time set here.
         row("Date & Time", "date_time", crate::date_time::summary(ui, m))
             .with_kind(RowKind::Chevron),
+        // The charge, and its history; the service menu had the only way in.
+        row("Battery", "battery", battery_summary(m)).with_kind(RowKind::Chevron),
     ];
     if let Some(reports) = &m.platform.snapshot.reports {
         rows.push(
