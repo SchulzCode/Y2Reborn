@@ -90,6 +90,7 @@ impl Runtime {
             // A book's own speed; music always plays at its own.
             speed: self.model.book_part().map_or(1.0, |(book, _)| book.speed),
         };
+        let source_rate = track.sample_rate;
         let request_parts = (
             track,
             entry_id,
@@ -113,7 +114,7 @@ impl Runtime {
             |kept| {
                 match bluetooth_pcm.as_ref() {
                     Some(pcm) => keeps_bluetooth_sink(kept, &output, pcm),
-                    None => keeps_wired_sink(kept, &output) && kept.speaker == speaker,
+                    None => keeps_wired_sink(kept, &output, source_rate) && kept.speaker == speaker,
                 }
                 .then(|| kept.clone())
             },
@@ -125,7 +126,12 @@ impl Runtime {
                         log.clone(),
                         correlation,
                     ),
-                    None => reborn_audio::AlsaSink::plan(&plan_output, log.clone(), correlation),
+                    None => reborn_audio::AlsaSink::plan_for(
+                        &plan_output,
+                        source_rate,
+                        log.clone(),
+                        correlation,
+                    ),
                 }
                 .map(|(mut spec, _planned)| {
                     spec.speaker = speaker;

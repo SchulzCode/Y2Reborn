@@ -1,7 +1,9 @@
 mod native;
+mod wired_rates;
 pub use native::{initialize_logging, wired_configure, wired_device, wired_epoch, AlsaSink};
 use reborn_core::{AudioOutput, BluetoothPcm, PcmFormat};
 use serde::Serialize;
+pub use wired_rates::{wired_rate, WIRED_RATE, WIRED_RATE_48K};
 #[derive(Debug, Clone, Serialize, Default)]
 pub struct Parameters {
     pub rate: u32,
@@ -69,6 +71,12 @@ impl SinkSpec {
             );
         }
         Ok(())
+    }
+    /// Whether a source at `source_rate` plays in this sink at the rate a fresh plan would give
+    /// it: always on Bluetooth (the headphones set the rate), on the wired output when its rate
+    /// is the source family's (`wired_rate`). A kept sink and a gapless join need this.
+    pub fn fits_source(&self, source_rate: u32) -> bool {
+        !matches!(self.output, AudioOutput::Wired) || self.rate == wired_rate(source_rate)
     }
 }
 
@@ -174,12 +182,6 @@ pub trait AudioSink {
         false
     }
 }
-/// The headphone output's only rate, as on the stock firmware. The DAC's
-/// crystal (22.5792 MHz) clocks 44.1 kHz directly; 48 kHz needs the codec's
-/// PLL, which stock never runs (its only output rate is 44.1 kHz) and which
-/// knocks the crystal out on some players (#52). The SoC's I2S offers 44.1
-/// and 48 kHz only, so every wired source is converted to 44.1 kHz.
-pub const WIRED_RATE: u32 = 44_100;
 pub fn valid_address(s: &str) -> bool {
     s.len() == 17
         && s.split(':').count() == 6
@@ -193,10 +195,6 @@ mod tests {
     fn addresses_cannot_inject_pcm_options() {
         assert!(valid_address("12:34:56:78:90:AB"));
         assert!(!valid_address("12:34:56:78:90:AB,PROFILE=hfp"));
-    }
-    #[test]
-    fn the_wired_rate_runs_from_the_crystal_without_the_pll() {
-        assert_eq!(22_579_200 % WIRED_RATE, 0);
     }
     #[test]
     fn missing_sink_is_error() {

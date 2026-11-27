@@ -558,12 +558,11 @@ fn run_sink_reconfiguration<P>(
 }
 
 /// The kept wired sink plays the next stream when that stream's plan would
-/// give its spec: the wired plan converts every source to 44.1 kHz (#52), so
-/// any track plays on in the open headphone sink.
-fn keeps_wired_sink(kept: &reborn_audio::SinkSpec, output: &AudioOutput) -> bool {
-    matches!(output, AudioOutput::Wired)
-        && kept.output == *output
-        && kept.rate == reborn_audio::WIRED_RATE
+/// give its spec: the wired plan runs each source at its family's rate (44.1
+/// or 48 kHz, both from the DAC's crystal, #52), so a track of the open
+/// sink's family plays on in it and one of the other family reopens it.
+fn keeps_wired_sink(kept: &reborn_audio::SinkSpec, output: &AudioOutput, source_rate: u32) -> bool {
+    matches!(output, AudioOutput::Wired) && kept.output == *output && kept.fits_source(source_rate)
 }
 
 /// The kept Bluetooth sink plays the next stream (a station or a song) while

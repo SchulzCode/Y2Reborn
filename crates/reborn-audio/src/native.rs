@@ -280,9 +280,20 @@ pub struct AlsaSink {
     pacing: WritePacing,
 }
 impl AlsaSink {
-    /// The wired sink, always at `WIRED_RATE` (the decoder converts).
+    /// The wired sink at the default rate, `WIRED_RATE` (the decoder converts).
     pub fn plan(
         output: &AudioOutput,
+        log: Observer,
+        id: u64,
+    ) -> Result<(SinkSpec, Parameters), String> {
+        Self::plan_for(output, crate::WIRED_RATE, log, id)
+    }
+    /// The wired sink for a source at `source_rate`: at its family's rate (`wired_rate`; the
+    /// decoder converts the rest). A kernel that refuses 48 kHz (44.1 kHz only before Y2Linux's
+    /// native 48 kHz) gets 44.1 kHz instead, remembered for the rest of the run.
+    pub fn plan_for(
+        output: &AudioOutput,
+        source_rate: u32,
         log: Observer,
         id: u64,
     ) -> Result<(SinkSpec, Parameters), String> {
@@ -290,17 +301,42 @@ impl AlsaSink {
         if !wired {
             return Err("Bluetooth sink requires an observed BlueALSA PCM object".into());
         }
-        Self::plan_named(
-            &device,
-            output.clone(),
-            crate::WIRED_RATE,
-            wired,
-            PcmFormat::S32LE,
-            false,
-            None,
-            log,
-            id,
-        )
+        let plan = |rate| {
+            Self::plan_named(
+                &device,
+                output.clone(),
+                rate,
+                wired,
+                PcmFormat::S32LE,
+                false,
+                None,
+                log.clone(),
+                id,
+            )
+        };
+        let rate = crate::wired_rate(source_rate);
+        match plan(rate) {
+            Err(refused) if rate != crate::WIRED_RATE => {
+                // Only a 44.1 kHz plan that works proves the rate was the problem (not, say,
+                // a busy device).
+                let planned = plan(crate::WIRED_RATE)?;
+                crate::wired_rates::note_48k_refused();
+                log.emit(
+                    Level::Warn,
+                    "alsa",
+                    "wired_rate_fallback",
+                    &refused,
+                    Some(id),
+                    json!({
+                        "requested_rate": rate,
+                        "rate": crate::WIRED_RATE,
+                        "source_rate": source_rate,
+                    }),
+                );
+                Ok(planned)
+            }
+            planned => planned,
+        }
     }
     pub fn plan_bluetooth(
         output: &AudioOutput,

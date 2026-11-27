@@ -5,14 +5,16 @@
    "channels": 2,
    "constraint_query": "y2-audio-contract",
    "driver_rates_hz": [
-    44100
+    44100,
+    48000
    ],
    "enabled": true,
    "enabled_formats": [
     "S16_LE"
    ],
    "enabled_rates_hz": [
-    44100
+    44100,
+    48000
    ],
    "experimental": false,
    "implemented": true,
@@ -26,7 +28,7 @@
    "preserved_24bit": false,
    "prior_narrow_evidence": "2026-09-18-gpu01/audio.txt",
    "qualified": false,
-   "reason": "S16 44.1 kHz only, as stock (#52: 48 kHz needs the codec PLL); other source rates convert to 44.1 kHz",
+   "reason": "S16 at 44.1 and 48 kHz, both from the codec's crystal (#52: never the PLL); other source rates convert to the nearer of the two families",
    "s32": false
   },
   "audio_rate_conversion": {
@@ -37,7 +39,8 @@
    "qualified": false,
    "reason": "physical qualification pending",
    "sink_rates_hz": [
-    44100
+    44100,
+    48000
    ],
    "source_rates_hz": [
     44100,
