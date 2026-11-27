@@ -143,6 +143,19 @@
           { "type": "text", "x": 380, "y": 0, "w": 82, "h": 48, "text": "{number} / {count}", "font": "R11", "color": "dim", "align": "right" }
         ] }
     ],
+    "albums": [
+      { "type": "part", "name": "header" },
+      { "type": "list", "x": 0, "y": 72, "w": 480, "rows": 2, "columns": 4, "row_height": 140,
+        "row": [
+          { "type": "art", "x": 10, "y": 4, "size": 100, "source": "row" },
+          { "type": "text", "x": 10, "y": 108, "w": 100, "h": 22, "text": "{label}", "font": "R11", "color": "dim", "align": "center" }
+        ],
+        "focused": [
+          { "type": "rect", "x": 6, "y": 0, "w": 108, "h": 108, "color": "accent", "stroke": 2 },
+          { "type": "art", "x": 10, "y": 4, "size": 100, "source": "row" },
+          { "type": "text", "x": 4, "y": 108, "w": 112, "h": 22, "text": "{label}", "font": "S13", "color": "accent", "align": "center" }
+        ] }
+    ],
     "queue": [
       { "type": "part", "name": "header" },
       { "type": "text", "if": "has_track", "x": 250, "y": 34, "w": 212, "h": 22, "text": "{queue_index} of {queue_length}", "font": "R13", "color": "dim", "align": "right" },

@@ -375,20 +375,26 @@ impl Scene<'_> {
         self.ui.row_count(self.m, self.tracks)
     }
 
-    /// Items of a list window: `(items, total, focus, first index)`.
-    fn list(&self, source: ListSource, rows: usize) -> (Vec<Item>, usize, Option<usize>, usize) {
+    /// Items of a list window: `(items, total, focus, first index)`. With `columns` the window
+    /// moves by whole rows of cells, so it always starts at a row's first cell.
+    fn list(
+        &self,
+        source: ListSource,
+        rows: usize,
+        columns: usize,
+    ) -> (Vec<Item>, usize, Option<usize>, usize) {
         let m = self.m;
         match source {
             ListSource::Rows => {
                 let count = self.row_count();
                 let focus = m.navigation.focus.min(count.saturating_sub(1));
-                let start = m
-                    .navigation
-                    .scroll
-                    .min(focus)
-                    .max(focus.saturating_add(1).saturating_sub(rows))
-                    .min(count.saturating_sub(rows));
-                let mut items = self.ui.visible_rows(m, self.tracks, start, rows);
+                let (focus_row, lines) = (focus / columns, count.div_ceil(columns));
+                let start = (m.navigation.scroll / columns)
+                    .min(focus_row)
+                    .max(focus_row.saturating_add(1).saturating_sub(rows))
+                    .min(lines.saturating_sub(rows))
+                    * columns;
+                let mut items = self.ui.visible_rows(m, self.tracks, start, rows * columns);
                 if m.screen == Screen::Home {
                     let counts = self.ui.library_counts(m, self.tracks);
                     for item in &mut items {
@@ -905,14 +911,18 @@ fn element(c: &mut Canvas, s: &Scene, el: &El, ox: f32, oy: f32, row: Option<&Ro
         El::List {
             b,
             rows,
+            columns,
             row_h,
             source,
             row: plain,
             focused,
             scroll,
         } => {
-            let (items, count, focus, start) = s.list(*source, *rows);
+            let (items, count, focus, start) = s.list(*source, *rows, *columns);
             let b = at(*b, ox, oy);
+            // Scrolling and the scrollbar count rows of cells; a cell is `w / columns` wide.
+            let lines = count.div_ceil(*columns);
+            let cell_w = b.w / *columns as f32;
             for (i, item) in items.iter().enumerate() {
                 let index = start + i;
                 let r = Row {
@@ -921,18 +931,20 @@ fn element(c: &mut Canvas, s: &Scene, el: &El, ox: f32, oy: f32, row: Option<&Ro
                     count,
                     focused: focus == Some(index),
                     current: *source == ListSource::Rows && s.row_current(item),
-                    scrollbar: scroll.is_some() && count > *rows,
+                    scrollbar: scroll.is_some() && lines > *rows,
                 };
                 let mark = c.draw.len();
                 s.label_end.set(None);
                 let template = if r.focused { focused } else { plain };
-                nodes(c, s, template, b.x, b.y + i as f32 * row_h, Some(&r));
+                let (col, line) = (i % columns, i / columns);
+                let (x, y) = (b.x + col as f32 * cell_w, b.y + line as f32 * row_h);
+                nodes(c, s, template, x, y, Some(&r));
                 if r.focused && c.draw.len() > mark {
                     c.mark_focus(mark);
                 }
             }
-            if let Some(sc) = scroll.as_ref().filter(|_| count > *rows) {
-                scrollbar(c, s, sc, b, (*rows, count, start));
+            if let Some(sc) = scroll.as_ref().filter(|_| lines > *rows) {
+                scrollbar(c, s, sc, b, (*rows, lines, start / columns));
             }
         }
         El::Group { dx, dy, children } => nodes(c, s, children, ox + dx, oy + dy, row),
