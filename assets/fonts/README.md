@@ -11,8 +11,12 @@ renderer as luminance-alpha and tinted by the draw colour:
 | 2 | `reborn-fallback.a8` | Regular 24 px, scaled, for every character an exact set lacks |
 
 Every `text::Face` is one weight at one pixel size, so glyphs are drawn 1:1 on
-the pixel grid rather than scaled from one bitmap. The exact sets cover basic
-and extended Latin (U+0020–017F), common punctuation and the euro sign; the
+the pixel grid rather than scaled from one bitmap. The exact sets of the body
+sizes (11–17 px) cover basic and extended Latin (U+0020–017F), common
+punctuation and the euro sign; SemiBold 10, 20 and 25 px, which draw song,
+album and artist names, cover U+0020–017F too, so č, ě, š, ř, ž and their kin
+are as sharp as their neighbours (the other large sets stay narrower: Light
+23 px and SemiBold 28 and 36 px draw fixed labels). The
 fallback page adds the rest of Latin Extended-B, Greek, Cyrillic, arrows and
 U+FFFD, which stands in for anything else (CJK, emoji and shaping are not
 supported). `provenance.json` records the font file hashes, set sizes and page

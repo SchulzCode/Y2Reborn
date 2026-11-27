@@ -72,7 +72,7 @@
       "page": 1,
       "px": 10,
       "weight": "SemiBold",
-      "glyphs": 196,
+      "glyphs": 324,
       "cell": [
         14,
         16
@@ -112,20 +112,20 @@
       "page": 1,
       "px": 20,
       "weight": "SemiBold",
-      "glyphs": 196,
+      "glyphs": 324,
       "cell": [
         25,
-        27
+        28
       ]
     },
     "S25": {
       "page": 1,
       "px": 25,
       "weight": "SemiBold",
-      "glyphs": 196,
+      "glyphs": 324,
       "cell": [
         30,
-        33
+        34
       ]
     },
     "S28": {
@@ -155,7 +155,7 @@
   },
   "page_heights": [
     792,
-    1072,
+    1360,
     960
   ],
   "mask_atlas": [

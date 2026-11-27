@@ -34,6 +34,10 @@ LATIN_A = list(range(0x100, 0x180))
 PUNCT = [0x2022, 0x2026, 0x2013, 0x2014, 0x2018, 0x2019, 0x201C, 0x201D, 0xB7, 0x203A, 0x2039, 0x20AC]
 CORE = sorted(set(ASCII + LATIN1 + LATIN_A + PUNCT))
 CORE_NARROW = sorted(set(ASCII + LATIN1 + [0x2022, 0x2026, 0x2013, 0x2014, 0x2019]))
+# The narrow sets are the large faces; they carry what song, album and artist names need besides
+# ASCII and Latin-1: the rest of Latin Extended-A (Czech č ě š ř ž ů ď ť ň, Polish, Slovak, ...).
+# Without it those letters come from the Regular 24 px fallback, scaled and lighter than the line.
+NARROW_EXT = sorted(set(CORE_NARROW + LATIN_A))
 CAPS = [ord(c) for c in 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789#']
 WORDMARK = [ord(c) for c in 'reborn']
 # Everything the former DejaVu atlas covered.
@@ -48,12 +52,12 @@ SETS = [
     ('R17', 0, 'Regular', 17, CORE),
     ('L23', 0, 'Light', 23, CORE_NARROW),
     ('L44', 0, 'Light', 44, WORDMARK),
-    ('S10', 1, 'SemiBold', 10, CORE_NARROW),
+    ('S10', 1, 'SemiBold', 10, NARROW_EXT),
     ('S13', 1, 'SemiBold', 13, CORE),
     ('S15', 1, 'SemiBold', 15, CORE),
     ('S17', 1, 'SemiBold', 17, CORE),
-    ('S20', 1, 'SemiBold', 20, CORE_NARROW),
-    ('S25', 1, 'SemiBold', 25, CORE_NARROW),
+    ('S20', 1, 'SemiBold', 20, NARROW_EXT),
+    ('S25', 1, 'SemiBold', 25, NARROW_EXT),
     ('S28', 1, 'SemiBold', 28, ASCII),
     ('S36', 1, 'SemiBold', 36, CAPS),
 ]
