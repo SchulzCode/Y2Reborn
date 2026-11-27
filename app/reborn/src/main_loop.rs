@@ -1629,9 +1629,15 @@ impl MainLoop {
 
     /// Bluetooth events, a lost peer, the Bluetooth volume and the automatic output.
     fn bluetooth(&mut self, rt: &mut Runtime) {
-        let mut bt_lost = false;
+        let mut bt_lost: Option<String> = None;
+        let mut snapshots = 0u32;
         if let Some(service) = &rt.bluetooth {
             while let Ok(s) = service.events.try_recv() {
+                snapshots += 1;
+                // Each snapshot, not only the last of a pass: a drop and the reconnect
+                // that follows it must start the peer's connection over.
+                self.auto_output.observe(&s);
+                self.auto_output.log_peers(&self.log, &s);
                 // Several snapshots can arrive in one tick (after a wake, or a
                 // burst when a peer drops): a later one must not hide an earlier
                 // disconnect (reports 61caa81e/297f1032: output stayed Bluetooth
@@ -1639,7 +1645,7 @@ impl MainLoop {
                 // adapter (Bluetooth restarting, the radio daemon away) is not a
                 // disconnect: taking it for one emptied the library (Y2Reborn #92).
                 if let AudioOutput::Bluetooth(address) = &rt.model.output {
-                    bt_lost |= s.available
+                    if s.available
                         && rt.bt_state.available
                         && rt
                             .bt_state
@@ -1649,7 +1655,10 @@ impl MainLoop {
                         && !s
                             .devices
                             .iter()
-                            .any(|d| &d.address == address && d.connected);
+                            .any(|d| &d.address == address && d.connected)
+                    {
+                        bt_lost = Some(address.clone());
+                    }
                 }
                 let view = bluetooth_view(&s);
                 let facts = s.diagnostic_facts();
@@ -1678,10 +1687,23 @@ impl MainLoop {
                 rt.bt_state = s;
             }
         }
-        if bt_lost {
+        if snapshots > 1 {
+            self.log.emit(
+                Level::Info,
+                "bluetooth",
+                "snapshots_coalesced",
+                "Several Bluetooth snapshots arrived in one pass",
+                None,
+                json!({"snapshots":snapshots}),
+            );
+        }
+        if let Some(address) = bt_lost {
+            // The peer's next connection is a new one, even when its reconnect is in this same pass.
+            self.auto_output.forget(&address);
             rt.bluetooth_peer_lost("paused");
         }
         rt.sync_bt_volume();
+        self.auto_output.log_output(&self.log, rt);
         if rt.pending_reconfiguration.is_none() {
             if let Some(address) = self.auto_output.next(&rt.bt_state, &rt.model.output) {
                 let name = rt
@@ -1696,7 +1718,8 @@ impl MainLoop {
                 let output = AudioOutput::Bluetooth(address.clone());
                 match rt.with_model_action(|runtime| runtime.switch(output)) {
                     Ok(()) => {
-                        self.auto_output.routed(address);
+                        // Routed once the start holds (`AutoOutput::settle`): it can still roll back.
+                        self.auto_output.started(address);
                         rt.ui.flash(format!("Audio switched to {name}"));
                         self.log.emit(
                             Level::Info,

@@ -55,6 +55,9 @@ impl Runtime {
         };
         let music_root = self.model.settings.music_directory.clone();
         let output = self.model.output.clone();
+        if output == AudioOutput::Wired {
+            self.log_wired_start_with_peer();
+        }
         // #28: the jack output plays on the speaker while nothing is in it.
         let speaker = self.speaker_route();
         self.model.speaker_active = speaker;
@@ -431,6 +434,31 @@ impl Runtime {
             && self.lost_peer.as_ref().is_some_and(|lost| {
                 lost.applies(&self.model.output, self.headphones, Instant::now())
             })
+    }
+    /// A start on the jack (or the speaker) while Bluetooth headphones are connected: music on the
+    /// speaker with the speaker connected is this. Say what the peer looked like at that moment.
+    fn log_wired_start_with_peer(&self) {
+        for device in self
+            .bt_state
+            .devices
+            .iter()
+            .filter(|d| d.connected && d.audio)
+        {
+            self.log.emit(
+                Level::Info,
+                "audio",
+                "play_on_wired_with_peer",
+                "Playback started on the jack with a Bluetooth peer connected",
+                None,
+                json!({
+                    "address":device.address,
+                    "settling":device.settling,
+                    "not_ready":self.bt_state.playback_rate(&device.address).err(),
+                    "lost_peer":self.lost_peer.is_some(),
+                    "pending_reconfiguration":self.pending_reconfiguration.is_some(),
+                }),
+            );
+        }
     }
     pub(crate) fn wait_for_lost_peer(&mut self) -> bool {
         if !self.awaits_lost_peer() {

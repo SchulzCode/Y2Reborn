@@ -14,11 +14,32 @@ use crate::*;
 /// and a switch that fails is tried again (`failed`) instead of leaving the
 /// music on the jack for the whole connection (Y2Reborn #103: the first
 /// connect after Bluetooth on stayed silent until a reconnect).
+///
+/// A peer counts as routed only once the switch held: `started` parks it in
+/// `in_flight`, and `settle` moves it to `routed` when the output really is that
+/// peer. A start that fails later rolls the output back to the jack, and then the
+/// switch is tried again like any failed one. Every snapshot is `observe`d, because
+/// the main loop can receive a drop and the reconnect in one pass, and a peer that
+/// stayed in `routed` through that was never routed again (the music started on
+/// the speaker until the owner reconnected the headphones by hand).
 #[derive(Default)]
 pub(crate) struct AutoOutput {
     pub(crate) routed: HashSet<String>,
     /// Failed switches per peer: how many and when the last one was.
     pub(crate) failures: std::collections::HashMap<String, (u32, Instant)>,
+    /// Switches accepted (the start may still be opening the stream), not yet known to hold.
+    pub(crate) in_flight: HashSet<String>,
+    /// What was last logged per peer: why it is not routed, and what it looked like.
+    held: std::collections::HashMap<String, String>,
+    seen: std::collections::HashMap<String, (bool, String)>,
+}
+
+/// A peer whose state changed between two snapshots.
+pub(crate) struct PeerChange {
+    /// Whether it was connected before (`None`: not seen before).
+    pub(crate) was_connected: Option<bool>,
+    pub(crate) connected: bool,
+    pub(crate) fact: Value,
 }
 
 /// After a failed automatic switch, the next try waits this long...
@@ -27,13 +48,11 @@ pub(crate) const AUTO_OUTPUT_RETRY: Duration = Duration::from_secs(2);
 pub(crate) const AUTO_OUTPUT_TRIES: u32 = 5;
 
 impl AutoOutput {
-    pub(crate) fn next(
-        &mut self,
-        status: &bluetooth::Status,
-        output: &AudioOutput,
-    ) -> Option<String> {
+    /// One snapshot of the radio daemon's state, however many arrive in a pass: a peer that is
+    /// not connected in it starts over when it connects again. A failed observation proves nothing.
+    pub(crate) fn observe(&mut self, status: &bluetooth::Status) {
         if !status.available {
-            return None; // A failed observation is not a disconnection.
+            return;
         }
         let connected = |address: &String| {
             status.powered
@@ -44,6 +63,187 @@ impl AutoOutput {
         };
         self.routed.retain(connected);
         self.failures.retain(|address, _| connected(address));
+        self.in_flight.retain(connected);
+        self.held.retain(|address, _| connected(address));
+    }
+    /// The selected peer was lost: its next connection is a new one.
+    pub(crate) fn forget(&mut self, address: &str) {
+        self.routed.retain(|a| !a.eq_ignore_ascii_case(address));
+        self.failures
+            .retain(|a, _| !a.eq_ignore_ascii_case(address));
+        self.in_flight.retain(|a| !a.eq_ignore_ascii_case(address));
+        self.held.retain(|a, _| !a.eq_ignore_ascii_case(address));
+    }
+    /// A switch to `address` was accepted: it is routed once the output holds it. The failures so
+    /// far stay, so rolled-back starts count toward the same few tries as refused ones.
+    pub(crate) fn started(&mut self, address: String) {
+        self.in_flight.insert(address);
+    }
+    /// Accepted switches whose start has finished (`pending` false): the peer is routed when
+    /// the output is on it, else the start was rolled back and the switch failed after all.
+    /// Returns each peer with whether it held.
+    pub(crate) fn settle(&mut self, output: &AudioOutput, pending: bool) -> Vec<(String, bool)> {
+        if pending {
+            return Vec::new();
+        }
+        let mut settled: Vec<String> = self.in_flight.drain().collect();
+        settled.sort();
+        settled
+            .into_iter()
+            .map(|address| {
+                let holds = matches!(
+                    output,
+                    AudioOutput::Bluetooth(a) if a.eq_ignore_ascii_case(&address)
+                );
+                if holds {
+                    self.routed(address.clone());
+                } else {
+                    self.failed(address.clone());
+                }
+                (address, holds)
+            })
+            .collect()
+    }
+    /// Why each connected audio peer is not being routed, when that changed since last asked
+    /// (the log of a stuck output: the reason says which rule held it back).
+    pub(crate) fn why_held(
+        &mut self,
+        status: &bluetooth::Status,
+        output: &AudioOutput,
+    ) -> Vec<(String, String)> {
+        let mut changed = Vec::new();
+        for device in status.devices.iter().filter(|d| d.connected && d.audio) {
+            let address = &device.address;
+            let on_it = matches!(
+                output,
+                AudioOutput::Bluetooth(a) if a.eq_ignore_ascii_case(address)
+            );
+            let reason = if on_it {
+                None
+            } else if self.in_flight.contains(address) {
+                Some("switch_starting".to_string())
+            } else if self.routed.contains(address) {
+                Some("routed_but_output_is_not_it".to_string())
+            } else if self
+                .failures
+                .get(address)
+                .is_some_and(|(_, at)| at.elapsed() < AUTO_OUTPUT_RETRY)
+            {
+                Some("resting_after_failure".to_string())
+            } else if let Err(error) = status.playback_rate(address) {
+                Some(format!("not_ready: {error}"))
+            } else {
+                None
+            };
+            if self.held.get(address) == reason.as_ref() {
+                continue;
+            }
+            match &reason {
+                Some(r) => self.held.insert(address.clone(), r.clone()),
+                None => self.held.remove(address),
+            };
+            changed.push((address.clone(), reason.unwrap_or_else(|| "eligible".into())));
+        }
+        changed
+    }
+    /// What each connected or audio peer looks like, for those that changed since last asked.
+    pub(crate) fn changed_peers(&mut self, status: &bluetooth::Status) -> Vec<PeerChange> {
+        if !status.available {
+            return Vec::new();
+        }
+        let mut changed = Vec::new();
+        for device in status.devices.iter().filter(|d| d.connected || d.audio) {
+            let pcm = status
+                .pcms
+                .iter()
+                .find(|p| p.is_a2dp_playback_for(&device.path));
+            let fact = json!({
+                "address": device.address,
+                "connected": device.connected,
+                "audio": device.audio,
+                "settling": device.settling,
+                "bluealsa": status.bluealsa,
+                "pcm": pcm.map(|p| json!({
+                    "generation": p.transport_generation,
+                    "codec": p.codec,
+                    "rate": p.rate,
+                    "channels": p.channels,
+                })),
+            });
+            let now = (device.connected, fact.to_string());
+            let before = self.seen.insert(device.address.clone(), now.clone());
+            if before.as_ref() != Some(&now) {
+                changed.push(PeerChange {
+                    was_connected: before.map(|(connected, _)| connected),
+                    connected: device.connected,
+                    fact,
+                });
+            }
+        }
+        self.seen
+            .retain(|address, _| status.devices.iter().any(|d| &d.address == address));
+        changed
+    }
+    /// The log of the Bluetooth peers: each change of state, and the connects and disconnects.
+    pub(crate) fn log_peers(&mut self, log: &Observer, status: &bluetooth::Status) {
+        for change in self.changed_peers(status) {
+            if change.connected && change.was_connected != Some(true) {
+                log.add("bluetooth_connects", 1.);
+            } else if !change.connected && change.was_connected == Some(true) {
+                log.add("bluetooth_disconnects", 1.);
+            }
+            log.emit(
+                Level::Info,
+                "bluetooth",
+                "peer_state",
+                "Bluetooth peer changed",
+                None,
+                change.fact,
+            );
+        }
+    }
+    /// The log of the automatic output: a switch that did not hold, and why a connected peer is
+    /// not the output (each once, when it changes).
+    pub(crate) fn log_output(&mut self, log: &Observer, rt: &Runtime) {
+        for (address, held) in self.settle(&rt.model.output, rt.pending_reconfiguration.is_some()) {
+            if !held {
+                // The start was rolled back after the switch was accepted: tried again.
+                log.emit(
+                    Level::Warn,
+                    "audio",
+                    "output_automatic_rolled_back",
+                    "Automatic switch to Bluetooth did not hold",
+                    None,
+                    json!({"address":address,"output":rt.model.output}),
+                );
+            }
+        }
+        for (address, reason) in self.why_held(&rt.bt_state, &rt.model.output) {
+            log.emit(
+                Level::Info,
+                "audio",
+                "auto_output_held",
+                "Bluetooth peer is connected but the output is not on it",
+                None,
+                json!({
+                    "address":address,
+                    "reason":reason,
+                    "output":rt.model.output,
+                    "pending_reconfiguration":rt.pending_reconfiguration.is_some(),
+                    "lost_peer":rt.lost_peer.is_some(),
+                }),
+            );
+        }
+    }
+    pub(crate) fn next(
+        &mut self,
+        status: &bluetooth::Status,
+        output: &AudioOutput,
+    ) -> Option<String> {
+        if !status.available {
+            return None; // A failed observation is not a disconnection.
+        }
+        self.observe(status);
         if !status.powered {
             return None;
         }

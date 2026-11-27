@@ -74,11 +74,13 @@ impl Runtime {
         sink_release_started: bool,
         transition_generation: Option<u64>,
     ) {
+        let from = self.model.output.clone();
         keep_live_parts(&mut self.model, &mut previous);
         self.keep_held_volume(&mut previous);
         if !sink_release_started {
             self.model = previous;
             self.dirty = dirty_before;
+            self.log_output_rolled_back(&from, error);
             return;
         }
         self.model = failed_reconfiguration_model(previous, error, true, transition_generation);
@@ -86,7 +88,22 @@ impl Runtime {
         self.active_transport_generation = None;
         self.art = false;
         self.dirty.mark_both();
+        self.log_output_rolled_back(&from, error);
         self.checkpoint();
+    }
+    /// A rollback that moved the output (a Bluetooth switch that did not hold goes back to the
+    /// jack) is the one change of output nobody asked for: say why.
+    fn log_output_rolled_back(&self, from: &AudioOutput, why: &str) {
+        if *from != self.model.output {
+            self.log.emit(
+                Level::Warn,
+                "audio",
+                "output_rolled_back",
+                "Output went back after a failed change",
+                None,
+                json!({"from":from,"to":self.model.output,"why":why}),
+            );
+        }
     }
     pub(crate) fn poll_pending_reconfiguration(&mut self) {
         if self.pending_reconfiguration.is_none() {
@@ -148,6 +165,7 @@ impl Runtime {
     }
     pub(crate) fn abandon_pending_reconfiguration(&mut self) {
         if let Some(mut pending) = self.pending_reconfiguration.take() {
+            let from = self.model.output.clone();
             // The snapshot was taken without the library, book progress, chapter marks and platform
             // facts (`with_model_action`): they stay as they are now. Restoring the snapshot alone
             // emptied the library and the next checkpoint wrote an empty shelf (Y2Reborn #92).
@@ -155,6 +173,7 @@ impl Runtime {
             self.keep_held_volume(&mut pending.previous);
             self.model = pending.previous;
             self.dirty = pending.dirty_before;
+            self.log_output_rolled_back(&from, "start abandoned");
         }
     }
     /// Give up a start that is still opening its sink: the model goes back
