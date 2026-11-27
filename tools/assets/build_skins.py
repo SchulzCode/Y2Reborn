@@ -41,7 +41,7 @@ FONTS = {
 }
 LICENCES = {
     "OpenSans": ROOT / "assets/fonts/OpenSans-OFL.txt",
-    "Noto": Path("/usr/share/licenses/noto-fonts/LICENSE"),
+    "Noto": ROOT / "assets/fonts/noto/Noto-OFL.txt",
     "PixelifySans": ROOT / "assets/fonts/pixelify/PixelifySans-OFL.txt",
 }
 # The characters a skin font carries (reborn-ui skin::atlas::charset).
