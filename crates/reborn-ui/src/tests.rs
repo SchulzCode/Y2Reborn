@@ -3834,6 +3834,24 @@ fn update_download_and_scanning_show_a_sweeping_ring_without_a_made_up_percentag
 }
 
 #[test]
+fn the_spinner_segment_keeps_its_length_while_it_slides() {
+    let lit = |phase: f32| {
+        let mut c = crate::canvas::Canvas::new();
+        c.spinner(240., 128., 44., 0xFFFFFFFF, 0x202020FF, phase);
+        let frame = |i: usize| {
+            c.draw
+                .get(i)
+                .and_then(|q| maskdata::ARCS.iter().position(|a| *a == q.src))
+                .map_or(0, |at| at + 1)
+        };
+        // The track ring, the bright head, the track over the tail.
+        frame(1) - frame(2)
+    };
+    let lengths: std::collections::BTreeSet<_> = (30..70).map(|i| lit(i as f32 / 100.)).collect();
+    assert_eq!(lengths.len(), 1, "{lengths:?}");
+}
+
+#[test]
 fn crossfade_gets_its_own_option_icon() {
     let ui = radios();
     let mut m = app(Screen::NowPlaying);
