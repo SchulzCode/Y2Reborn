@@ -139,6 +139,23 @@ impl DecodeWorker {
         let mut packet_count = 0u64;
         let open_next = |tracks: &[Track], start: usize| -> Option<(usize, BoundDecoder)> {
             for (candidate, track) in tracks.iter().enumerate().skip(start) {
+                // A song of the other rate family (44.1 / 48 kHz) plays in a sink reopened at its
+                // own rate: the job ends with this song and the next start plans that sink.
+                if !job.spec.fits_source(track.sample_rate) {
+                    dl.emit(
+                        Level::Info,
+                        "playback",
+                        "next_track_other_rate",
+                        "the next song plays at its own rate after this one",
+                        Some(job.id),
+                        json!({
+                            "track_id": track.id,
+                            "source_rate": track.sample_rate,
+                            "sink_rate": job.spec.rate,
+                        }),
+                    );
+                    return None;
+                }
                 match BoundDecoder::open(
                     track,
                     &job.music_root,

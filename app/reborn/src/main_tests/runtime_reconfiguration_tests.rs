@@ -225,14 +225,24 @@ fn new_sink_opens_only_after_old_sink_release_acknowledges() {
 #[test]
 fn a_kept_wired_sink_is_taken_only_where_the_plan_would_give_it() {
     let kept = test_spec();
+    assert_eq!(kept.rate, 44_100);
     let wired = AudioOutput::Wired;
-    assert!(keeps_wired_sink(&kept, &wired));
-    // A sink some other plan gave (not the 44.1 kHz all wired plans give).
+    // A 44.1 kHz-family track plays on in the 44.1 kHz sink, a 48 kHz-family one reopens it.
+    assert!(keeps_wired_sink(&kept, &wired, 44_100));
+    assert!(keeps_wired_sink(&kept, &wired, 88_200));
+    assert!(!keeps_wired_sink(&kept, &wired, 96_000));
+    // And the other way round: a 48 kHz sink keeps the 48 kHz family only.
+    let mut at_48k = test_spec();
+    at_48k.rate = 48_000;
+    assert!(keeps_wired_sink(&at_48k, &wired, 48_000));
+    assert!(keeps_wired_sink(&at_48k, &wired, 192_000));
+    assert!(!keeps_wired_sink(&at_48k, &wired, 44_100));
+    // A sink no wired plan gives.
     let mut other = test_spec();
-    other.rate = 48_000;
-    assert!(!keeps_wired_sink(&other, &wired));
+    other.rate = 32_000;
+    assert!(!keeps_wired_sink(&other, &wired, 32_000));
     let bluetooth = AudioOutput::Bluetooth("12:34:56:78:90:AB".into());
-    assert!(!keeps_wired_sink(&kept, &bluetooth));
+    assert!(!keeps_wired_sink(&kept, &bluetooth, 44_100));
 }
 
 /// F61: the next station or song plays on in the kept Bluetooth sink while
