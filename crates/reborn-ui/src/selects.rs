@@ -344,6 +344,7 @@ impl Ui {
             }
             "fm_radio" => Effect::Radio(reborn_core::RadioRequest::FmShow(!m.settings.fm_radio)),
             "speaker" => Effect::SetSpeaker(!m.settings.speaker),
+            "hp_measure" => Effect::MeasureHeadphones,
             "album_view" => Effect::SetAlbumView(m.settings.album_view.next()),
             "album_order" => Effect::SetAlbumOrder(m.settings.album_order.next()),
             "artists_list" => Effect::SetArtistsList(m.settings.artists_list.next()),

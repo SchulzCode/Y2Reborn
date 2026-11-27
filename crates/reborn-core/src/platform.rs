@@ -606,6 +606,34 @@ pub struct ShutdownIntent {
     pub low_battery: bool,
 }
 
+/// The load in the headphone jack, as the CS43131 measures it on request (Y2Linux kernel patch
+/// 0030, `y2_hp/hpload_measure`): DC ohms per channel, the board's series resistance removed.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum HeadphoneLoad {
+    /// The kernel does not offer it.
+    #[default]
+    Unavailable,
+    /// Offered, nothing measured since the codec powered up.
+    Unmeasured,
+    Measuring,
+    Measured {
+        left: u16,
+        right: u16,
+    },
+}
+
+impl HeadphoneLoad {
+    /// The Output row's second line: "32 ohms", or both channels when they differ.
+    pub fn label(self) -> String {
+        match self {
+            Self::Unavailable | Self::Unmeasured => String::new(),
+            Self::Measuring => "Measuring…".into(),
+            Self::Measured { left, right } if left == right => format!("{left} ohms"),
+            Self::Measured { left, right } => format!("{left}/{right} ohms"),
+        }
+    }
+}
+
 /// Result of an explicit platform operation, already reduced to facts.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct OperationResult {

@@ -1598,6 +1598,47 @@ fn sound_pickers_set_exact_values_and_show_the_current_one() {
 }
 
 #[test]
+fn measure_headphones_is_offered_by_a_kernel_that_measures_and_shows_the_load() {
+    use reborn_core::platform::HeadphoneLoad;
+    let mut ui = radios();
+    let mut m = app(Screen::Output);
+    let labels = |ui: &Ui, m: &AppModel| -> Vec<String> {
+        ui.rows(m, &m.library.tracks)
+            .into_iter()
+            .map(|r| r.label)
+            .collect()
+    };
+    assert!(!labels(&ui, &m).contains(&"Measure Headphones".to_string()));
+    ui.headphone_load = HeadphoneLoad::Unmeasured;
+    assert_eq!(
+        labels(&ui, &m).last().map(String::as_str),
+        Some("Measure Headphones")
+    );
+    assert_eq!(
+        select_key(&mut ui, &mut m, "hp_measure"),
+        Effect::MeasureHeadphones
+    );
+    let secondary = |ui: &Ui, m: &AppModel| {
+        let rows = ui.rows(m, &m.library.tracks);
+        rows.iter()
+            .find(|r| r.key == "hp_measure")
+            .map(|r| r.secondary.clone())
+    };
+    ui.headphone_load = HeadphoneLoad::Measuring;
+    assert_eq!(secondary(&ui, &m).as_deref(), Some("Measuring…"));
+    ui.headphone_load = HeadphoneLoad::Measured {
+        left: 32,
+        right: 32,
+    };
+    assert_eq!(secondary(&ui, &m).as_deref(), Some("32 ohms"));
+    ui.headphone_load = HeadphoneLoad::Measured {
+        left: 33,
+        right: 32,
+    };
+    assert_eq!(secondary(&ui, &m).as_deref(), Some("33/32 ohms"));
+}
+
+#[test]
 fn headphone_level_and_dac_filter_pickers_show_and_set_the_choice() {
     let mut ui = radios();
     // Sound fits about one screen: the jack's settings sit on the Output page.
